@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 가상 환경
+.venv/
+venv/
+env/
+ENV/
+
+# 빌드/배포 산출물
+build/
+dist/
+*.egg-info/
+*.egg
+
+# 환경 변수
+.env
+.env.*
+!.env.example
+
+# 에디터/OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# 인터뷰 결과/리포트/로그(outputs/.gitkeep만 유지)
+outputs/*.json
+outputs/*.md
+outputs/logs/
+!outputs/.gitkeep
