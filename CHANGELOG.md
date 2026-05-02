@@ -6,6 +6,95 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-05-02
+
+Minor release that introduces the MCP orchestrator mode and removes the MCP sampling mode. The `config.yaml` is restructured into category-aligned sections, and `src/mcp_server.py` is split into per-mode handler modules under `src/mcp_handlers/`. The release contains breaking changes; the migration guide below covers the yaml reshape and the mode rename.
+
+### Added
+
+- `mcp.mode: "orchestrator"` (ADR-005). Inference is owned by the host agent's sub-agent; no server-side LLM call is made. Response envelopes carry `"backend": "mcp_orchestrator"`. Designed for hosts that already advertise sub-agent fan-out (Claude Code's Task tool, Cursor's sub-agent) and do not want a second backend bill
+- Seven new MCP tools. Three are MCP orchestrator only: `build_persona_prompt`, `build_batch_prompts`, `aggregate_results`. Four are common to both modes: `detect_persona_drift`, `should_auto_follow_up`, `parse_structured_summary`, `interview_record_schema`. The helper tools surface the same heuristics and parsing logic that the CLI applies automatically so the host can match the policy explicitly
+- ADR-005 (`docs/adr/2026-05-02-orchestrator-mode-and-sampling-removal.md`) records the decision, supersedes the sampling clause of ADR-004, and pins the future-supersede trigger (sampling-capable client adoption above 50%)
+- `src/mcp_handlers/` package with `common.py`, `server.py`, `orchestrator.py`, `helpers.py`, plus `_payloads.py` and `_setup.py` shared helpers. The handler dispatch is keyed by `(mode, tool_name)` so each mode declares its own tool set with no fallthrough
+
+### Changed (BREAKING)
+
+- `config.yaml` is restructured into six category-aligned sections (`common`, `llm`, `batch`, `heuristics`, `mcp`, `output`). Each section header lists the entry points it applies to (CLI / MCP server / MCP orchestrator). The previous flat layout (`dataset`, `interview`, `report`, `batch`, `mcp`, `output`) is removed; existing yaml files must be migrated. See the migration guide below
+- `AppConfig` exposes `common.dataset`, `common.persona`, `common.report` instead of the previous `dataset` and `report` fields. `interview` is renamed to `heuristics`. `batch.persona_fields` moves to `common.persona.fields`, `interview.system_prompt_path` moves to `common.persona.system_prompt_path`. The `InterviewConfig` dataclass is renamed to `HeuristicsConfig`
+- `mcp_server.py` is now a thin entry point. The handler logic lives in `src/mcp_handlers/`. External imports of `_TOOL_HANDLERS` still work but the canonical dispatch path is `src.mcp_handlers.HANDLERS` keyed by `(mode, name)`
+
+### Removed (BREAKING)
+
+- `mcp.mode: "sampling"` is removed. The whitelist now accepts only `"server"` and `"orchestrator"`. ADR-004's sampling-only clause is superseded by ADR-005. Sampling-capable client adoption stayed under 10% throughout v1.1.x, so the option had no real-world usage to preserve
+- `McpSamplingBackend` class, `_convert_to_sampling_messages`, `_extract_sampling_text`, `_current_sampling_session`, and the sampling capability check are removed from `src/llm_backend.py` and `src/mcp_server.py`
+- The 21 sampling-mode regression tests are removed from `tests/test_llm_backend.py` and `tests/test_mcp_server.py`
+
+### Tests
+
+- Regression count moves from 571 to 569. 21 sampling-mode tests are removed; 18 new tests are added in `tests/test_mcp_orchestrator.py` covering the orchestrator healthcheck, `interview` blockage, the three orchestrator-only tools, the four common helpers, and the helper tools' behavior in MCP server mode
+
+### Documentation
+
+- README "Integration with External Agents" section rewritten around the three entry points. Adds the entry-point matrix, the per-mode tool-exposure table, the `.env` recommendation for MCP server mode, and the host-workflow pseudocode for MCP orchestrator mode
+- INDEX gains §3.4 entry-point matrix, ADR-005 in the index, and the v1.2.0 revision-log entry. §3.5 to §3.9 are renumbered (was §3.4 to §3.8)
+- PRD §6.5 compatibility and §10.9 risk now reflect the three-entry-point structure and the heuristics-not-auto-applied risk in MCP orchestrator mode. TDD §2 module responsibilities document the `src/mcp_handlers/` split; §12 LLM HTTP contract drops the sampling row and adds the orchestrator row
+- `examples/mcp/README.md` rewritten with the new tool list per mode, the host-workflow pseudocode, and the recommendation that mcp.json snippets stay key-free
+
+### Migration guide
+
+`config.yaml` keys move as follows. Apply these renames before upgrading.
+
+| Old key | New key |
+| --- | --- |
+| `dataset.*` | `common.dataset.*` |
+| `batch.persona_fields` | `common.persona.fields` |
+| `interview.system_prompt_path` | `common.persona.system_prompt_path` |
+| `report.*` | `common.report.*` |
+| `interview.short_answer_threshold` | `heuristics.short_answer_threshold` |
+| `interview.english_ratio_threshold` | `heuristics.english_ratio_threshold` |
+| `interview.ambiguous_keywords` | `heuristics.ambiguous_keywords` |
+| `interview.refusal_keywords` | `heuristics.refusal_keywords` |
+| `interview.auto_follow_up_text` | `heuristics.auto_follow_up_text` |
+| `interview.auto_follow_up_max` | `heuristics.auto_follow_up_max` |
+| `interview.occupation_english_whitelist` | `heuristics.occupation_english_whitelist` |
+| `interview.llm_drift_review` | `heuristics.llm_drift_review` |
+| `mcp.mode: "sampling"` | choose `"server"` or `"orchestrator"` |
+
+A one-shot Python script for the rename is below. Save the script as `migrate_v1_2_0.py` and run it once against your `config.yaml`.
+
+```python
+import sys
+from pathlib import Path
+import yaml
+
+src = Path(sys.argv[1] if len(sys.argv) > 1 else "config.yaml")
+data = yaml.safe_load(src.read_text(encoding="utf-8")) or {}
+
+common = data.setdefault("common", {})
+common.setdefault("dataset", {}).update(data.pop("dataset", {}))
+persona = common.setdefault("persona", {})
+old_batch = data.get("batch", {})
+if "persona_fields" in old_batch:
+    persona["fields"] = old_batch.pop("persona_fields")
+old_interview = data.pop("interview", {})
+if "system_prompt_path" in old_interview:
+    persona["system_prompt_path"] = old_interview.pop("system_prompt_path")
+common.setdefault("report", {}).update(data.pop("report", {}))
+
+heuristics = data.setdefault("heuristics", {})
+heuristics.update(old_interview)
+
+mcp = data.setdefault("mcp", {})
+if mcp.get("mode") == "sampling":
+    print("[migrate] mcp.mode 'sampling' was removed in v1.2.0; switching to 'server'")
+    mcp["mode"] = "server"
+
+src.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+print(f"[migrate] wrote {src}")
+```
+
+If you used `mcp.mode: "sampling"` and want the closest replacement, switch to `mcp.mode: "orchestrator"`. The new mode also avoids server-side keys but uses the host agent's sub-agent (which is mainstream-supported) instead of the host sampling capability (which was not). The orchestrator workflow is documented in the README and `examples/mcp/README.md`.
+
 ## [1.1.2] - 2026-05-02
 
 Documentation patch release. After the multi-provider rollout (v1.1.0) and the `mcp.mode` toggle (v1.1.1) the report footer, PRD, TDD, UI spec, task spec, and SECURITY summary all still claimed `--product` was sent specifically to OpenAI servers. The actual destination is whichever LLM backend the user configures (OpenAI Chat Completions API, Anthropic Messages API, an OpenAI-compatible local server, or the MCP host agent's LLM), governed by `provider`, `base_url`, and `mcp.mode`. No code behavior changes; the regression suite stays at 571 passing tests.
@@ -148,7 +237,8 @@ First stable release. The previous `0.1.0` line is folded into `1.0.0` because t
 - Default model: `gpt-4o-mini` (configurable)
 - License: MIT (see [LICENSE](LICENSE))
 
-[Unreleased]: https://github.com/binaryloader/korea-persona-interview/compare/v1.1.2...HEAD
+[Unreleased]: https://github.com/binaryloader/korea-persona-interview/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/binaryloader/korea-persona-interview/compare/v1.1.2...v1.2.0
 [1.1.2]: https://github.com/binaryloader/korea-persona-interview/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/binaryloader/korea-persona-interview/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/binaryloader/korea-persona-interview/compare/v1.0.0...v1.1.0
