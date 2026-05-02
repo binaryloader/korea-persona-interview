@@ -328,7 +328,9 @@ def make_app_config():
 class FakeDataset:
     """``datasets.Dataset`` 인터페이스의 최소 부분만 흉내 낸다.
 
-    ``len``, ``__getitem__``, ``column_names``, ``select``, ``__iter__``를 지원한다.
+    ``len``, ``__getitem__``, ``column_names``, ``select``, ``__iter__``,
+    ``filter``, ``shuffle``을 지원한다. ``filter``/``shuffle``은 column 메모리
+    매핑 동작 흉내가 아니라 단순 row 변환이다(테스트 격리).
     """
 
     def __init__(self, rows: list) -> None:
@@ -348,8 +350,24 @@ class FakeDataset:
     def column_names(self) -> list:
         return list(self._rows[0].keys()) if self._rows else []
 
-    def select(self, indices: list) -> "FakeDataset":
-        return FakeDataset([self._rows[i] for i in indices])
+    def select(self, indices) -> "FakeDataset":
+        # ``range``/iterable 모두 받도록 list 변환을 둔다.
+        return FakeDataset([self._rows[i] for i in list(indices)])
+
+    def filter(self, predicate, **_kwargs) -> "FakeDataset":
+        """``Dataset.filter`` 흉내. row dict를 predicate에 그대로 넘긴다."""
+
+        return FakeDataset([r for r in self._rows if predicate(dict(r))])
+
+    def shuffle(self, seed: int = 0, **_kwargs) -> "FakeDataset":
+        """``Dataset.shuffle`` 흉내. seed 결정적 셔플."""
+
+        import random as _random
+
+        rng = _random.Random(seed)
+        ordered = list(self._rows)
+        rng.shuffle(ordered)
+        return FakeDataset(ordered)
 
 
 @pytest.fixture

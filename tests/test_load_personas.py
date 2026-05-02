@@ -443,3 +443,166 @@ def test_filter_spec_is_empty() -> None:
         occupation_keyword=(),
     )
     assert not not_empty.is_empty()
+
+
+# ---------------------------------------------------------------------------
+# 큰 dataset 회귀 테스트(N+1 회피, O(n) 기대 동작)
+# ---------------------------------------------------------------------------
+
+
+def _make_large_rows(n: int) -> list:
+    """``n``명짜리 가짜 row 리스트.
+
+    region/age/gender 분포를 골고루 섞어 필터 결과가 일정 수 이상 보장되도록 한다.
+    """
+
+    rows: list = []
+    regions = ("서울", "경기", "부산", "광주", "대전")
+    genders = ("여자", "남자")
+    for i in range(n):
+        rows.append(
+            {
+                "uuid": f"big-{i:06d}",
+                "sex": genders[i % 2],
+                "age": 20 + (i % 50),
+                "marital_status": "미혼",
+                "military_status": "비현역",
+                "family_type": "1인 가구",
+                "housing_type": "원룸",
+                "education_level": "대학교",
+                "bachelors_field": "컴퓨터공학",
+                "occupation": "엔지니어" if i % 3 == 0 else "마케터",
+                "province": regions[i % len(regions)],
+                "district": f"{regions[i % len(regions)]}-X",
+                "country": "대한민국",
+                "persona": f"{i}번 가짜 페르소나.",
+                "professional_persona": "x",
+                "sports_persona": "x",
+                "arts_persona": "x",
+                "travel_persona": "x",
+                "culinary_persona": "x",
+                "family_persona": "x",
+            }
+        )
+    return rows
+
+
+def test_load_and_sample_큰_dataset_빈_spec_시드_재현성(
+    fake_load_dataset,
+) -> None:
+    """1000행 + 빈 필터에서 같은 seed가 같은 표본을 반환한다."""
+
+    fake_load_dataset(_make_large_rows(1000))
+
+    a = load_and_sample(
+        filter_str=None,
+        n=20,
+        seed=7,
+        field_map=_FIELD_MAP,
+        gender_aliases=_ALIASES,
+        province_aliases=_PROVINCE_ALIASES,
+        dataset_name="fake/dataset",
+        split="train",
+    )
+    b = load_and_sample(
+        filter_str=None,
+        n=20,
+        seed=7,
+        field_map=_FIELD_MAP,
+        gender_aliases=_ALIASES,
+        province_aliases=_PROVINCE_ALIASES,
+        dataset_name="fake/dataset",
+        split="train",
+    )
+    assert [p.persona_id for p in a] == [p.persona_id for p in b]
+    assert len(a) == 20
+
+
+def test_load_and_sample_큰_dataset_필터_적용_O_n(
+    fake_load_dataset,
+) -> None:
+    """1000행 + 필터(region/age) 적용에서 N+1 dict 변환 없이 결과를 얻는다.
+
+    회귀 보장 포인트: ``ds.filter``를 사용하므로 ``__getitem__``이 row마다 호출되지
+    않는다(O(n) 1회 순회). 본 테스트는 결과 정상성만 단언하고 호출 횟수까지는
+    추적하지 않지만, 1000행 호출이 합리적 시간 안에 끝나는지 확인한다.
+    """
+
+    fake_load_dataset(_make_large_rows(1000))
+
+    personas = load_and_sample(
+        filter_str="region:서울,age:20-39",
+        n=10,
+        seed=42,
+        field_map=_FIELD_MAP,
+        gender_aliases=_ALIASES,
+        province_aliases=_PROVINCE_ALIASES,
+        dataset_name="fake/dataset",
+        split="train",
+    )
+    assert len(personas) == 10
+    for p in personas:
+        assert p.region == "서울"
+        assert 20 <= p.age <= 39
+
+
+def test_load_and_sample_큰_dataset_필터_적용_시드_재현성(
+    fake_load_dataset,
+) -> None:
+    """1000행 + 필터에서도 같은 seed/필터가 같은 표본을 반환한다."""
+
+    fake_load_dataset(_make_large_rows(1000))
+
+    a = load_and_sample(
+        filter_str="region:서울",
+        n=15,
+        seed=99,
+        field_map=_FIELD_MAP,
+        gender_aliases=_ALIASES,
+        province_aliases=_PROVINCE_ALIASES,
+        dataset_name="fake/dataset",
+        split="train",
+    )
+    b = load_and_sample(
+        filter_str="region:서울",
+        n=15,
+        seed=99,
+        field_map=_FIELD_MAP,
+        gender_aliases=_ALIASES,
+        province_aliases=_PROVINCE_ALIASES,
+        dataset_name="fake/dataset",
+        split="train",
+    )
+    assert [p.persona_id for p in a] == [p.persona_id for p in b]
+
+
+def test_make_row_predicate_field_key_resolve_1회() -> None:
+    """``_make_row_predicate``는 진입 시 1회만 키를 resolve해 closure에 캡처한다.
+
+    회귀 보장 포인트: predicate 호출 100회에도 ``field_map.get``이 한 번만
+    호출되어야 한다(매 row마다 dict.get을 반복하지 않음).
+    """
+
+    from src.load_personas import _make_row_predicate
+
+    spec = parse_filter("region:서울", _ALIASES, _PROVINCE_ALIASES)
+
+    class _CountingDict(dict):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.get_calls = 0
+
+        def get(self, key, default=None):  # type: ignore[override]
+            self.get_calls += 1
+            return super().get(key, default)
+
+    counting_field_map = _CountingDict(_FIELD_MAP)
+    predicate = _make_row_predicate(spec, counting_field_map)
+
+    row = {"province": "서울", "sex": "여자", "age": 30, "district": "서울-X", "occupation": "x"}
+    for _ in range(100):
+        predicate(row)
+
+    # predicate 본문에서는 row.get만 사용하고, field_map.get은 진입 시 5회만
+    # 호출된다(age/gender/region/subregion/occupation 키).
+    assert counting_field_map.get_calls == 5

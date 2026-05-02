@@ -26,6 +26,7 @@ import re
 from datetime import datetime, timezone
 from typing import Optional
 
+from ._json_utils import extract_json_object
 from .config import AppConfig, InterviewConfig, LlmConfig
 from .llm_client import MlxLLMClient
 from .logging_setup import mask_name, mask_product
@@ -469,43 +470,19 @@ def _build_summary_messages(messages: list) -> list:
 def _parse_summary_payload(text: str) -> StructuredSummary:
     """LLM 응답 텍스트에서 ``StructuredSummary``를 복원한다.
 
-    JSON 본문이 코드 펜스(```json ... ```)에 감싸인 경우도 처리하고, 본문 안
-    가장 바깥 ``{ ... }``를 추출한다. 파싱 실패 시 ``StructuredSummaryParseError``.
+    JSON 본문이 코드 펜스(```json ... ```)에 감싸인 경우와 가장 바깥 ``{ ... }``
+    추출은 ``_json_utils.extract_json_object``가 처리한다. 본 함수는 추출된
+    dict를 ``StructuredSummary`` 도메인 검증으로 변환한다. 파싱 실패 시
+    ``StructuredSummaryParseError``로 변환해 retry 트리거에 사용한다.
     """
 
     if not text or not text.strip():
         raise StructuredSummaryParseError("구조화 요약 응답이 비어 있다")
 
-    candidate = text.strip()
-    # 코드 펜스 제거.
-    if candidate.startswith("```"):
-        # ``` 또는 ```json 으로 시작 → 다음 줄부터 끝의 ``` 직전까지 사용.
-        lines = candidate.splitlines()
-        if lines and lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip().startswith("```"):
-            lines = lines[:-1]
-        candidate = "\n".join(lines).strip()
-
-    # 본문 안 가장 바깥 ``{ ... }``만 추출(앞뒤 자유 서술 제거 안전망).
-    start = candidate.find("{")
-    end = candidate.rfind("}")
-    if start == -1 or end == -1 or end <= start:
+    data = extract_json_object(text)
+    if data is None:
         raise StructuredSummaryParseError(
-            f"구조화 요약 응답에서 JSON 객체를 찾지 못했다: {candidate[:120]!r}"
-        )
-    json_text = candidate[start : end + 1]
-
-    try:
-        data = json.loads(json_text)
-    except json.JSONDecodeError as exc:
-        raise StructuredSummaryParseError(
-            f"구조화 요약 JSON 파싱 실패: {exc}. 본문: {json_text[:120]!r}"
-        ) from exc
-
-    if not isinstance(data, dict):
-        raise StructuredSummaryParseError(
-            f"구조화 요약 최상위는 dict여야 한다: {type(data).__name__}"
+            f"구조화 요약 응답에서 JSON 객체를 찾지 못했다: {text.strip()[:120]!r}"
         )
 
     intent = data.get("intent")

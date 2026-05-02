@@ -31,11 +31,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from ._json_utils import extract_json_object
 from .config import AppConfig
-from .interview import _parse_summary_payload  # noqa: F401  # 잠재 재활용
 from .llm_client import MlxLLMClient
 from .models import (
     ConfigError,
+    EmptyValidRecordsError,
     InterviewRecord,
     PersonaMeta,
     RetryExhaustedError,
@@ -776,6 +777,10 @@ def _parse_insight_payload(text: str) -> QualitativeInsights:
 
     JSON 파싱 실패 시 ``QualitativeInsights(fallback_message=...)``로 안전하게
     돌려준다(예외를 위로 던지지 않음). 정량 리포트는 그대로 채워야 한다.
+
+    코드 펜스 제거와 가장 바깥 ``{ ... }`` 추출은 ``_json_utils.extract_json_object``
+    가 일원화한다. 본 함수는 dict 추출에 성공한 뒤의 후처리(정성 필드 정규화,
+    insights 5-10개 강제)만 담당한다.
     """
 
     if not text or not text.strip():
@@ -783,33 +788,12 @@ def _parse_insight_payload(text: str) -> QualitativeInsights:
             fallback_message="정성 인사이트 응답이 비어 있어 본 섹션을 생성하지 못했습니다."
         )
 
-    candidate = text.strip()
-    if candidate.startswith("```"):
-        lines = candidate.splitlines()
-        if lines and lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip().startswith("```"):
-            lines = lines[:-1]
-        candidate = "\n".join(lines).strip()
-
-    start = candidate.find("{")
-    end = candidate.rfind("}")
-    if start == -1 or end == -1 or end <= start:
+    data = extract_json_object(text)
+    if data is None:
         return QualitativeInsights(
-            fallback_message="정성 인사이트 응답에서 JSON 객체를 찾지 못해 본 섹션을 생성하지 못했습니다."
-        )
-    json_text = candidate[start : end + 1]
-
-    try:
-        data = json.loads(json_text)
-    except json.JSONDecodeError as exc:
-        return QualitativeInsights(
-            fallback_message=f"정성 인사이트 JSON 파싱에 실패해 본 섹션을 생성하지 못했습니다: {exc}"
-        )
-
-    if not isinstance(data, dict):
-        return QualitativeInsights(
-            fallback_message="정성 인사이트 응답 최상위가 dict가 아닙니다."
+            fallback_message=(
+                "정성 인사이트 응답에서 JSON 객체를 찾지 못해 본 섹션을 생성하지 못했습니다."
+            )
         )
 
     common = data.get("common_reactions") or []
@@ -1246,7 +1230,8 @@ def _validate_records_for_report(
 ) -> None:
     """리포트 생성 가능한 정상 record가 있는지 검증한다.
 
-    PRD §5.9: report 명령은 정상 record 0건이면 종료 코드 2.
+    PRD §5.9: report 명령은 정상 record 0건이면 종료 코드 2. ``EmptyValidRecordsError``
+    를 raise하면 main.py가 해당 예외를 종료 코드 2로 매핑한다.
     """
 
     valid = _filter_valid_records(records, include_drift=include_drift)
@@ -1256,12 +1241,7 @@ def _validate_records_for_report(
             "모델 동작과 필터를 점검한 뒤 인터뷰를 다시 실행해 주세요. "
             "--include-drift 옵션을 사용하면 드리프트 record를 정량 집계에 포함할 수 있습니다."
         )
-        # ConfigError로 raise해 main.py에서 종료 코드 2로 매핑한다.
         raise EmptyValidRecordsError(msg)
-
-
-class EmptyValidRecordsError(Exception):
-    """정량 집계 가능한 record가 0건일 때(PRD §5.9 report exit 2)."""
 
 
 async def generate_report(

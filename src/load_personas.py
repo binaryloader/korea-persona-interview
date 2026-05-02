@@ -252,11 +252,25 @@ def parse_filter(
 def _row_matches(row: dict, spec: FilterSpec, field_map: dict) -> bool:
     """단일 row가 ``FilterSpec``을 만족하는지 판정한다.
 
-    같은 키 내부는 OR, 다른 키 사이는 AND다.
+    같은 키 내부는 OR, 다른 키 사이는 AND다. 본 함수는 row 단위 ad-hoc
+    호출(테스트 등)을 위해 그대로 유지하며, 매 호출마다 field 키를 dict에서
+    조회한다. 데이터셋 전량 순회 경로는 ``_make_row_predicate``를 사용해 키
+    조회를 사전에 한 번만 수행하도록 한다(N+1 회피).
+    """
+
+    return _make_row_predicate(spec, field_map)(row)
+
+
+def _make_row_predicate(spec: FilterSpec, field_map: dict):
+    """row → bool 클로저를 반환한다.
+
+    field_map의 키 resolve를 함수 진입 시 1회만 수행해 클로저 변수로 캡처한다.
+    100만 row 순회 경로에서 매 row마다 dict.get을 4회 반복하던 비용을 제거한다
+    (TDD §10.3 리스크 완화 추가 보강).
     """
 
     if spec.is_empty():
-        return True
+        return lambda _row: True
 
     age_field = field_map.get("age", "age")
     gender_field = field_map.get("gender", "sex")
@@ -264,38 +278,45 @@ def _row_matches(row: dict, spec: FilterSpec, field_map: dict) -> bool:
     subregion_field = field_map.get("subregion", "district")
     occupation_field = field_map.get("occupation", "occupation")
 
-    if spec.age:
-        raw_age = row.get(age_field)
-        if not isinstance(raw_age, int):
-            try:
-                raw_age = int(raw_age)
-            except (TypeError, ValueError):
+    age_specs = spec.age
+    gender_set = frozenset(spec.gender) if spec.gender else None
+    region_set = frozenset(spec.region) if spec.region else None
+    subregion_tokens = spec.subregion
+    occupation_tokens = spec.occupation_keyword
+
+    def predicate(row: dict) -> bool:
+        if age_specs:
+            raw_age = row.get(age_field)
+            if not isinstance(raw_age, int):
+                try:
+                    raw_age = int(raw_age)
+                except (TypeError, ValueError):
+                    return False
+            if not any(r.matches(raw_age) for r in age_specs):
                 return False
-        if not any(r.matches(raw_age) for r in spec.age):
-            return False
 
-    if spec.gender:
-        raw_gender = row.get(gender_field, "")
-        if raw_gender not in spec.gender:
-            return False
+        if gender_set is not None:
+            if row.get(gender_field, "") not in gender_set:
+                return False
 
-    if spec.region:
-        raw_region = row.get(region_field, "")
-        if raw_region not in spec.region:
-            return False
+        if region_set is not None:
+            if row.get(region_field, "") not in region_set:
+                return False
 
-    if spec.subregion:
-        raw_sub = row.get(subregion_field, "") or ""
-        # district는 `광주-서구` 형식(시도 prefix 결합형)이라 부분 매칭한다.
-        if not any(token in raw_sub for token in spec.subregion):
-            return False
+        if subregion_tokens:
+            raw_sub = row.get(subregion_field, "") or ""
+            # district는 `광주-서구` 형식(시도 prefix 결합형)이라 부분 매칭한다.
+            if not any(token in raw_sub for token in subregion_tokens):
+                return False
 
-    if spec.occupation_keyword:
-        raw_occ = row.get(occupation_field, "") or ""
-        if not any(kw in raw_occ for kw in spec.occupation_keyword):
-            return False
+        if occupation_tokens:
+            raw_occ = row.get(occupation_field, "") or ""
+            if not any(kw in raw_occ for kw in occupation_tokens):
+                return False
 
-    return True
+        return True
+
+    return predicate
 
 
 def apply_filter(
@@ -305,10 +326,12 @@ def apply_filter(
 ) -> list:
     """필터 spec을 만족하는 row들의 인덱스 리스트를 반환한다.
 
-    원본 데이터셋 인덱스를 보존하기 위해 ``enumerate``를 사용한다.
+    원본 데이터셋 인덱스를 보존하기 위해 ``enumerate``를 사용한다. field 키
+    resolve는 ``_make_row_predicate``로 진입 시 1회만 수행한다.
     """
 
-    return [i for i, row in enumerate(rows) if _row_matches(row, spec, field_map)]
+    predicate = _make_row_predicate(spec, field_map)
+    return [i for i, row in enumerate(rows) if predicate(row)]
 
 
 # ---------------------------------------------------------------------------
@@ -460,42 +483,94 @@ def load_and_sample(
     ds = _load_dataset_inner(cfg_for_load, streaming=False)
 
     # in-memory 경로. datasets는 디스크 기반 메모리 매핑이라 100만 행을 한 번에
-    # 메모리에 적재하지 않는다(TDD §10.3 리스크 완화). 필터링은 row 단위로
-    # 순회하며 인덱스만 수집한다.
+    # 파이썬 dict로 변환하지 않도록 분기한다(TDD §10.3 리스크 완화).
+    #
+    # - 빈 spec(필터 없음): 전체에서 시드 고정 샘플 추출만 필요하므로
+    #   ``Dataset.shuffle(seed).select(range(n))`` 단축 경로를 사용한다. 100만
+    #   row를 dict로 변환하지 않는다.
+    # - 필터 있음: ``Dataset.filter(predicate, batched=False)``로 column 메모리
+    #   매핑 위에서 평가한 뒤 ``select`` 인덱스를 만든다. predicate는
+    #   ``_make_row_predicate``로 field 키 resolve를 진입 시 1회만 수행한다.
     try:
-        # ``datasets.Dataset``은 dict 형태의 row를 인덱스 접근으로 제공한다.
-        # iter()는 streaming이 아닌 경우에도 동작하며 메모리 효율적이다.
-        matched_indices = apply_filter(
-            (ds[i] for i in range(len(ds))),
-            spec,
-            field_map,
-        )
+        if spec.is_empty():
+            sampled_subset = _select_random_subset(ds, n=n, seed=seed)
+        else:
+            sampled_subset = _filter_and_sample(
+                ds, spec=spec, field_map=field_map, n=n, seed=seed
+            )
+    except FilterMatchedZeroError:
+        raise
     except Exception as exc:  # 데이터셋 내부 예외(KeyError 등)
         raise DatasetUnavailableError(
-            f"데이터셋 row 순회 실패: {exc}"
+            f"데이터셋 row 순회 또는 select 실패: {exc}"
         ) from exc
 
-    logger.info(
-        "필터 적용 결과",
-        extra={"matched": len(matched_indices), "requested_n": n},
-    )
-
-    sampled = _sample_indices(matched_indices, n, seed)
-
-    # ``select(indices)``로 매칭된 부분만 가져와 메모리 점유를 최소화한다.
-    try:
-        subset = ds.select(sampled)
-    except Exception as exc:
-        raise DatasetUnavailableError(
-            f"데이터셋 select 실패: {exc}"
-        ) from exc
-
-    personas = [_build_persona_meta(row, field_map) for row in subset]
+    personas = [_build_persona_meta(row, field_map) for row in sampled_subset]
     logger.info(
         "페르소나 샘플링 완료",
         extra={"sampled": len(personas), "seed": seed},
     )
     return personas
+
+
+def _select_random_subset(ds, *, n: int, seed: int):
+    """필터가 비었을 때 전체에서 시드 고정 n행을 골라 ``Dataset`` 슬라이스를 반환한다.
+
+    ``Dataset.shuffle(seed)``는 결정적(determinstic) 셔플이라 같은 seed면 같은
+    순서를 반환한다. ``select(range(n))``으로 메모리 점유를 최소화한다.
+    """
+
+    total = len(ds)
+    if n <= 0:
+        raise ConfigError(f"샘플링 인원 n은 1 이상이어야 한다: {n}")
+    if total < n:
+        raise FilterMatchedZeroError(
+            f"필터 결과 {total}명, 요청 {n}명. 필터를 완화해 주세요"
+        )
+    logger.info(
+        "필터 미적용 전체 샘플링",
+        extra={"total": total, "requested_n": n},
+    )
+    shuffled = ds.shuffle(seed=seed)
+    return shuffled.select(range(n))
+
+
+def _filter_and_sample(ds, *, spec: FilterSpec, field_map: dict, n: int, seed: int):
+    """필터를 ``Dataset.filter``로 평가한 뒤 시드 고정 샘플을 ``select``로 반환한다.
+
+    ``Dataset.filter``는 디스크 기반 메모리 매핑 위에서 column을 읽으며 매칭
+    인덱스만 수집한다. ``apply_filter`` 같은 dict 변환 순회를 우회한다(O(n)
+    유지, 메모리 점유 최소화).
+
+    인덱스 보존을 위해 ``with_indices=True``로 호출하고, 매칭된 부분
+    ``filtered_ds``의 길이로 ``_sample_indices``를 만들어 ``select``한다.
+    같은 seed/같은 spec/같은 데이터셋 버전이면 동일한 결과를 보장한다.
+    """
+
+    predicate = _make_row_predicate(spec, field_map)
+
+    # ``filter``는 새 ``Dataset`` 객체를 반환한다(원본 인덱스가 아니라 매칭된
+    # row만 0..M-1로 재배열된다). 본 도구는 필터 후 시드 샘플링만 보장하면
+    # 충분하므로 원본 인덱스 보존은 요구하지 않는다.
+    filtered = ds.filter(predicate)
+
+    matched = len(filtered)
+    logger.info(
+        "필터 적용 결과",
+        extra={"matched": matched, "requested_n": n},
+    )
+
+    if matched < n:
+        raise FilterMatchedZeroError(
+            f"필터 결과 {matched}명, 요청 {n}명. 필터를 완화해 주세요"
+        )
+    if n <= 0:
+        raise ConfigError(f"샘플링 인원 n은 1 이상이어야 한다: {n}")
+
+    # 시드 고정 샘플링. 같은 seed/같은 matched면 같은 순서를 보장한다.
+    rng = random.Random(seed)
+    sampled = rng.sample(range(matched), n)
+    return filtered.select(sampled)
 
 
 # ---------------------------------------------------------------------------

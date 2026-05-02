@@ -38,12 +38,12 @@ from src.logging_setup import bind_request_id, configure_logging
 from src.models import (
     ConfigError,
     DatasetUnavailableError,
+    EmptyValidRecordsError,
     FilterMatchedZeroError,
     PersonaMeta,
     ServerNotReachableError,
 )
 from src.report import (
-    EmptyValidRecordsError,
     ReportOptions,
     generate_report,
 )
