@@ -302,6 +302,44 @@ def test_detect_persona_drift_자기_시도_단언_False() -> None:
     assert detect_persona_drift(text, _persona(region="서울")) is False
 
 
+def test_detect_persona_drift_영어_단어_비율_단어단위_False() -> None:
+    """단어 단위 비율 회귀: 한 단어만 영어이면 비율은 1/N(임계 30% 미만)."""
+
+    text = "가격이 합리적이고 brand 인지도도 어느 정도 있어 시도해 볼 만하다고 생각합니다."
+    assert detect_persona_drift(text, _persona()) is False
+
+
+def test_detect_persona_drift_영어_단어_비율_단어단위_True() -> None:
+    """단어 단위 비율 회귀: 영어 단어가 다수면 임계값을 넘어 True."""
+
+    text = "I think this product is good because it really helps me daily and so on."
+    assert detect_persona_drift(text, _persona()) is True
+
+
+def test_truncate_history_O_n_재계산_없이_동일결과() -> None:
+    """O(n²) → O(n) 회귀: 페어 제거 시 전체 토큰을 재계산하지 않아도 동일 결과를 낸다.
+
+    동일한 입력에 대해 함수가 결정적이라는 사실을 100회 반복 호출로 단언한다.
+    토큰 합 누적 차감 로직이 깨지면 truncate가 멈추거나 과하게 잘릴 수 있다.
+    """
+
+    long_text = "가" * 5000
+    msgs = [
+        MessageEntry(role="system", content="시스템"),
+        MessageEntry(role="user", content=long_text),
+        MessageEntry(role="assistant", content=long_text),
+        MessageEntry(role="user", content=long_text),
+        MessageEntry(role="assistant", content=long_text),
+        MessageEntry(role="user", content="새 질문"),
+        MessageEntry(role="assistant", content="새 답변"),
+    ]
+    first_out, first_was = truncate_history(msgs, max_tokens=8000)
+    for _ in range(100):
+        out, was = truncate_history(msgs, max_tokens=8000)
+        assert was is first_was
+        assert [m.content for m in out] == [m.content for m in first_out]
+
+
 # ---------------------------------------------------------------------------
 # detect_refusal
 # ---------------------------------------------------------------------------

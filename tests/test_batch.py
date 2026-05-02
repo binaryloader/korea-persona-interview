@@ -28,12 +28,15 @@ from src.llm_client import MlxLLMClient
 from src.models import (
     BatchResult,
     ConfigError,
+    EmptyResponseError,
     Flags,
     InterviewRecord,
     PersonaMeta,
+    RetryExhaustedError,
     RunMeta,
     SCHEMA_VERSION,
     ServerNotReachableError,
+    StructuredSummaryParseError,
 )
 
 
@@ -159,6 +162,31 @@ def test_build_failed_record_미처리_예외_변환() -> None:
     assert record.status == "failed"
     assert record.error["type"] == "unhandled_exception"
     assert "터졌다" in record.error["message"]
+
+
+@pytest.mark.parametrize(
+    "exc, expected_type",
+    [
+        (ServerNotReachableError("연결 실패"), "server_not_reachable"),
+        (RetryExhaustedError("3회 재시도 실패"), "retry_exhausted"),
+        (EmptyResponseError("content empty"), "empty_response"),
+        (ConfigError("설정 오류"), "config_error"),
+        (StructuredSummaryParseError("JSON 파싱 실패"), "structured_summary_parse_error"),
+        (ValueError("알 수 없음"), "unhandled_exception"),
+        (RuntimeError("런타임 에러"), "unhandled_exception"),
+    ],
+)
+def test_build_failed_record_도메인_예외_명시매핑(exc, expected_type) -> None:
+    """도메인 예외는 ``error.type``이 명시 매핑된다(부분 실패 안내 가독성).
+
+    회귀 보장 포인트: 새 도메인 예외 추가 시 ``_DOMAIN_EXC_TYPE_MAP``에도 같이
+    등록해야 한다(누락 시 unhandled_exception으로 떨어진다).
+    """
+
+    persona = _persona("p-fail")
+    record = _build_failed_record(persona, exc)
+    assert record.status == "failed"
+    assert record.error["type"] == expected_type
 
 
 # ---------------------------------------------------------------------------

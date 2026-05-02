@@ -44,12 +44,26 @@ from .logging_setup import mask_product
 from .models import (
     BatchResult,
     ConfigError,
+    EmptyResponseError,
     InterviewRecord,
     PersonaMeta,
+    RetryExhaustedError,
     RunMeta,
     SCHEMA_VERSION,
     ServerNotReachableError,
+    StructuredSummaryParseError,
 )
+
+
+# 도메인 예외 → ``error.type`` 문자열 매핑(UI §2.3.6 부분 실패 안내). 알려진
+# 예외명만 명시 매핑하고 나머지는 ``unhandled_exception``으로 떨어진다.
+_DOMAIN_EXC_TYPE_MAP: dict = {
+    ServerNotReachableError: "server_not_reachable",
+    RetryExhaustedError: "retry_exhausted",
+    EmptyResponseError: "empty_response",
+    ConfigError: "config_error",
+    StructuredSummaryParseError: "structured_summary_parse_error",
+}
 
 
 logger = logging.getLogger(__name__)
@@ -278,8 +292,30 @@ async def _run_single(
         except asyncio.CancelledError:
             # 본 페르소나는 시작 전에 취소된 것이라 None 반환으로 미진행 표기.
             raise
+        except (
+            ServerNotReachableError,
+            RetryExhaustedError,
+            EmptyResponseError,
+            ConfigError,
+            StructuredSummaryParseError,
+        ) as exc:
+            # 도메인 예외. ``InterviewSession``이 먼저 record로 변환하는 게 정상
+            # 흐름이지만(인터뷰 본체 보존), 호출 자체가 시작 전에 실패하면
+            # 본 layer에서 흡수한다. ``error.type``은 ``_classify_exception``이
+            # 도메인 예외명을 매핑하므로 부분 실패 사유 분포에서 식별된다.
+            #
+            # 후속(v1.1): ``ServerNotReachableError``가 동시성 단위로 다발하면
+            # ``cancel_event``를 set해 circuit breaker로 동작하도록 보강 후보.
+            logger.warning(
+                "페르소나 인터뷰 도메인 예외(흡수)",
+                extra={
+                    "persona_id": persona.persona_id,
+                    "reason": str(exc),
+                    "type": _classify_exception(exc),
+                },
+            )
+            return _build_failed_record(persona, exc)
         except Exception as exc:  # noqa: BLE001 - 안전망
-            # InterviewSession 내부에서 도메인 예외는 record로 변환되지만,
             # 예상 못한 예외가 새어 나오면 본 layer에서 흡수한다(다른 task가
             # 죽지 않도록). status="failed"로 변환해 record를 만든다.
             logger.error(
@@ -292,11 +328,29 @@ async def _run_single(
             return _build_failed_record(persona, exc)
 
 
+def _classify_exception(exc: BaseException) -> str:
+    """예외 인스턴스를 ``error.type`` 문자열로 분류한다.
+
+    도메인 예외는 ``_DOMAIN_EXC_TYPE_MAP``으로 명시 매핑하고, 나머지는
+    ``unhandled_exception``으로 떨어진다. 부분 실패 안내(UI §2.3.6)에서 사유
+    분포를 사람이 읽을 수 있게 표기하기 위함이다.
+    """
+
+    for cls, label in _DOMAIN_EXC_TYPE_MAP.items():
+        if isinstance(exc, cls):
+            return label
+    return "unhandled_exception"
+
+
 def _build_failed_record(
     persona: PersonaMeta,
-    exc: Exception,
+    exc: BaseException,
 ) -> InterviewRecord:
-    """예상 못한 예외를 ``status=failed`` record로 변환한다."""
+    """예외를 ``status=failed`` record로 변환한다.
+
+    ``error.type``은 ``_classify_exception``이 도메인 예외를 명시 매핑한 결과를
+    채운다. 알려지지 않은 예외만 ``unhandled_exception``으로 떨어진다.
+    """
 
     from .models import Flags  # 지역 import로 순환 의존 회피.
 
@@ -311,7 +365,7 @@ def _build_failed_record(
         raw_responses=[],
         structured_summary=None,
         flags=Flags(),
-        error={"type": "unhandled_exception", "message": str(exc)},
+        error={"type": _classify_exception(exc), "message": str(exc)},
     )
 
 

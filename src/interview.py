@@ -247,27 +247,32 @@ def truncate_history(
     if not messages:
         return list(messages), False
 
-    if estimate_messages_tokens(messages) <= max_tokens:
+    # 진입 시 1회 전체 토큰을 계산하고, 페어 제거 시 제거된 메시지들의 토큰만
+    # 차감한다(O(n) 보장). 기존 구현은 매 iteration마다 ``head + body`` 전체를
+    # 재계산해 O(n²)였다.
+    total_tokens = estimate_messages_tokens(messages)
+    if total_tokens <= max_tokens:
         return list(messages), False
 
-    # system 메시지를 분리해 보존한다. messages[0]가 system이 아니면 보존 대상
-    # 없이 그대로 진행한다(예외적 호출).
-    head: list = []
     body: list = list(messages)
+    head: list = []
     first = messages[0]
     first_role = first.role if isinstance(first, MessageEntry) else first.get("role")
     if first_role == "system":
         head = [body.pop(0)]
 
     truncated = False
-    # 가장 오래된 user/assistant 페어를 2개씩 제거한다. body[0]은 보통 첫 user.
-    while estimate_messages_tokens(head + body) > max_tokens and len(body) >= 2:
-        # 페어 단위 제거(앞에서 2개씩).
+
+    # 가장 오래된 user/assistant 페어를 2개씩 제거한다.
+    while total_tokens > max_tokens and len(body) >= 2:
+        # 제거 대상 페어의 토큰 합만 차감한다(전체 재계산 회피).
+        total_tokens -= estimate_messages_tokens(body[:2])
         body = body[2:]
         truncated = True
 
     # 페어가 남지 않을 정도로 빠진 경우 마지막 단일 메시지까지 제거한다.
-    while estimate_messages_tokens(head + body) > max_tokens and body:
+    while total_tokens > max_tokens and body:
+        total_tokens -= estimate_messages_tokens(body[:1])
         body = body[1:]
         truncated = True
 
@@ -302,16 +307,26 @@ def should_auto_follow_up(
     return False
 
 
+_ENGLISH_WORD_RE = re.compile(r"[A-Za-z]+")
+_LETTER_WORD_RE = re.compile(r"[가-힣A-Za-z]+")
+
+
 def _english_ratio(text: str) -> float:
-    """전체 글자(공백/구두점 제외) 대비 영문 알파벳 비율."""
+    """전체 단어(한글+영문) 대비 영문 단어 비율(TDD §8.2 명세).
+
+    글자 단위 비율은 ``solo`` 같은 4글자 영단어가 한국어 1문장 안에 섞여도
+    임계값을 넘기 어려워 false negative가 잦았다. 단어 단위 비율은 영어 단어
+    개수를 직접 세므로 ``I think this is solo``처럼 영어 위주 응답을 더 잘
+    잡아낸다. 한자/숫자/구두점은 분모에서 제외한다.
+    """
 
     if not text:
         return 0.0
-    letters = [c for c in text if not c.isspace() and not c in ".,!?;:'\"()[]{}-"]
-    if not letters:
+    words_total = _LETTER_WORD_RE.findall(text)
+    if not words_total:
         return 0.0
-    english = sum(1 for c in letters if "a" <= c.lower() <= "z")
-    return english / len(letters)
+    english_words = _ENGLISH_WORD_RE.findall(text)
+    return len(english_words) / len(words_total)
 
 
 def _age_bucket(age: int) -> str:
