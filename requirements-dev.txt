@@ -1,4 +1,4 @@
 -r requirements.txt
-pytest==8.*
-pytest-asyncio==0.23.*
-pytest-httpx==0.30.*
+pytest==8.4.2
+pytest-asyncio==0.23.8
+pytest-httpx==0.30.0

@@ -502,7 +502,7 @@ def compute_rejection_freq(records: list, top_n: int) -> list:
     return items[:top_n]
 
 
-def _age_bucket(age: int) -> str:
+def _age_bucket_for_cohort(age: int) -> str:
     """연령을 5개 버킷 중 하나로 매핑한다(PRD §5.6 코호트)."""
 
     if age < 30:
@@ -595,7 +595,7 @@ def compute_cohort(records: list, *, min_cell: int = _MIN_COHORT_CELL) -> Cohort
 
     by_age = _build_cohort(
         records,
-        key=lambda r: _age_bucket(r.persona_meta.age),
+        key=lambda r: _age_bucket_for_cohort(r.persona_meta.age),
         labels=_all_age_labels(),
         min_cell=min_cell,
     )

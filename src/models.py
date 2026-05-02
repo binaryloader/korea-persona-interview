@@ -46,7 +46,7 @@ class PersonaMeta:
     occupation: str
     marital: str
     education: str
-    raw: dict
+    raw: dict[str, Any]
     family_type: Optional[str] = None
     housing_type: Optional[str] = None
 
@@ -145,7 +145,7 @@ class StructuredSummary:
     intent: str
     willingness_to_pay: Optional[int]
     willingness_to_pay_currency: str
-    rejection_reasons: list
+    rejection_reasons: list[str]
     one_line: str
 
     def __post_init__(self) -> None:
@@ -184,11 +184,11 @@ class InterviewRecord:
     started_at: str
     finished_at: str
     status: str
-    messages: list
-    raw_responses: list
+    messages: list["MessageEntry"]
+    raw_responses: list["RawResponse"]
     structured_summary: Optional[StructuredSummary]
     flags: Flags
-    error: Optional[dict]
+    error: Optional[dict[str, Any]]
 
     def __post_init__(self) -> None:
         if self.status not in ALLOWED_STATUS:
@@ -205,13 +205,13 @@ class RunMeta:
     slug: str
     schema_version: int
     product: str
-    questions: list
-    follow_up_questions: list
+    questions: list[str]
+    follow_up_questions: list[str]
     model: str
     seed: int
     started_at: str
     finished_at: str
-    config_snapshot: dict
+    config_snapshot: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -219,7 +219,7 @@ class BatchResult:
     """직렬화 단위. dataclasses.asdict로 JSON 변환한다(TDD §4)."""
 
     meta: RunMeta
-    records: list
+    records: list["InterviewRecord"]
 
 
 # ---------------------------------------------------------------------------

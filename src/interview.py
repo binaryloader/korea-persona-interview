@@ -589,7 +589,7 @@ def _english_ratio(text: str) -> float:
     return len(english_words) / len(words_total)
 
 
-def _age_bucket(age: int) -> str:
+def _age_bucket_for_drift(age: int) -> str:
     """연령을 6개 버킷 중 하나로 매핑한다(TDD §8.2)."""
 
     if age < 20:
@@ -722,7 +722,7 @@ def detect_persona_drift(
     if _english_ratio(response) > english_ratio_threshold:
         return True
 
-    own_bucket = _age_bucket(persona.age)
+    own_bucket = _age_bucket_for_drift(persona.age)
     other_buckets = tuple(b for b in _all_age_buckets() if b != own_bucket)
     own_gender = persona.gender  # "남자" 또는 "여자"
     own_region = persona.region
