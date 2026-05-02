@@ -11,7 +11,7 @@ readme = "README.md"
 requires-python = ">=3.12,<3.13"
 license = { file = "LICENSE" }
 authors = [
-    { name = "binaryloader", email = "binaryloader.dev@gmail.com" }
+    { name = "binaryloader", email = "binaryloader.official@gmail.com" }
 ]
 keywords = [
     "openai",
