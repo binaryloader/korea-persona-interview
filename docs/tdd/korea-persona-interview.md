@@ -701,7 +701,8 @@ Request body는 아래와 같다.
   "model": "string",
   "messages": [{"role": "system|user|assistant", "content": "string"}],
   "max_tokens": 500,
-  "temperature": 0.8
+  "temperature": 0.8,
+  "chat_template_kwargs": {"enable_thinking": false}
 }
 ```
 
@@ -719,6 +720,18 @@ Response body는 아래와 같다.
 ```
 
 `choices[0].message.content`만 사용한다. `usage` 필드는 v1에서 사용하지 않는다(MLX 서버 구현마다 누락 가능).
+
+#### 12.2.1. Qwen3 thinking 토글(chat_template_kwargs) 보강
+
+GATE-1에서 검증된 사실은 아래와 같다.
+
+- 정본 모델 `unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit`는 chat template default가 thinking on이다. 본 도구의 chat 호출은 항상 `chat_template_kwargs: {"enable_thinking": <config>}`를 body에 포함한다. config의 default 값은 False다
+- `enable_thinking=true`로 호출하면 응답이 `{role, content, reasoning}` 3키 구조로 오며 영문 reasoning이 토큰 예산(`max_tokens`)을 모두 소진해 `content`가 빈 문자열로 반환되는 사례가 다수다. v1은 default False로 둬서 본 사례를 회피한다
+- `enable_thinking=false`로 호출한 정상 응답은 `finish_reason: stop`을 반환하고 message는 `role`과 `content` 두 키만 포함한다. content는 한국어 자연스러운 페르소나 답변으로 채워진다(예시: `가격이 합리적이라 믿었지만 저는 이미 치킨이나 피자 같은 배달 음식에 지출하고 있어서 반찬 구독까지 쓸 돈이 없습니다. 1인 가구라 식재료를 남기거나 보관하는 게 귀찮아서 오히려 불필요한 구독이 될까 봐 걱정되네요`)
+- `enable_thinking=true`를 사용자가 의도적으로 켤 때 reasoning은 분석 가치가 있어 `ChatResponse.reasoning_trace`에 보존한다. False면 reasoning 필드가 와도 무시한다
+- 후보였던 27B unsloth 6bit 빌드는 토크나이저 EOS 인식 실패로 토큰 루프(`券后` 반복)가 발생해 후보에서 제외했다. 캐시도 메인 세션에서 삭제 완료했다. 정본 모델은 35B-A3B 그대로 유지한다
+
+빈 content 응답은 `EmptyResponseError`로 변환해 retry 대상으로 본다. 동일 페르소나에 대해 retry가 모두 실패하면 `RetryExhaustedError`로 승격되어 record는 `status="failed"`가 된다(TDD §5.2).
 
 #### 12.3. 에러 매핑
 
