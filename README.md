@@ -1,5 +1,7 @@
 # korea-persona-interview
 
+[![CI](https://github.com/binaryloader/korea-persona-interview/actions/workflows/test.yml/badge.svg)](https://github.com/binaryloader/korea-persona-interview/actions/workflows/test.yml)
+
 A field-ready CLI for running synthetic Korean persona interviews on top of the OpenAI Chat Completions API. Pair the NVIDIA Nemotron-Personas-Korea dataset (CC BY 4.0, about 1M Korean synthetic personas) with `gpt-4o-mini` to pressure-test product ideas, interview guides, and persona hypotheses before recruiting real participants.
 
 The tool ships four CLI subcommands (`healthcheck`, `list-personas`, `interview`, `report`), a JSON output mode for machine-to-machine use, and a Model Context Protocol (MCP) server so that agents like Claude Code, Cursor, and Codex can drive it from natural-language prompts.
