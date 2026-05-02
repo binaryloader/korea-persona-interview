@@ -756,7 +756,15 @@ dependency.md §1 leftpad 안티패턴 회피와 직접 통제 목적으로 아�
 
 ### 12. API 인터페이스(LLM HTTP 계약)
 
-본 도구는 외부 API를 제공하지 않는다. LLM 서버에 대한 호출은 OpenAI Chat Completions API를 따른다(ADR-002).
+본 도구는 외부 API를 제공하지 않는다. LLM 서버에 대한 호출은 ADR-003에 따라 provider별로 두 가지 계약을 사용한다.
+
+| Provider | 엔드포인트 | 인증 헤더 | 호출 흐름 |
+| --- | --- | --- | --- |
+| `openai` (공식 + 호환 로컬 서버) | `POST {base_url}/chat/completions` | `Authorization: Bearer ${OPENAI_API_KEY}` | OpenAI 표준 messages 배열, system은 messages 안에 둠 |
+| `anthropic` | `POST {base_url}/messages` | `x-api-key: ${ANTHROPIC_API_KEY}` + `anthropic-version: 2023-06-01` | top-level `system` 필드, messages는 user/assistant만 |
+| MCP sampling (host 위임) | host agent의 `sampling/createMessage` | 없음(MCP 세션에 의존) | OpenAI messages → SamplingMessage 변환, system은 system_prompt 인자 분리 |
+
+§12.1, §12.2는 OpenAI 계약을 구체적으로 기술한다. Anthropic 계약 차이는 `src/llm_backend.py`의 `AnthropicBackend`에 구현되어 있다.
 
 #### 12.1. 헬스체크
 
@@ -821,10 +829,10 @@ OpenAI gpt-4o-mini는 EOS 토큰 인식이 안정적이라 토큰 루프 사례(
 
 ### 13. 보안과 관측성
 
-security.md §1(시크릿), §3(입력 검증), §4(데이터 보호)와 PRD §6.3(보안과 개인정보), ADR-002를 따른다.
+security.md §1(시크릿), §3(입력 검증), §4(데이터 보호)와 PRD §6.3(보안과 개인정보), ADR-002, ADR-003을 따른다.
 
-- API 키는 환경변수 `OPENAI_API_KEY`(또는 fallback `KPI_OPENAI_API_KEY`)에서만 로드한다. 코드/설정/.env 파일/로그에 하드코딩하지 않는다(security.md §1)
-- `Authorization: Bearer ${OPENAI_API_KEY}` 헤더를 chat과 healthcheck 양쪽 모두에 부착한다. 로그 출력 시 헤더는 `Bearer sk-***` 형식으로 마스킹한다(logging.md §2)
+- API 키는 provider에 따라 두 가지 환경변수에서 로드한다. provider가 openai면 `OPENAI_API_KEY`를 쓰고 fallback은 `KPI_OPENAI_API_KEY`다. provider가 anthropic이면 `ANTHROPIC_API_KEY`다. 코드/설정/.env 파일/로그에 하드코딩하지 않는다(security.md §1). MCP 서버 진입점은 sampling 전용이라 server-side 키를 받지 않는다
+- 인증 헤더는 provider에 따라 다르다. OpenAI는 `Authorization: Bearer ${OPENAI_API_KEY}`이고 Anthropic은 `x-api-key: ${ANTHROPIC_API_KEY}` + `anthropic-version: 2023-06-01`이다. 로그 출력 시 둘 다 마스킹한다(logging.md §2)
 - `base_url`은 OpenAI 엔드포인트(`https://api.openai.com/v1`)를 기본 허용한다. ADR-002 이전의 localhost-only chat 가드는 OpenAI 백엔드 전환과 함께 제거한다. 다만 잘못된 base_url(예: 오타로 다른 도메인 지정)에 키와 사업 아이템이 송신되는 사고를 막기 위해 base_url을 INFO 로그에 명시 출력하여 사용자가 실행 직후 검증할 수 있게 한다. 향후 사용자 정의 OpenAI 호환 엔드포인트(예: Azure OpenAI, 사내 프록시) 지원이 필요하면 별도 ADR로 도입한다
 - product 본문 마스킹은 로그에 `mask_product()`를 적용한다(첫 30자 + 길이). 결과 JSON에는 원문 그대로 저장한다(로컬 파일이므로 외부 노출 위험 없음). 단 product 본문은 OpenAI 서버로 송신되므로 사용자가 실행 전 인지해야 한다(README와 도구 첫 실행 메시지에서 명시)
 - 페르소나 이름 마스킹은 로그에만 적용한다. 결과 JSON의 `persona_meta.name`은 원문을 보존한다(분석 시 필요)

@@ -1,9 +1,11 @@
 # ADR-002: 로컬 MLX 백엔드 → OpenAI Chat Completions API 백엔드 전환
 
-- 상태: Accepted
+- 상태: Superseded by ADR-003(2026-05-02-multi-provider-backend.md)
 - 일자: 2026-05-02
 - 결정자: 프로젝트 오너(승인 권한)
-- 관련 문서: `docs/prd/korea-persona-interview.md` §1, §6.3, §6.5, §10, `docs/tdd/korea-persona-interview.md` §2.5, §11, §12, §13, `docs/adr/2026-05-02-multiturn-strategy.md`(ADR-001)
+- 관련 문서: `docs/prd/korea-persona-interview.md` §1, §6.3, §6.5, §10, `docs/tdd/korea-persona-interview.md` §2.5, §11, §12, §13, `docs/adr/2026-05-02-multiturn-strategy.md`(ADR-001), `docs/adr/2026-05-02-multi-provider-backend.md`(ADR-003)
+
+> 본 ADR의 OpenAI 단일 백엔드 결정은 ADR-003에서 multi-provider(OpenAI / Anthropic / 로컬 LLM / MCP sampling)로 확장되었다. 본 문서는 의사결정의 역사적 맥락 보존용이며, 현재 백엔드 정책은 ADR-003을 따른다.
 
 ## 1. 컨텍스트
 

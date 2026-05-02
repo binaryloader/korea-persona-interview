@@ -2,37 +2,40 @@
 
 [![CI](https://github.com/binaryloader/korea-persona-interview/actions/workflows/test.yml/badge.svg)](https://github.com/binaryloader/korea-persona-interview/actions/workflows/test.yml)
 
-A field-ready CLI for running synthetic Korean persona interviews on top of the OpenAI Chat Completions API. Pair the NVIDIA Nemotron-Personas-Korea dataset (CC BY 4.0, about 1M Korean synthetic personas) with `gpt-4o-mini` to pressure-test product ideas, interview guides, and persona hypotheses before recruiting real participants.
+A field-ready CLI for running synthetic Korean persona interviews on top of OpenAI, Anthropic Claude, or any OpenAI-compatible local LLM (mlx_lm.server, vLLM, llama.cpp). Pair the NVIDIA Nemotron-Personas-Korea dataset (CC BY 4.0, about 1M Korean synthetic personas) with the model of your choice to pressure-test product ideas, interview guides, and persona hypotheses before recruiting real participants.
 
-The tool ships four CLI subcommands (`healthcheck`, `list-personas`, `interview`, `report`), a JSON output mode for machine-to-machine use, and a Model Context Protocol (MCP) server so that agents like Claude Code, Cursor, and Codex can drive it from natural-language prompts.
+The tool ships four CLI subcommands (`healthcheck`, `list-personas`, `interview`, `report`), a JSON output mode for machine-to-machine use, and a Model Context Protocol (MCP) server that delegates inference to the host agent (Claude Code, Cursor, Codex) via the sampling capability.
 
 ## Features
 
 - Multi-turn interviews with 1M+ Korean synthetic personas (NVIDIA Nemotron-Personas-Korea, CC BY 4.0)
-- OpenAI-powered inference via Chat Completions API. Default model `gpt-4o-mini`, configurable per-run with `--model`
+- Three inference targets: OpenAI Chat Completions API, Anthropic Messages API, and any OpenAI-compatible local server (mlx_lm.server, vLLM, llama.cpp)
+- `--provider openai|anthropic`, `--base-url URL`, `--model MODEL_ID` CLI flags for one-off backend overrides
+- MCP server (`python -m src.mcp_server`) that exposes the four CLI commands as tools to Claude Code, Cursor, and Codex. Inference is delegated to the host agent via `sampling/createMessage`, so the server itself holds no API key
 - Automatic markdown report after every interview run (toggle off with `--no-report` for JSON-only pipelines)
 - `--json` root mode that emits a single JSON document on stdout for shell scripts and external agents
 - Single-turn mode (`--single-turn`) that bundles every question into one chat call to cut tokens at scale
-- MCP server (`python -m src.mcp_server`) that exposes the four CLI commands as tools to Claude Code, Cursor, and Codex
-- MCP sampling backend so the same MCP server can use the host agent's LLM (Claude in Claude Code, etc.) and skip the OpenAI key entirely. Defaults to OpenAI when sampling is unavailable
 - Async batch runner with concurrency 1-10 (default 4), tqdm progress, SIGINT partial save, and exit-code 3 partial-failure detection
-- Token usage and USD cost estimate printed at the end of every run, also written into the result JSON and report header
-- OpenAI prompt-caching-friendly system prompt structure. Cached input tokens are tracked separately and discounted in the cost estimate
+- Token usage and USD cost estimate printed at the end of every run, also written into the result JSON and report header. Pricing covers OpenAI gpt-4o-mini/gpt-4o and Anthropic claude-haiku/sonnet/opus
+- Prompt-caching-friendly system prompt structure. OpenAI cached input tokens and Anthropic `cache_read_input_tokens` are tracked separately and discounted in the cost estimate
 - Per-process persona-pool cache so `list-personas` -> `interview` -> `interview --dry-run` on the same filter/seed reuses the sampled list
 - External system-prompt template (`prompts/system_prompt.txt`) for domain tone customization without code changes
 - Externalized heuristic thresholds (English ratio, ambiguous keywords, refusal keywords, follow-up text, cohort masking, partial failure ratio) in `config.yaml`
 - Filter DSL with `age`, `gender`, `region`, `subregion`, `occupation_keyword` keys plus AND/OR combination and 17-province aliases
 - Persona drift detection (English ratio, CJK ideograph ratio, age/gender/region/family-type contradiction) and short-answer auto follow-up
 - Reproducible sampling via `--seed`. Same seed plus same filter plus same dataset version returns the same personas
-- No external telemetry. Outbound calls go only to the OpenAI API and (on first run) Hugging Face Hub for the dataset
+- No external telemetry. Outbound calls go only to the configured LLM endpoint and (on first run) Hugging Face Hub for the dataset
 
 ## Requirements
 
 - Python 3.12 (pinned in `.python-version`)
 - [uv](https://docs.astral.sh/uv/) package manager
-- OpenAI API key with access to the chosen model (default `gpt-4o-mini`). Get one at https://platform.openai.com/api-keys
-- Internet access for OpenAI API calls and the first dataset download (about 1M records, cached afterwards under `~/.cache/huggingface`)
-- macOS, Linux, and Windows are all supported. There is no Apple Silicon, GPU, or local-runtime requirement
+- An API key for the provider you plan to use:
+  - `OPENAI_API_KEY` for `provider=openai` (default). Get one at https://platform.openai.com/api-keys
+  - `ANTHROPIC_API_KEY` for `provider=anthropic`. Get one at https://console.anthropic.com/
+  - For local LLMs (mlx_lm.server, vLLM, llama.cpp) keep `provider=openai` and use any non-empty value (the local server ignores it)
+- Internet access for the LLM API call and the first dataset download (about 1M records, cached afterwards under `~/.cache/huggingface`)
+- macOS, Linux, and Windows are all supported. There is no Apple Silicon, GPU, or local-runtime requirement (the local-LLM path is opt-in)
 
 ## Dependencies
 
@@ -101,9 +104,25 @@ python main.py interview --product "1인 가구용 반찬 정기배송, 월 39,9
 python main.py report outputs/interview_korea-persona-interview_20260502_120000.json
 ```
 
+To use Claude instead, set `ANTHROPIC_API_KEY` and pass `--provider anthropic`.
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+python main.py healthcheck --provider anthropic --model claude-haiku-4-5
+python main.py interview --provider anthropic --model claude-haiku-4-5 --product "..." --questions "..." --n 10
+```
+
+To use a local OpenAI-compatible server (mlx_lm.server, vLLM, llama.cpp), keep `provider=openai` and override `--base-url`. Any non-empty `OPENAI_API_KEY` works; local servers ignore the value.
+
+```bash
+export OPENAI_API_KEY=local
+python main.py healthcheck --base-url http://localhost:8080/v1 --model llama-3-8b
+python main.py interview --base-url http://localhost:8080/v1 --model llama-3-8b --product "..." --questions "..." --n 10
+```
+
 The `interview` command auto-generates the markdown report after the JSON is saved (default `--report`). The standalone `python main.py report ...` step in the Quick Start is shown for completeness; you only need it if you used `--no-report`, edited the JSON, or want to regenerate the report with different `--top-n` or `--include-drift` settings.
 
-`KPI_OPENAI_API_KEY` works as a fallback if you want to keep the project key separate from your shell-wide `OPENAI_API_KEY`. A `.env` file at the project root with `OPENAI_API_KEY=sk-...` is also picked up automatically.
+`KPI_OPENAI_API_KEY` works as a fallback if you want to keep the project key separate from your shell-wide `OPENAI_API_KEY`. A `.env` file at the project root with `OPENAI_API_KEY=sk-...` (or `ANTHROPIC_API_KEY=sk-ant-...`) is also picked up automatically.
 
 ## Usage Examples
 
@@ -201,7 +220,8 @@ These apply to every subcommand and must be placed before the subcommand name.
 
 | Option | Default | Description |
 | --- | --- | --- |
-| `--base-url URL` | from `llm.base_url` | OpenAI-compatible base URL |
+| `--provider {openai,anthropic}` | from `llm.provider` | LLM provider. Local LLMs use `openai` plus `--base-url` |
+| `--base-url URL` | from `llm.base_url` | LLM server base URL (use `http://localhost:PORT/v1` for local LLMs) |
 | `--model MODEL_ID` | from `llm.model` | One-shot model override |
 
 ### `list-personas` options
@@ -228,6 +248,8 @@ These apply to every subcommand and must be placed before the subcommand name.
 | `--dry-run` | off | Run one persona, print to console, write neither JSON nor report |
 | `--output DIR` | `outputs/` | Result JSON directory |
 | `--report / --no-report` | `--report` | Auto-generate the markdown report after the interview. `--no-report` keeps JSON only |
+| `--provider {openai,anthropic}` | from `llm.provider` | LLM provider |
+| `--base-url URL` | from `llm.base_url` | LLM server base URL |
 | `--model MODEL_ID` | from `llm.model` | One-shot model override |
 
 ### `report` options
@@ -238,6 +260,8 @@ These apply to every subcommand and must be placed before the subcommand name.
 | `--top-n N` | `10` | Number of top rejection reasons |
 | `--include-drift` | off | Include `status: drift` records in quantitative aggregation |
 | `--output-dir DIR` | next to input JSON | Where to save the markdown report |
+| `--provider {openai,anthropic}` | from `llm.provider` | LLM provider |
+| `--base-url URL` | from `llm.base_url` | LLM server base URL |
 | `--model MODEL_ID` | from `llm.model` | One-shot model override for the qualitative-insight call |
 
 ### Filter DSL
@@ -314,17 +338,18 @@ The only environment variables this tool reads are secrets and the output direct
 
 | Variable | Purpose |
 | --- | --- |
-| `OPENAI_API_KEY` | Standard OpenAI API key |
+| `OPENAI_API_KEY` | OpenAI API key (used when `provider=openai`) |
+| `ANTHROPIC_API_KEY` | Anthropic API key (used when `provider=anthropic`) |
 | `KPI_OPENAI_API_KEY` | Fallback used when `OPENAI_API_KEY` is unset |
 | `KPI_OUTPUT_DIR` | Output directory override (kept for test/CI isolation) |
 
-The v1.0 `KPI_LLM_*` and `KPI_BATCH_*` overrides have been removed. Change the model with `--model gpt-4o` or by editing `llm.model` in `config.yaml`.
+Change the model or provider with `--model gpt-4o`, `--provider anthropic --model claude-sonnet-4-5`, or by editing `llm.*` in `config.yaml`.
 
 Notable yaml keys.
 
-- `llm.base_url` - OpenAI Chat Completions endpoint (default `https://api.openai.com/v1`). Set to a different OpenAI-compatible endpoint if you have one
-- `llm.model` - model id sent to the API. Default `gpt-4o-mini`. See "Choosing a model" below for trade-offs
-- `llm.backend` - inference backend, `openai` / `mcp_sampling` / `auto` (default `auto`). See "Choosing an inference backend" under Integration with External Agents for the trade-offs
+- `llm.provider` - `openai` or `anthropic` (default `openai`)
+- `llm.base_url` - LLM endpoint. Default flips to `https://api.anthropic.com/v1` when `provider=anthropic`. Override to `http://localhost:PORT/v1` for local OpenAI-compatible servers
+- `llm.model` - model id sent to the API. Default flips to `claude-haiku-4-5` when `provider=anthropic`, otherwise `gpt-4o-mini`. See "Choosing a model" below for trade-offs
 - `llm.context_budget` - 32000 token budget for multi-turn history (oldest user/assistant pairs are dropped first, system prompt is preserved)
 - `batch.concurrency` - 1-10 allowed (default 4). Anything outside this range is rejected to keep OpenAI rate-limit pressure and cost predictable. The v1.0 cap of 1-3 was a local-MLX memory guard and is lifted now that the backend is OpenAI
 - `batch.partial_failure_threshold` - completion ratio under which the batch is flagged partial-failure (default 0.5, higher is stricter)
@@ -345,11 +370,15 @@ The full annotated yaml lives in [config.yaml](config.yaml).
 
 ### Choosing a model
 
-`gpt-4o-mini` is the default because it gives the best cost-to-quality ratio for this workload. If you measure persona-drift rates above 5% on your own runs, try the alternatives below by changing `llm.model` in `config.yaml` or by passing `--model gpt-4o` on the command line for a one-off run.
+`gpt-4o-mini` is the default because it gives the best cost-to-quality ratio for this workload. If you measure persona-drift rates above 5% on your own runs, try the alternatives below by changing `llm.model` in `config.yaml` or by passing `--model` on the command line for a one-off run.
 
-- `gpt-4o-mini` - default. About $0.50 - $2.00 per 100-persona batch (5 questions). Good Korean fluency and persona adherence
-- `gpt-4o` - higher quality, roughly 5-10x the cost. Use only if `gpt-4o-mini` does not meet your drift target
-- Other OpenAI models work as long as they support the Chat Completions API. Cheaper or older models may need lower drift thresholds
+- `gpt-4o-mini` (OpenAI) - default. About $0.50 - $2.00 per 100-persona batch (5 questions). Good Korean fluency and persona adherence
+- `gpt-4o` (OpenAI) - higher quality, roughly 5-10x the cost. Use only if `gpt-4o-mini` does not meet your drift target
+- `claude-haiku-4-5` (Anthropic) - default model when `--provider anthropic`. Pricing similar to `gpt-4o-mini`, fluent Korean output
+- `claude-sonnet-4-5` / `claude-opus-4-5` (Anthropic) - higher quality at higher cost
+- Local LLMs via `mlx_lm.server`, `vLLM`, or `llama.cpp` work as long as they expose the OpenAI Chat Completions API surface. Korean fluency depends heavily on the underlying weights; validate persona drift on a small sample first
+
+Persona-drift behavior has been validated end-to-end with `gpt-4o-mini`. Other models may need tuned thresholds (`interview.english_ratio_threshold`, `interview.short_answer_threshold`) for similar quality.
 
 ## Customization
 
@@ -382,21 +411,23 @@ There are two ways to drive this tool from external agents like Claude Code, Cur
 
 ### Choosing an inference backend
 
-The MCP server supports two ways of producing the actual model output. Pick whichever fits the host agent and your billing setup. The choice is set with `llm.backend` in `config.yaml` (default `auto`).
+The matrix below covers every supported entry point and inference target. Pick the column that matches how you plan to run the tool.
 
-| Backend | Who pays for inference | Requires `OPENAI_API_KEY` | Model used | When to use |
-| --- | --- | --- | --- | --- |
-| `openai` (CLI default, MCP fallback) | Your OpenAI account | Yes | The model in `llm.model` (default `gpt-4o-mini`) | Reproducibility matters, you want a known model and known cost, or you are running headless without an MCP host |
-| `mcp_sampling` (MCP only) | The host agent (e.g. Claude Code uses your Anthropic plan) | No | Whatever the host agent picks for sampling | You already pay for the host agent and want to avoid a second bill, or you want to evaluate a different model family without changing keys |
+| Entry point | Inference target | Who pays | Requires API key | Model | When to use |
+| --- | --- | --- | --- | --- | --- |
+| CLI | OpenAI | Your OpenAI account | `OPENAI_API_KEY` | `gpt-4o-mini` (default) or any OpenAI model | Reproducible defaults, validated persona quality |
+| CLI | Anthropic Claude | Your Anthropic account | `ANTHROPIC_API_KEY` | `claude-haiku-4-5` (default), Sonnet, Opus | When you already have Anthropic credits or want a Claude baseline |
+| CLI | Local OpenAI-compatible (mlx_lm.server, vLLM, llama.cpp) | None | any non-empty | The local server's loaded model | Offline runs, custom fine-tunes, hardware you control |
+| MCP server | Host agent's LLM via `sampling/createMessage` | The host agent's plan | None on the server | Whatever the host picks | When the agent (Claude Code, Cursor, ...) already has an LLM and you do not want a second bill |
 
-`auto` (the default) picks `mcp_sampling` whenever the MCP client advertises the sampling capability and falls back to OpenAI otherwise. The CLI entry point always uses OpenAI because there is no MCP client session to ask. A line in the server log on each tool call (`Using client LLM via MCP sampling` or `Using OpenAI backend`) tells you which backend was selected for that call. The MCP `interview` and `healthcheck` responses also include a `"backend": "openai" | "mcp_sampling"` field so the agent can confirm the routing.
+The MCP server is sampling-only: there is no OpenAI/Anthropic fallback inside the MCP entry point. If you run `python -m src.mcp_server` outside an MCP host, every tool returns a config error pointing back at the CLI. The reverse is also true: the CLI never opens an MCP session.
 
-The trade-offs to keep in mind.
+Trade-offs to keep in mind.
 
-- Cost. With `mcp_sampling` the inference cost shifts to the host agent's plan. With `openai` it lands on your OpenAI invoice. The `estimated_cost_usd` field in the result JSON is always 0 for `mcp_sampling` because the sampling protocol does not return token usage to the server
-- Quality. With `openai` you get the exact model you set in `llm.model` and the report is reproducible by anyone with the same key. With `mcp_sampling` you depend on whichever model the host agent selects, which may differ across hosts and over time
-- Privacy. With `openai` the `--product` text and persona metadata are sent to OpenAI. With `mcp_sampling` they are sent to whatever LLM the host agent uses. Either way, do not put unreleased IP or PII into `--product` (see Limitations)
-- Token tracking. With `openai` the tool tracks prompt/completion/cached tokens and a USD cost estimate. With `mcp_sampling` only the response text is returned, so the tool reports zero usage. If accurate cost tracking matters, prefer `openai`
+- Cost. Direct API providers (OpenAI, Anthropic) bill per token. Local LLMs are free. MCP sampling shifts the cost to whatever plan the host agent uses. The `estimated_cost_usd` field in the result JSON is always 0 for the MCP sampling path because the sampling protocol does not return token usage to the server
+- Quality. Persona drift is calibrated against `gpt-4o-mini`; other targets may need tuned thresholds. Validate on a small batch first
+- Privacy. The `--product` text and persona metadata are sent to whichever endpoint you configure. Do not put unreleased IP or PII into `--product` (see Limitations)
+- Token tracking. OpenAI and Anthropic responses include token usage and the tool tracks both. Local servers that do not return `usage` and the MCP sampling path both report zero usage
 
 ### Option A: MCP server (recommended)
 
@@ -512,7 +543,7 @@ korea-persona-interview/
 │   └── _pricing.py            # Per-model USD cost table (estimate)
 ├── tests/
 │   ├── conftest.py            # Shared fixtures, env isolation, dataset mock
-│   ├── test_*.py              # 504 tests (round A+B+C regression + sampling backend)
+│   ├── test_*.py              # 521 tests (round A+B+C regression + sampling backend)
 │   └── manual/smoke_e2e.py    # Live OpenAI smoke test (excluded from default run)
 ├── examples/
 │   └── mcp/                   # Drop-in mcp.json snippets for Claude Code and Cursor
@@ -546,9 +577,9 @@ Run the full test suite with pytest. The suite mocks the OpenAI API with `pytest
 pytest tests/ -v
 ```
 
-The current regression covers 504 tests across rounds A, B, and C plus the MCP sampling backend (config, filter DSL, persona loader, LLM client, LLM backend selection, interview session, persona drift, batch runner, report quant, MCP dispatch, error messages, logging, and CLI integration).
+The current regression covers 521 tests including OpenAI, Anthropic Claude, and MCP sampling backend coverage (config, filter DSL, persona loader, LLM client, LLM backend selection, interview session, persona drift, batch runner, report quant, MCP dispatch, error messages, logging, pricing, and CLI integration).
 
-Manual smoke tests that exercise a real OpenAI API call live under `tests/manual/` and are excluded from the default run. They expect `OPENAI_API_KEY` in the environment.
+Manual smoke tests that exercise a real LLM API call live under `tests/manual/` and are excluded from the default run. They expect `OPENAI_API_KEY` (or `ANTHROPIC_API_KEY`) in the environment.
 
 ### Lint and format
 
@@ -564,11 +595,11 @@ Synthetic personas are not a replacement for real user interviews. The dataset i
 
 Every report and JSON file produced by this tool also carries the synthetic-data disclaimer in its footer.
 
-The `--product` text and the persona metadata used for each interview are sent to OpenAI servers as part of the Chat Completions request. Do not put unreleased IP, trade secrets, or personally identifiable information into `--product`. Abstract or paraphrase sensitive parts before running the tool. The tool itself ships no external telemetry beyond the OpenAI calls and the initial dataset download from Hugging Face.
+The `--product` text and the persona metadata used for each interview are sent to whichever LLM endpoint you configure (OpenAI, Anthropic, a local server, or the MCP host agent's LLM). Do not put unreleased IP, trade secrets, or personally identifiable information into `--product`. Abstract or paraphrase sensitive parts before running the tool. The tool itself ships no external telemetry beyond the LLM call and the initial dataset download from Hugging Face.
 
-A 100-persona batch with 5 questions costs roughly $0.50 - $2.00 in OpenAI usage when running on `gpt-4o-mini` at default settings (multi-turn history capped at 32000 tokens, structured summary on, qualitative insight on). Single-turn mode and prompt caching can bring that down by about half. Heavier toggles (more `--persona-fields`, more questions, larger models) raise the cost in proportion. Watch usage at https://platform.openai.com/usage if you run large batches in a tight loop.
+A 100-persona batch with 5 questions costs roughly $0.50 - $2.00 in OpenAI usage when running on `gpt-4o-mini` at default settings (multi-turn history capped at 32000 tokens, structured summary on, qualitative insight on). Anthropic `claude-haiku-4-5` lands in a similar range. Single-turn mode and prompt caching can bring that down by about half. Heavier toggles (more `--persona-fields`, more questions, larger models) raise the cost in proportion. Local LLMs are free at the API level, but persona quality varies by model.
 
-The cost number printed at the end of each run and the `estimated_cost_usd` field in the result JSON are estimates derived from the in-repo pricing table (`src/_pricing.py`, OpenAI list prices as of 2026-05). The actual invoice from OpenAI is the authoritative number.
+The cost number printed at the end of each run and the `estimated_cost_usd` field in the result JSON are estimates derived from the in-repo pricing table (`src/_pricing.py`, list prices as of 2026-05). The actual invoice from your provider is the authoritative number. Persona-drift quality is validated against `gpt-4o-mini`; other models may need tuned thresholds.
 
 Legal and ethical review of the output is the user's responsibility. The tool does not run any compliance or PII filter beyond the input-secret policy.
 
@@ -604,7 +635,7 @@ The OpenAI Chat Completions API does not require attribution. The default model 
 
 Pull requests are welcome. Before opening one.
 
-- Run `pytest tests/ -v` and confirm all 504 tests pass
+- Run `pytest tests/ -v` and confirm all 521 tests pass
 - Use Conventional Commits
 - For substantive changes, open an issue first to discuss the approach
 

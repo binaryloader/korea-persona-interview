@@ -290,9 +290,14 @@ CLI는 4개 서브커맨드를 제공한다. 매크로 명령(예: `run-all`)은
 ### 6.5. 호환성과 환경
 
 - Python 3.12에서 동작한다(`.python-version` 고정). 3.10 이상에서도 동작 가능하지만 v1 검증 환경은 3.12다
-- 운영 체제 제약은 없다. macOS, Linux, Windows 모두에서 동작한다(OpenAI API 호출은 OS 무관하므로 Apple Silicon 전용 제약을 v1에서 제거했다)
-- 인터넷 접근이 필요하다. OpenAI API에 도달할 수 있어야 하며, 데이터셋 첫 로드 시 Hugging Face Hub에 도달할 수 있어야 한다
-- 의존성은 `httpx`, `datasets`, `pyyaml`, `tqdm`, `click`로 한정한다. `openai`/`anthropic` SDK는 도입하지 않는다(`dependency.md` §1 leftpad 안티패턴 회피와 직접 통제 목적). `mlx-lm` 의존도 v1에서 제거했다
+- 운영 체제 제약은 없다. macOS, Linux, Windows 모두에서 동작한다
+- LLM provider는 세 가지를 지원한다(ADR-003)
+  - OpenAI Chat Completions API(기본)
+  - Anthropic Messages API(`provider=anthropic`)
+  - OpenAI 호환 로컬 서버(mlx_lm.server, vLLM, llama.cpp 등). `provider=openai` + `--base-url` override
+- MCP 서버 진입점은 sampling 전용이다. host agent의 LLM에 위임하며 server-side 키가 불필요하다
+- 인터넷 접근은 직접 호출 provider(OpenAI/Anthropic)와 데이터셋 첫 로드 시 Hugging Face Hub에 한해 필요하다. 로컬 LLM 또는 MCP sampling 경로는 인터넷 없이도 인터뷰가 가능하다(데이터셋 캐시 필요)
+- 의존성은 `httpx`, `datasets`, `pyyaml`, `tqdm`, `click`, `mcp`로 한정한다. `openai`/`anthropic` SDK는 도입하지 않는다(`dependency.md` §1 leftpad 안티패턴 회피와 직접 통제 목적). `mlx-lm` 의존도 v1에서 제거했다
 - 모든 의존성 버전은 `requirements.txt`에 안정 버전으로 고정하고 lock 파일을 함께 커밋한다(`dependency.md` §2)
 
 ### 6.6. 관측 가능성
@@ -416,7 +421,12 @@ CLI는 4개 서브커맨드를 제공한다. 매크로 명령(예: `run-all`)은
 ### 10.8. 모델 변경 가능성
 
 - 위험: 기본 모델 `gpt-4o-mini`가 deprecated되거나 사용자가 다른 OpenAI 모델(`gpt-4o`, `gpt-4-turbo` 등)을 선택할 수 있다. 모델별로 응답 품질, 토큰당 비용, rate limit이 달라 비용/품질 트레이드오프가 발생한다
-- 완화: 모델 ID는 `config.yaml`의 `llm.model`(기본)과 CLI `--model` 옵션(일회성)으로만 변경하도록 설계한다. v1.x에서는 "비밀=env, 기본=yaml, 일회성=CLI" 정책으로 단순화하며 v1.0의 `KPI_LLM_MODEL` 환경변수 override는 제거됐다. 게이트 1에서 사용자에게 사용 모델을 확인 후 진행. README에 대표 모델별 비용/품질 가이드를 둔다(예: gpt-4o-mini는 가성비 기본값, gpt-4o는 품질 우선 시 검토). gpt-4o-mini 페르소나 깨짐 비율 측정 결과가 5%를 초과하면 ADR-002 supersede로 모델 상향을 검토한다
+- 완화: 모델 ID는 `config.yaml`의 `llm.model`(기본)과 CLI `--model` 옵션(일회성)으로만 변경하도록 설계한다. v1.x에서는 "비밀=env, 기본=yaml, 일회성=CLI" 정책으로 단순화한다. README에 대표 모델별 비용/품질 가이드를 둔다(예: gpt-4o-mini는 가성비 기본값, gpt-4o는 품질 우선 시 검토). gpt-4o-mini 페르소나 깨짐 비율 측정 결과가 5%를 초과하면 ADR-002 supersede로 모델 상향을 검토한다
+
+### 10.9. provider별 응답 품질 차이
+
+- 위험: ADR-003 채택으로 OpenAI/Anthropic/로컬 LLM/MCP sampling 네 경로가 활성화되었지만 페르소나 일관성과 drift 비율은 `gpt-4o-mini` 기준으로만 검증된 상태다. 다른 provider 또는 모델로 전환했을 때 페르소나 추종력이 달라질 수 있다
+- 완화: README "Choosing a model" 섹션에 검증 기준을 명시하고, 새 provider 도입 시 작은 표본(10-20명)으로 drift 비율을 먼저 측정하도록 안내한다. v1.1 백로그에 provider별 검증 보고서 작업을 등록한다
 
 데이터셋 실제 컬럼명 확정은 dev-planner가 TDD 작성 전에 `datasets.load_dataset(..., streaming=True)`로 1샘플만 로드해 컬럼 키와 값 표기를 직접 확인한 뒤 TDD에 매핑값(예: `gender_field: sex`, `region_field: residence_region`)까지 박는 방식으로 처리한다. 게이트 2(§5.10)는 구현 단계 휴먼 검증으로 그대로 유지하며, 두 단계가 중복되어도 비용이 거의 없으므로 안전망으로 둘 다 운영한다.
 

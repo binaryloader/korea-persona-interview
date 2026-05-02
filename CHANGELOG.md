@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- `AnthropicBackend` calling the Anthropic Messages API directly over httpx (no SDK dependency). Token usage maps `input_tokens`, `output_tokens`, and `cache_read_input_tokens` into the existing `TokenUsage` shape for cost-accounting parity with OpenAI
+- `llm.provider` config field (`openai` or `anthropic`) plus matching CLI flags `--provider`, `--base-url`, and `--model` on `healthcheck`, `interview`, and `report`. The provider switch also picks up `ANTHROPIC_API_KEY` from the environment or `.env`
+- Per-model price entries for `claude-haiku-4-5`, `claude-sonnet-4-5`, and `claude-opus-4-5` in `src/_pricing.py`. Numbers are estimates from the Anthropic pricing page; callers continue to surface "estimated" wording
+- `build_cli_backend(LlmConfig)` factory that returns the correct backend (OpenAI or Anthropic) based on `provider`. The CLI uses this for every entry point so swapping provider only changes one call site
+
+### Changed
+
+- The MCP server is now sampling-only. Every tool call delegates inference to the host agent via `sampling/createMessage`. Running the MCP entry point without an MCP host returns a config error pointing at the CLI (`python main.py interview ...`)
+- Source comments and docstrings rewritten at SDK-publication level. Internal change-history notes were removed; public surface keeps API-doc style docstrings only
+- `LlmConfig.backend` (the legacy `auto`/`openai`/`mcp_sampling` toggle) is gone. Existing yaml files that still set `llm.backend` are silently dropped during config load to keep upgrades graceful
+- Console messages reference "LLM 서버" instead of "OpenAI 서버" so the same copy works for every provider
+
+### Removed
+
+- `LlmConfig.backend` field and the `select_backend` / `normalize_backend_choice` policy helpers in `llm_backend.py`. Use `build_cli_backend(config.llm)` from the CLI and the explicit `McpSamplingBackend(session)` constructor in the MCP server instead
+
 ## [0.1.0] - 2026-05-02
 
 Initial public release of korea-persona-interview, a CLI for running synthetic Korean persona interviews on top of the OpenAI Chat Completions API and the NVIDIA Nemotron-Personas-Korea dataset (CC BY 4.0, about 1M Korean synthetic personas).

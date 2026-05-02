@@ -7,7 +7,8 @@
 - [prd/korea-persona-interview.md](prd/korea-persona-interview.md) - 제품 요구사항(배경/목표/스토리/수용 기준/기능/비기능/우선순위/제외/지표/리스크)
 - [tdd/korea-persona-interview.md](tdd/korea-persona-interview.md) - 기술 설계(데이터셋 컬럼 매핑/모듈 책임/시그니처/JSON 스키마/에러/로깅/멀티턴/동시성/의존성/CLI/테스트/작업 분해)
 - [adr/2026-05-02-multiturn-strategy.md](adr/2026-05-02-multiturn-strategy.md) - 멀티턴 + 단일턴 구조화 요약 채택 결정
-- [adr/2026-05-02-openai-backend-migration.md](adr/2026-05-02-openai-backend-migration.md) - 로컬 MLX → OpenAI Chat Completions API 백엔드 전환 결정
+- [adr/2026-05-02-openai-backend-migration.md](adr/2026-05-02-openai-backend-migration.md) - 로컬 MLX → OpenAI Chat Completions API 백엔드 전환 결정(ADR-003에 의해 supersede)
+- [adr/2026-05-02-multi-provider-backend.md](adr/2026-05-02-multi-provider-backend.md) - multi-provider 백엔드(OpenAI / Anthropic / 로컬 LLM / MCP sampling) 결정. ADR-002 supersede
 - [ui/korea-persona-interview.md](ui/korea-persona-interview.md) - CLI 사용자 흐름과 콘솔 출력 명세, 한국어 에러 메시지 사전, 리포트 마크다운 섹션 트리
 - [tasks/korea-persona-interview.md](tasks/korea-persona-interview.md) - 작업 표(T1-T11 + GATE-1/2), 의존성 그래프, 마일스톤
 - [backlog/v1.1.md](backlog/v1.1.md) - v1.1로 미룬 백로그 항목과 동기
@@ -70,17 +71,23 @@
 
 ### 3.4. 백엔드/시크릿/환경변수
 
-- base_url은 OpenAI Chat Completions 엔드포인트인 `https://api.openai.com/v1`이 기본값이다
-- 모델 ID는 `gpt-4o-mini`(기본값)다. `config.yaml`의 `llm.model` 또는 CLI `--model` 옵션으로 변경 가능하며 v1.x부터 KPI_LLM_MODEL 환경변수는 인정하지 않는다
-- 환경변수는 비밀과 출력 디렉토리만 받는다. `OPENAI_API_KEY`(표준 비밀), `KPI_OPENAI_API_KEY`(fallback 비밀), `KPI_OUTPUT_DIR`(테스트/CI 격리용)이다. v1.0의 KPI_LLM_*/KPI_BATCH_* 환경변수 override는 v1.x에서 제거됐다. 비밀은 코드/yaml/CLI에 하드코딩 금지(security.md §1)다
+- CLI 진입점은 `LlmConfig.provider`로 백엔드를 결정한다. `provider=openai`는 OpenAI 호환(공식 API + 로컬 mlx_lm.server/vLLM/llama.cpp)에 모두 사용한다. `provider=anthropic`은 Anthropic Messages API 직접 호출이다(httpx)
+- base_url은 provider에 따라 자동 결정된다. `provider=openai`이면 `https://api.openai.com/v1`, `provider=anthropic`이면 `https://api.anthropic.com/v1`이 기본값이다. 로컬 LLM은 `--base-url http://localhost:PORT/v1`로 명시 override한다
+- 모델 ID는 provider에 따라 자동 결정된다. openai 기본은 `gpt-4o-mini`, anthropic 기본은 `claude-haiku-4-5`다. `config.yaml`의 `llm.model` 또는 CLI `--model` 옵션으로 변경 가능하다
+- MCP 서버 진입점은 sampling 전용이다. host agent의 LLM에 `sampling/createMessage`로 위임하며 server-side에는 키가 필요 없다. host가 sampling capability를 노출하지 않으면 ConfigError + CLI fallback 안내로 차단된다
+- 환경변수는 비밀과 출력 디렉토리만 받는다. `OPENAI_API_KEY`/`KPI_OPENAI_API_KEY`(provider=openai), `ANTHROPIC_API_KEY`(provider=anthropic), `KPI_OUTPUT_DIR`(테스트/CI 격리용)이다. 비밀은 코드/yaml/CLI에 하드코딩 금지(security.md §1)다
 - `.env` 파일은 stdlib 파서로 비밀만 환경에 승격한다. setdefault 의미라 이미 set된 환경변수는 덮지 않는다
+- 기존 `LlmConfig.backend` 토글은 제거됐다. yaml에 잔존해도 graceful하게 무시된다(ADR-003)
 
-### 3.5. 토큰 사용량과 비용 추정(라운드 A)
+### 3.5. 토큰 사용량과 비용 추정(라운드 A + multi-provider)
 
-- 모든 응답의 `usage.prompt_tokens_details.cached_tokens`를 `TokenUsage.cached_tokens`로 매핑하고 배치 종료 시 `BatchResultEnvelope.usage`로 합산한다
-- `src/_pricing.py`의 `PRICING_TABLE`이 모델별 단가를 박는다. 알려지지 않은 모델 ID는 `_FALLBACK_PRICING`으로 보수적으로 표시하며 fallback 단가는 gpt-4o-mini와 동일하게 둔다
+- OpenAI 응답: `usage.prompt_tokens_details.cached_tokens`를 `TokenUsage.cached_tokens`로 매핑한다
+- Anthropic 응답: `usage.input_tokens`/`output_tokens`/`cache_read_input_tokens`를 `TokenUsage` 같은 모양으로 매핑한다
+- MCP sampling 응답: usage 미반환이라 0으로 채운다(`estimated_cost_usd`도 0)
+- 배치 종료 시 모든 record의 `RawResponse.usage`를 `BatchResultEnvelope.usage`로 합산한다
+- `src/_pricing.py`의 `PRICING_TABLE`이 모델별 단가를 박는다. OpenAI 모델은 cached_tokens가 input의 50%, Anthropic 모델은 약 0.1x 수준이다. 알려지지 않은 모델 ID는 `_FALLBACK_PRICING`으로 보수적으로 표시한다
 - 콘솔 출력, 결과 JSON `meta_extra.usage`/`meta_extra.estimated_cost_usd`, 리포트 헤더 표 세 곳에 같은 값을 박는다. "추정" 표기를 명시한다
-- prompt caching은 시스템 프롬프트 prefix를 정적 묶음으로 두고 가변 부분(`[페르소나 정보]`, `[인터뷰 주제]`)을 뒤로 보내는 구조로 적합하게 설계되어 있다(TDD §9.1)
+- prompt caching: OpenAI는 prefix 1024 토큰 이상 자동 적용 구조로 설계되어 있다(TDD §9.1). Anthropic의 `cache_control` 마커는 v1.1 백로그
 
 ### 3.6. 시스템 프롬프트와 페르소나 풀(라운드 B4, B5)
 
@@ -88,11 +95,13 @@
 - 프로세스 단위 mtime 기반 in-memory 캐시로 디스크 I/O를 최소화한다. 파일 편집 후 다음 호출에서 자동 반영된다
 - 페르소나 풀은 `(filter_str, n, seed, field_map, gender_aliases, province_aliases, dataset_name, split)` 키로 in-memory 캐싱된다. `clear_persona_pool_cache()`로 무효화 가능하다
 
-### 3.7. MCP 서버(라운드 C)
+### 3.7. MCP 서버(라운드 C + sampling 전용)
 
 - 진입점은 `python -m src.mcp_server`(모듈 단위)와 console script `kpi-mcp-server` 두 가지다
 - 4개 도구는 `healthcheck`, `list_personas`, `interview`, `report`다(MCP 관례 snake_case)
-- 도구 응답 형태는 `{"ok": true, ...}` 또는 `{"error": {"code", "message", "exit_code"}}`로 통일한다
+- 추론은 `McpSamplingBackend`로 host agent에 위임한다(sampling 전용). server-side에 OpenAI/Anthropic 키가 필요 없다
+- host가 sampling capability를 노출하지 않거나 MCP 호스트가 attach되지 않으면 ConfigError + CLI fallback 안내(`python main.py interview ...`)를 돌려준다
+- 도구 응답 형태는 `{"ok": true, ...}` 또는 `{"error": {"code", "message", "exit_code"}}`로 통일한다. 모든 응답은 `"backend": "mcp_sampling"` 라벨을 박는다
 - 진행률 표시는 `progress_disable=True`로 끈다. 로그는 stderr/`outputs/logs/run_*.jsonl`에 그대로 흘려 stdio JSON-RPC 채널을 오염시키지 않는다
 - `mcp` SDK import는 `_serve_stdio()` 안에서 lazy하게 수행한다. SDK 부재 시 친절한 한국어 안내 + exit 1로 종료한다
 
@@ -100,12 +109,13 @@
 
 - uv(가상 환경은 .venv, Python 3.12 고정)다
 - `pyproject.toml`(라운드 C4)이 PEP 621 메타와 console script(`kpi`, `kpi-mcp-server`)를 등록한다. requirements 계열을 정본으로 두고 pyproject는 동기화 상태를 유지한다
-- 회귀 테스트는 470개로 라운드 A+B+C 추가 분량 모두 포함한다
+- 회귀 테스트는 521개로 multi-provider, MCP sampling 전용, AnthropicBackend, Claude 단가까지 모두 포함한다
 
 ## 4. ADR 인덱스
 
 - [ADR-001 (2026-05-02)](adr/2026-05-02-multiturn-strategy.md) - 멀티턴 + 단일턴 구조화 요약 채택. 후속 supersede 후보: 단일턴 + 사후 요약(100명 30분 SLO 위반 시)
-- [ADR-002 (2026-05-02)](adr/2026-05-02-openai-backend-migration.md) - 로컬 MLX → OpenAI Chat Completions API(`gpt-4o-mini`) 백엔드 전환. ADR-001 멀티턴 정책은 백엔드 무관이라 supersede 대상 아님. 후속 supersede 후보: drift 5% 초과 시 gpt-4o 상향, 비용 부담 시 로컬 백엔드 회귀
+- [ADR-002 (2026-05-02)](adr/2026-05-02-openai-backend-migration.md) - 로컬 MLX → OpenAI Chat Completions API(`gpt-4o-mini`) 백엔드 전환. ADR-003에 의해 supersede(multi-provider로 확장)
+- [ADR-003 (2026-05-02)](adr/2026-05-02-multi-provider-backend.md) - multi-provider 백엔드 채택. CLI는 `provider=openai|anthropic` + 로컬 LLM via base_url override, MCP는 sampling 전용. 후속 supersede 후보: provider별 페르소나 품질 검증 결과에 따른 default 모델 변경
 
 ## 5. 갱신 이력
 
@@ -142,3 +152,4 @@
 - 2026-05-02 라운드 C3 MCP 통합 가이드와 예시 추가. README "Integration with External Agents" 섹션을 두 갈래(MCP 서버 + `--json` 모드)로 재구성하고, `examples/mcp/`에 Claude Code/Cursor용 `mcp.json` 예시 두 개와 가이드 README를 둔다. 자연어 호출 예시("1인 가구 대상 반찬 정기배송 30명 인터뷰 돌리고 리포트까지 만들어 줘")까지 안내한다
 - 2026-05-02 라운드 C4 패키징 정비. `pyproject.toml` 신규 작성(PEP 621 메타, MIT 라이선스, Python 3.12 핀, 직접 의존성, dev extra). console script 두 개를 등록한다(`kpi = "main:main"`, `kpi-mcp-server = "src.mcp_server:main"`). README Installation 섹션에 `uv pip install -e .` 옵션을 추가한다. requirements.txt와 pyproject.toml은 본 라운드에서 동시 유지하며 이중 관리 단순화는 v1.1 백로그
 - 2026-05-02 배포 전 README/docs 최종 정비. README를 실제 배포용으로 전면 재작성(Quick Start 5단계, Usage Examples 5종, CLI Reference 옵션 표 4종 + Filter DSL, Output Format 섹션, Customization 섹션, Project Structure 풀 트리, Roadmap, Contributing 추가). docs/INDEX 정합성 결정값을 라운드 A+B+C 결과로 8개 소절 재구성. v1.1 백로그를 별도 문서(`docs/backlog/v1.1.md`)로 분리해 15개 항목 동기/영향 범위와 함께 정리
+- 2026-05-02 multi-provider + MCP sampling 전용 단순화. ADR-003 채택. `LlmConfig.provider`(openai/anthropic) 도입, `AnthropicBackend` 추가(httpx 직접, anthropic SDK 의존 없음), 로컬 LLM은 provider=openai + `--base-url` override 패턴. CLI에 `--provider`/`--base-url` 옵션 추가. MCP 서버는 sampling 전용으로 단순화(host LLM 위임, 키 불필요). `LlmConfig.backend` 토글 제거. `src/_pricing.py`에 Claude 단가 추가(haiku/sonnet/opus). 콘솔 메시지 사전을 provider-agnostic하게 갱신("OpenAI 서버" → "LLM 서버"). 코드 주석을 SDK 공개 수준으로 재작성(internal-only 한국어 주석 정리, 영어 docstring 통일). 회귀 504 → 521개. 본 라운드 ADR-002 supersede
