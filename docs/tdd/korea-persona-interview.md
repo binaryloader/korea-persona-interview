@@ -208,7 +208,7 @@ OpenAI Chat Completions API 비동기 클라이언트다. `httpx.AsyncClient` �
 - `chat(messages, max_tokens, temperature)`는 `POST {base_url}/chat/completions`로 호출한다
 - 재시도 정책은 HTTP 5xx, 429, 타임아웃, 연결 실패에 한해 지수 백오프로 1초, 2초, 4초 간격을 두며 최대 3회 적용한다. 401은 즉시 실패하고 `ConfigError`로 변환한다. 그 외 4xx는 즉시 실패한다. 재시도 간 jitter `random.uniform(0, 0.5)`를 추가한다(thundering herd 방지)
 - tenacity 의존을 회피한다(dependency.md §1, 6줄 정도면 직접 작성 가능)
-- `Authorization: Bearer ${OPENAI_API_KEY}` 헤더를 부착한다. 키는 환경변수 `OPENAI_API_KEY`(또는 fallback `KPI_OPENAI_API_KEY`)에서만 로드하고 코드/설정/로그에 하드코딩하지 않는다(security.md §1). 키 미설정은 `ConfigError`로 변환한다
+- `Authorization: Bearer ${OPENAI_API_KEY}` 헤더를 부착한다. 키는 provider에 따라 환경변수에서만 로드한다. provider=openai는 `OPENAI_API_KEY`, provider=anthropic은 `ANTHROPIC_API_KEY`이며 코드/설정/로그에 하드코딩하지 않는다(security.md §1). 키 미설정은 `ConfigError`로 변환한다
 - 로그 출력 시 `Authorization` 헤더는 `Bearer sk-***` 형식으로 마스킹한다(logging.md §2)
 
 #### 2.6. src/interview.py
@@ -413,7 +413,7 @@ class LLMClient:
     ) -> tuple[str, int]: ...  # (response, latency_ms)
 ```
 
-`api_key`는 환경변수 `OPENAI_API_KEY`(또는 fallback `KPI_OPENAI_API_KEY`)에서 로드하여 생성자에 주입한다. 코드 내부에서 환경변수를 직접 읽지 않고 호출부에서 명시 주입하는 방식으로 테스트 용이성을 확보한다.
+`api_key`는 provider별 환경변수에서 로드하여 생성자에 주입한다. provider=openai는 `OPENAI_API_KEY`, provider=anthropic은 `ANTHROPIC_API_KEY`다. 코드 내부에서 환경변수를 직접 읽지 않고 호출부에서 명시 주입하는 방식으로 테스트 용이성을 확보한다.
 
 #### 3.4. src/load_personas.py
 
@@ -684,10 +684,10 @@ v1.x 정책은 "비밀=env, 기본=yaml, 일회성=CLI" 한 가지로 단순화�
 
 환경변수에서 받는 키는 비밀과 출력 디렉토리뿐이다.
 
-- `OPENAI_API_KEY`표준와 `KPI_OPENAI_API_KEY`fallback은 `llm.api_key`로 들어간다
+- provider가 openai이면 `OPENAI_API_KEY`, provider가 anthropic이면 `ANTHROPIC_API_KEY`가 `llm.api_key`로 들어간다
 - `KPI_OUTPUT_DIR`은 `output_dir`로 들어간다(테스트/CI 격리 편의)
 
-v1.0 시절의 `KPI_LLM_*`/`KPI_BATCH_*` 환경변수 override는 v1.x에서 제거됐다. 모델 변경 같은 일회성 override는 CLI(`--model gpt-4o`)로 처리하고, 동시성 같은 운영 기본값은 `config.yaml`을 갱신해 수정한다. config.yaml은 일부 섹션만 정의해도 default와 머지된다. `dataset.field_map`은 default 코드값(§1.6)과 yaml 값을 깊은 병합한다.
+모델 변경 같은 일회성 override는 CLI(`--model gpt-4o`)로 처리하고, 동시성 같은 운영 기본값은 `config.yaml`을 갱신해 수정한다. config.yaml은 일부 섹션만 정의해도 default와 머지된다. `dataset.field_map`은 default 코드값(§1.6)과 yaml 값을 깊은 병합한다.
 
 `.env` 파일은 stdlib 파서로 비밀(API 키)만 환경에 승격한다. 명시 환경변수가 이미 set된 경우 `.env`가 덮지 않는다(setdefault). 자세한 파싱 규칙은 `_parse_dotenv_file` docstring을 참고한다.
 
@@ -837,7 +837,7 @@ OpenAI gpt-4o-mini는 EOS 토큰 인식이 안정적이라 토큰 루프 사례(
 
 security.md §1(시크릿), §3(입력 검증), §4(데이터 보호)와 PRD §6.3(보안과 개인정보), ADR-002, ADR-003을 따른다.
 
-- API 키는 provider에 따라 두 가지 환경변수에서 로드한다. provider가 openai면 `OPENAI_API_KEY`를 쓰고 fallback은 `KPI_OPENAI_API_KEY`다. provider가 anthropic이면 `ANTHROPIC_API_KEY`다. 코드/설정/.env 파일/로그에 하드코딩하지 않는다(security.md §1). MCP 진입점은 `mcp.mode`에 따라 다르다. `mcp.mode: "server"` 모드(기본)는 server-side 키가 필요하고 mcp.json env 또는 `.env`에 박아 주어야 한다. `mcp.mode: "orchestrator"` 모드는 server-side 키가 불필요하다(호스트 sub-agent가 자기 LLM 호출). 두 경로 모두 yaml/CLI에 키를 적지 않는 정책은 동일하다
+- API 키는 provider에 따라 환경변수에서 로드한다. provider가 openai면 `OPENAI_API_KEY`이고 anthropic이면 `ANTHROPIC_API_KEY`다. 코드/설정/.env 파일/로그에 하드코딩하지 않는다(security.md §1). MCP 진입점은 `mcp.mode`에 따라 다르다. `mcp.mode: "server"` 모드(기본)는 server-side 키가 필요하고 mcp.json env 또는 `.env`에 박아 주어야 한다. `mcp.mode: "orchestrator"` 모드는 server-side 키가 불필요하다(호스트 sub-agent가 자기 LLM 호출). 두 경로 모두 yaml/CLI에 키를 적지 않는 정책은 동일하다
 - 인증 헤더는 provider에 따라 다르다. OpenAI는 `Authorization: Bearer ${OPENAI_API_KEY}`이고 Anthropic은 `x-api-key: ${ANTHROPIC_API_KEY}` + `anthropic-version: 2023-06-01`이다. 로그 출력 시 둘 다 마스킹한다(logging.md §2)
 - `base_url`은 OpenAI 엔드포인트(`https://api.openai.com/v1`)를 기본 허용한다. ADR-002 이전의 localhost-only chat 가드는 OpenAI 백엔드 전환과 함께 제거한다. 다만 잘못된 base_url(예: 오타로 다른 도메인 지정)에 키와 사업 아이템이 송신되는 사고를 막기 위해 base_url을 INFO 로그에 명시 출력하여 사용자가 실행 직후 검증할 수 있게 한다. 향후 사용자 정의 OpenAI 호환 엔드포인트(예: Azure OpenAI, 사내 프록시) 지원이 필요하면 별도 ADR로 도입한다
 - product 본문 마스킹은 로그에 `mask_product()`를 적용한다(첫 30자 + 길이). 결과 JSON에는 원문 그대로 저장한다(로컬 파일이므로 외부 노출 위험 없음). 단 product 본문은 사용자가 설정한 LLM 백엔드(OpenAI / Anthropic / 로컬 LLM / MCP 호스트 에이전트)로 송신되므로 사용자가 실행 전 인지해야 한다(README와 도구 첫 실행 메시지에서 명시)
@@ -978,7 +978,7 @@ PRD §6.8과 dependency.md §10(빌드 도구 핀)을 따른다.
 - 운영 체제 제약은 없다(macOS, Linux, Windows 모두 가능). ADR-002 이전의 Apple Silicon 전용 제약은 OpenAI 백엔드 전환과 함께 제거한다
 - Python 3.12가 필요하다. `.python-version` 파일로 고정한다. `uv`로 관리하기를 권장한다
 - 인터넷 접근이 필요하다. OpenAI API(`https://api.openai.com/v1`)와 Hugging Face Hub에 도달할 수 있어야 한다
-- OpenAI API 키가 필요하다. 환경변수 `OPENAI_API_KEY`(또는 fallback `KPI_OPENAI_API_KEY`)로 설정한다
+- LLM 제공자 키가 필요하다. provider=openai는 `OPENAI_API_KEY`, provider=anthropic은 `ANTHROPIC_API_KEY` 환경변수를 사용한다
 - `~/.cache/huggingface` 디렉토리에 쓰기 권한이 필요하다(데이터셋 캐시 약 4-6GB)
 
 배포 변경, Kubernetes, GitHub Actions, AWS 인프라는 v1에서 모두 비대상이다.

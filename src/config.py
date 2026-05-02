@@ -519,8 +519,7 @@ def _apply_env(merged: dict) -> dict:
 
     시크릿과 출력 디렉토리만 인식한다.
 
-    - ``OPENAI_API_KEY``(또는 ``KPI_OPENAI_API_KEY`` 폴백)는
-      ``llm.provider == "openai"``일 때 사용한다
+    - ``OPENAI_API_KEY``는 ``llm.provider == "openai"``일 때 사용한다
     - ``ANTHROPIC_API_KEY``는 ``llm.provider == "anthropic"``일 때 사용한다
     - ``KPI_OUTPUT_DIR``는 테스트/CI 편의용 오버라이드다
     """
@@ -537,9 +536,7 @@ def _apply_env(merged: dict) -> dict:
     if provider == "anthropic":
         api_key = os.environ.get("ANTHROPIC_API_KEY")
     else:
-        api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get(
-            "KPI_OPENAI_API_KEY"
-        )
+        api_key = os.environ.get("OPENAI_API_KEY")
     if api_key:
         llm_section["api_key"] = api_key
 

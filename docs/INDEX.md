@@ -91,7 +91,7 @@
 - 모델 ID는 provider에 따라 자동 결정된다. openai 기본은 `gpt-4o-mini`, anthropic 기본은 `claude-haiku-4-5`다. `config.yaml`의 `llm.model` 또는 CLI `--model` 옵션으로 변경 가능하다
 - MCP server 모드는 server-side에서 OpenAI/Anthropic을 직접 호출한다. CLI와 동일한 LlmConfig를 사용하므로 mcp.json env 또는 `.env`에 `OPENAI_API_KEY`/`ANTHROPIC_API_KEY`가 필요하다. 응답 backend 라벨은 `mcp_server`다
 - MCP orchestrator 모드는 server-side LLM 호출이 없다. 호스트 sub-agent가 자기 LLM으로 인터뷰를 수행하므로 server-side 키가 불필요하다. 응답 backend 라벨은 `mcp_orchestrator`다
-- 환경변수는 비밀과 출력 디렉토리만 받는다. `OPENAI_API_KEY`/`KPI_OPENAI_API_KEY`(provider=openai), `ANTHROPIC_API_KEY`(provider=anthropic), `KPI_OUTPUT_DIR`(테스트/CI 격리용)이다. 비밀은 코드/yaml/CLI에 하드코딩 금지(security.md §1)다
+- 환경변수는 비밀과 출력 디렉토리만 받는다. `OPENAI_API_KEY`(provider=openai), `ANTHROPIC_API_KEY`(provider=anthropic), `KPI_OUTPUT_DIR`(테스트/CI 격리용)이다. 비밀은 코드/yaml/CLI에 하드코딩 금지(security.md §1)다
 - `.env` 파일은 stdlib 파서로 비밀만 환경에 승격한다. setdefault 의미라 이미 set된 환경변수는 덮지 않는다. 프로젝트 루트의 `.env` 단일 창구가 권장 패턴이다. mcp.json `env` 필드도 코드상 동작하지만 평문 저장 노출 위험이 있어 README/예시에서는 권장하지 않는다
 - 기존 `LlmConfig.backend` 토글은 제거됐다. yaml에 잔존해도 graceful하게 무시된다(ADR-003)
 

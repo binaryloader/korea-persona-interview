@@ -3,7 +3,7 @@
 - default → yaml → env(``KPI_*``, ``OPENAI_API_KEY``) → CLI 우선순위 머지
 - BatchConfig의 동시성 1-3 강제, 4 이상 ``ConfigError``
 - OpenAI 외부 URL 허용(이전 버전의 localhost 가드 제거)
-- ``OPENAI_API_KEY``/``KPI_OPENAI_API_KEY`` 환경변수 로드 정합
+- ``OPENAI_API_KEY`` 환경변수 로드 정합
 """
 
 from __future__ import annotations
@@ -202,7 +202,7 @@ def test_load_config_외부_URL_허용(url: str, tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# OPENAI_API_KEY / KPI_OPENAI_API_KEY 로드
+# OPENAI_API_KEY 로드
 # ---------------------------------------------------------------------------
 
 
@@ -216,35 +216,26 @@ def test_load_config_OPENAI_API_KEY_표준_환경변수(
     assert cfg.llm.api_key == "sk-from-standard"
 
 
-def test_load_config_KPI_OPENAI_API_KEY_fallback(
+def test_load_config_KPI_OPENAI_API_KEY_무시(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """표준 키가 없을 때 ``KPI_OPENAI_API_KEY``가 fallback으로 적용된다."""
+    """``KPI_OPENAI_API_KEY``는 더 이상 fallback으로 동작하지 않는다.
+
+    v1.2.0에서 단일 정책으로 정리되어 ``OPENAI_API_KEY`` 한 키만 읽는다.
+    """
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.setenv("KPI_OPENAI_API_KEY", "sk-from-fallback")
+    monkeypatch.setenv("KPI_OPENAI_API_KEY", "sk-legacy-fallback")
     cfg = load_config(yaml_path=tmp_path / "no.yaml")
-    assert cfg.llm.api_key == "sk-from-fallback"
-
-
-def test_load_config_OPENAI_API_KEY가_KPI보다_우선(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """둘 다 set되어 있으면 표준 ``OPENAI_API_KEY``가 fallback을 덮는다."""
-
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-standard")
-    monkeypatch.setenv("KPI_OPENAI_API_KEY", "sk-fallback")
-    cfg = load_config(yaml_path=tmp_path / "no.yaml")
-    assert cfg.llm.api_key == "sk-standard"
+    assert cfg.llm.api_key is None
 
 
 def test_load_config_API_KEY_누락_None(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """둘 다 누락이면 ``api_key``는 None으로 남고 호출 시점 ConfigError로 차단된다."""
+    """``OPENAI_API_KEY``가 없으면 ``api_key``는 None으로 남고 호출 시점 ConfigError로 차단된다."""
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("KPI_OPENAI_API_KEY", raising=False)
     cfg = load_config(yaml_path=tmp_path / "no.yaml")
     assert cfg.llm.api_key is None
 
@@ -777,7 +768,6 @@ def test_load_config_dotenv_파일에서_OPENAI_API_KEY_로드(
     """``.env`` 파일에 ``OPENAI_API_KEY``가 있으면 ``llm.api_key``로 들어온다."""
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("KPI_OPENAI_API_KEY", raising=False)
 
     env_path = tmp_path / ".env"
     env_path.write_text("OPENAI_API_KEY=sk-from-dotenv\n", encoding="utf-8")
@@ -807,7 +797,6 @@ def test_load_config_dotenv_파일_없을때_조용히_무시(
     """``.env``가 없는 디렉토리에서도 load_config가 정상 동작한다."""
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("KPI_OPENAI_API_KEY", raising=False)
     monkeypatch.chdir(tmp_path)
 
     cfg = load_config(yaml_path=tmp_path / "no.yaml")
@@ -820,7 +809,6 @@ def test_load_config_dotenv_따옴표_둘러싼_키_제거(
     """``OPENAI_API_KEY="sk-..."``처럼 따옴표 감싸진 값도 정상 로드된다."""
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("KPI_OPENAI_API_KEY", raising=False)
 
     env_path = tmp_path / ".env"
     env_path.write_text('OPENAI_API_KEY="sk-quoted-value"\n', encoding="utf-8")
@@ -834,7 +822,6 @@ def test_load_config_dotenv_export_접두로_OPENAI_API_KEY_로드(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("KPI_OPENAI_API_KEY", raising=False)
 
     env_path = tmp_path / ".env"
     env_path.write_text("export OPENAI_API_KEY=sk-from-export\n", encoding="utf-8")
@@ -848,7 +835,6 @@ def test_load_config_dotenv_주석_라인_무시(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("KPI_OPENAI_API_KEY", raising=False)
 
     env_path = tmp_path / ".env"
     env_path.write_text(

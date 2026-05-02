@@ -130,7 +130,7 @@ python main.py interview --base-url http://localhost:8080/v1 --model llama-3-8b 
 
 The `interview` command auto-generates the markdown report after the JSON is saved (default `--report`). The standalone `python main.py report ...` step in the Quick Start is shown for completeness; you only need it if you used `--no-report`, edited the JSON, or want to regenerate the report with different `--top-n` or `--include-drift` settings.
 
-`KPI_OPENAI_API_KEY` works as a fallback if you want to keep the project key separate from your shell-wide `OPENAI_API_KEY`. A `.env` file at the project root with `OPENAI_API_KEY=sk-...` (or `ANTHROPIC_API_KEY=sk-ant-...`) is also picked up automatically.
+A `.env` file at the project root with `OPENAI_API_KEY=sk-...` (or `ANTHROPIC_API_KEY=sk-ant-...` for `provider=anthropic`) is picked up automatically. Existing shell environment variables take precedence over `.env`.
 
 ### Tip: ask explicit value-pricing questions
 
@@ -380,7 +380,6 @@ The only environment variables this tool reads are secrets and the output direct
 | --- | --- |
 | `OPENAI_API_KEY` | OpenAI API key (used when `provider=openai`) |
 | `ANTHROPIC_API_KEY` | Anthropic API key (used when `provider=anthropic`) |
-| `KPI_OPENAI_API_KEY` | Fallback used when `OPENAI_API_KEY` is unset |
 | `KPI_OUTPUT_DIR` | Output directory override (kept for test/CI isolation) |
 
 Change the model or provider with `--model gpt-4o`, `--provider anthropic --model claude-sonnet-4-5`, or by editing `llm.*` in `config.yaml`.

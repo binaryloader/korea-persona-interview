@@ -279,7 +279,7 @@ CLI는 4개 서브커맨드를 제공한다. 매크로 명령(예: `run-all`)은
 
 ### 6.3. 보안과 개인정보
 
-- OpenAI API 키는 환경변수 `OPENAI_API_KEY`(또는 fallback으로 `KPI_OPENAI_API_KEY`)에서만 로드한다. 코드/설정/로그에 하드코딩하지 않는다(security.md §1)
+- OpenAI API 키는 환경변수 `OPENAI_API_KEY`에서만 로드한다. provider=anthropic은 `ANTHROPIC_API_KEY`를 사용한다. 코드/설정/로그에 하드코딩하지 않는다(security.md §1)
 - `Authorization: Bearer ${OPENAI_API_KEY}` 헤더로 API 호출을 인증한다. 로그 출력 시 `Bearer sk-***` 형식으로 마스킹한다
 - 외부 텔레메트리와 외부 분석 서비스 의존은 일체 부재한다
 - 외부 LLM API 의존은 OpenAI Chat Completions API 1종이다. 다른 외부 서비스는 호출하지 않는다

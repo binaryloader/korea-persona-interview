@@ -28,6 +28,7 @@ Minor release that introduces the MCP orchestrator mode and removes the MCP samp
 - `mcp.mode: "sampling"` is removed. The whitelist now accepts only `"server"` and `"orchestrator"`. ADR-004's sampling-only clause is superseded by ADR-005. Sampling-capable client adoption stayed under 10% throughout v1.1.x, so the option had no real-world usage to preserve
 - `McpSamplingBackend` class, `_convert_to_sampling_messages`, `_extract_sampling_text`, `_current_sampling_session`, and the sampling capability check are removed from `src/llm_backend.py` and `src/mcp_server.py`
 - The 21 sampling-mode regression tests are removed from `tests/test_llm_backend.py` and `tests/test_mcp_server.py`
+- Removed `KPI_OPENAI_API_KEY` environment variable fallback; only `OPENAI_API_KEY` (or `ANTHROPIC_API_KEY` for `provider=anthropic`) is read
 
 ### Tests
 
