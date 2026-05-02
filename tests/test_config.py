@@ -869,19 +869,19 @@ def test_load_config_dotenv_주석_라인_무시(
 
 
 def test_mcp_config_default_mode_server(tmp_path: Path) -> None:
-    """yaml 미존재일 때 ``mcp.mode`` default는 ``server``다(ADR-004)."""
+    """yaml 미존재일 때 ``mcp.mode`` default는 ``server``다(ADR-005)."""
 
     cfg = load_config(yaml_path=tmp_path / "no.yaml")
     assert cfg.mcp.mode == "server"
 
 
-def test_mcp_config_yaml_sampling_override(tmp_path: Path) -> None:
-    """yaml에서 ``mcp.mode: sampling``을 명시하면 그대로 반영된다."""
+def test_mcp_config_yaml_orchestrator_override(tmp_path: Path) -> None:
+    """yaml에서 ``mcp.mode: orchestrator``를 명시하면 그대로 반영된다(ADR-005)."""
 
     yaml_path = tmp_path / "config.yaml"
-    yaml_path.write_text("mcp:\n  mode: 'sampling'\n", encoding="utf-8")
+    yaml_path.write_text("mcp:\n  mode: 'orchestrator'\n", encoding="utf-8")
     cfg = load_config(yaml_path=yaml_path)
-    assert cfg.mcp.mode == "sampling"
+    assert cfg.mcp.mode == "orchestrator"
 
 
 def test_mcp_config_yaml_server_override(tmp_path: Path) -> None:
@@ -893,8 +893,17 @@ def test_mcp_config_yaml_server_override(tmp_path: Path) -> None:
     assert cfg.mcp.mode == "server"
 
 
+def test_mcp_config_sampling_제거됨_ConfigError(tmp_path: Path) -> None:
+    """v1.2.0(ADR-005)에서 ``mcp.mode: sampling``은 제거됐다. 화이트리스트 외 값으로 거부."""
+
+    yaml_path = tmp_path / "config.yaml"
+    yaml_path.write_text("mcp:\n  mode: 'sampling'\n", encoding="utf-8")
+    with pytest.raises(ConfigError):
+        load_config(yaml_path=yaml_path)
+
+
 def test_mcp_config_허용_외_mode_ConfigError(tmp_path: Path) -> None:
-    """``mcp.mode``는 화이트리스트(server/sampling) 외 값을 거부한다."""
+    """``mcp.mode``는 화이트리스트(server/orchestrator) 외 값을 거부한다."""
 
     yaml_path = tmp_path / "config.yaml"
     yaml_path.write_text("mcp:\n  mode: 'auto'\n", encoding="utf-8")
@@ -906,16 +915,16 @@ def test_mcp_config_대소문자_정규화(tmp_path: Path) -> None:
     """``mcp.mode``는 대문자 입력을 소문자로 정규화한다."""
 
     yaml_path = tmp_path / "config.yaml"
-    yaml_path.write_text("mcp:\n  mode: 'SAMPLING'\n", encoding="utf-8")
+    yaml_path.write_text("mcp:\n  mode: 'ORCHESTRATOR'\n", encoding="utf-8")
     cfg = load_config(yaml_path=yaml_path)
-    assert cfg.mcp.mode == "sampling"
+    assert cfg.mcp.mode == "orchestrator"
 
 
 def test_mcp_config_dataclass_직접_생성_허용() -> None:
     from src.config import McpConfig
 
     assert McpConfig().mode == "server"
-    assert McpConfig(mode="sampling").mode == "sampling"
+    assert McpConfig(mode="orchestrator").mode == "orchestrator"
 
 
 def test_mcp_config_dataclass_직접_생성_검증() -> None:

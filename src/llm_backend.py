@@ -1,20 +1,20 @@
 """인터뷰 파이프라인의 LLM 백엔드 추상화.
 
-세 가지 백엔드를 노출한다.
+두 가지 server-side 백엔드를 노출한다.
 
 - ``OpenAIBackend``: OpenAI Chat Completions API와 모든 OpenAI 호환 엔드포인트
-  (mlx_lm.server, vLLM, llama.cpp)를 다룬다. CLI가 사용한다.
+  (mlx_lm.server, vLLM, llama.cpp)를 다룬다. CLI와 MCP server 모드(`mcp.mode:
+  "server"`)가 사용한다.
 - ``AnthropicBackend``: Anthropic Messages API. ``provider=anthropic``일 때
-  CLI가 사용한다.
-- ``McpSamplingBackend``: MCP ``sampling/createMessage`` 요청으로 추론을 host
-  agent(Claude Code, Cursor 등)에 위임한다. MCP 서버 진입점 전용.
+  CLI와 MCP server 모드가 사용한다.
 
-세 구현 모두 ``LLMBackend`` 프로토콜을 만족하므로 application 계층
+두 구현 모두 ``LLMBackend`` 프로토콜을 만족하므로 application 계층
 (``run_batch``, ``run_interview``, ``generate_report``)이 의존성 주입으로
 교체 사용할 수 있다.
 
-``mcp`` SDK는 ``McpSamplingBackend`` 안에서 lazy import한다. SDK가 부재해도
-본 모듈 자체는 import 가능하게 하기 위함이다.
+v1.2.0(ADR-005)부터 MCP sampling 백엔드는 제거됐다. MCP orchestrator 모드
+(`mcp.mode: "orchestrator"`)는 server-side LLM을 호출하지 않으므로 본 모듈을
+사용하지 않는다(호스트 sub-agent가 자기 LLM으로 인터뷰를 수행한다).
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
-from typing import Any, Optional, Protocol, runtime_checkable
+from typing import Optional, Protocol, runtime_checkable
 
 import httpx
 
@@ -52,12 +52,6 @@ _MISSING_ANTHROPIC_KEY_MESSAGE = (
 _INVALID_ANTHROPIC_KEY_MESSAGE = (
     "Anthropic API 키가 유효하지 않거나 권한이 없습니다. "
     "환경변수 ANTHROPIC_API_KEY를 다시 확인해 주세요"
-)
-
-_MCP_SAMPLING_UNSUPPORTED_MESSAGE = (
-    "호스트 에이전트가 MCP sampling을 지원하지 않습니다. "
-    "Claude Code 최신 버전으로 업데이트하거나 CLI"
-    "(`python main.py interview ...` 또는 `kpi interview ...`)로 호출해 주세요"
 )
 
 
@@ -416,148 +410,6 @@ class AnthropicBackend:
         )
 
 
-class McpSamplingBackend:
-    """Adapter that delegates inference to the MCP host via ``sampling/createMessage``.
-
-    Used exclusively by the MCP server entry point. The host agent (Claude
-    Code, Cursor, ...) generates the response using its own LLM, so no API
-    key is required server-side.
-
-    Constraints:
-
-    - ``healthcheck`` only verifies the client's sampling capability. The
-      sampling protocol does not expose a list-models endpoint, so it returns
-      an empty list on success.
-    - The standard sampling response carries no ``usage`` block, so
-      ``TokenUsage()`` (all zeros) is returned.
-    - Retry and timeout policies are owned by the client. Server-side retries
-      are not applied.
-    """
-
-    def __init__(
-        self,
-        session: Any,
-        *,
-        max_tokens_default: int = 500,
-        temperature_default: float = 0.8,
-    ) -> None:
-        self._session = session
-        self._max_tokens_default = int(max_tokens_default)
-        self._temperature_default = float(temperature_default)
-
-    async def __aenter__(self) -> "McpSamplingBackend":
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb) -> None:
-        return None
-
-    async def healthcheck(self) -> list:
-        """Verify the client exposes the sampling capability.
-
-        Raises:
-            ConfigError: The host agent does not advertise sampling support.
-            ServerNotReachableError: Capability check itself failed.
-        """
-
-        try:
-            from mcp import types
-        except ImportError as exc:
-            raise ServerNotReachableError(
-                f"mcp Python SDK를 import할 수 없어 sampling capability를 확인할 수 없다: {exc}"
-            ) from exc
-
-        try:
-            supports = self._session.check_client_capability(
-                types.ClientCapabilities(sampling=types.SamplingCapability())
-            )
-        except Exception as exc:  # noqa: BLE001 - capability check safety net
-            raise ServerNotReachableError(
-                f"MCP 클라이언트 capability 확인 실패: {exc}"
-            ) from exc
-
-        if not supports:
-            raise ConfigError(_MCP_SAMPLING_UNSUPPORTED_MESSAGE)
-
-        logger.info(
-            "MCP sampling capability 확인",
-            extra={"backend": "mcp_sampling"},
-        )
-        return []
-
-    async def chat(
-        self,
-        messages: list,
-        max_tokens: Optional[int] = None,
-        temperature: Optional[float] = None,
-    ) -> ChatResponse:
-        """Forward an OpenAI-shaped messages array to the host via sampling.
-
-        ``system`` role messages are concatenated and passed as the
-        ``system_prompt`` argument. ``user`` and ``assistant`` messages are
-        forwarded as-is. Unknown roles are coerced to ``user``.
-
-        Raises:
-            ConfigError: The messages array contains no user/assistant entries.
-            ServerNotReachableError: The host rejected the sampling request or
-                the SDK is missing.
-            RetryExhaustedError: The host returned an empty response.
-        """
-
-        try:
-            from mcp import types
-        except ImportError as exc:
-            raise ServerNotReachableError(
-                f"mcp Python SDK를 import할 수 없어 sampling 호출을 수행할 수 없다: {exc}"
-            ) from exc
-
-        sampling_messages, system_prompt = _convert_to_sampling_messages(messages, types)
-
-        if not sampling_messages:
-            raise ConfigError(
-                "MCP sampling 호출에 보낼 user/assistant 메시지가 없습니다. "
-                "messages 배열에 system 외 1개 이상 포함되어야 합니다"
-            )
-
-        try:
-            result = await self._session.create_message(
-                messages=sampling_messages,
-                max_tokens=int(max_tokens or self._max_tokens_default),
-                system_prompt=system_prompt,
-                temperature=(
-                    float(temperature)
-                    if temperature is not None
-                    else self._temperature_default
-                ),
-            )
-        except Exception as exc:  # noqa: BLE001 - host response safety net
-            raise ServerNotReachableError(
-                f"MCP 클라이언트가 sampling 요청을 거부했습니다 (원인: {exc})"
-            ) from exc
-
-        content_text = _extract_sampling_text(result)
-        if not content_text:
-            raise RetryExhaustedError(
-                "MCP sampling 응답이 비어 있습니다. 클라이언트 LLM 동작을 확인해 주세요"
-            )
-
-        logger.info(
-            "MCP sampling 응답 수신",
-            extra={
-                "backend": "mcp_sampling",
-                "response_chars": len(content_text),
-                "model": getattr(result, "model", "unknown"),
-            },
-        )
-
-        return ChatResponse(
-            content=content_text,
-            latency_ms=0,
-            retry_count=0,
-            reasoning_trace=None,
-            usage=TokenUsage(),
-        )
-
-
 def _split_system_prompt(messages: list) -> tuple:
     """Split OpenAI-shaped messages into Anthropic ``messages`` + ``system``.
 
@@ -595,62 +447,6 @@ def _split_system_prompt(messages: list) -> tuple:
     return out_messages, system_prompt
 
 
-def _convert_to_sampling_messages(messages: list, types_mod: Any) -> tuple:
-    """Convert OpenAI-shaped messages into ``mcp.types.SamplingMessage`` list.
-
-    The MCP sampling spec only allows ``user``/``assistant`` roles; ``system``
-    is a separate ``system_prompt`` argument. All ``role=system`` entries are
-    extracted and joined; the rest are wrapped in ``SamplingMessage``.
-    """
-
-    system_parts: list = []
-    sampling_messages: list = []
-
-    for m in messages:
-        if hasattr(m, "role") and hasattr(m, "content"):
-            role = m.role
-            content = m.content
-        elif isinstance(m, dict):
-            role = m.get("role", "")
-            content = m.get("content", "")
-        else:
-            continue
-
-        text = str(content) if content is not None else ""
-
-        if role == "system":
-            if text:
-                system_parts.append(text)
-            continue
-        if role not in ("user", "assistant"):
-            role = "user"
-
-        sampling_messages.append(
-            types_mod.SamplingMessage(
-                role=role,
-                content=types_mod.TextContent(type="text", text=text),
-            )
-        )
-
-    system_prompt = "\n\n".join(system_parts) if system_parts else None
-    return sampling_messages, system_prompt
-
-
-def _extract_sampling_text(result: Any) -> str:
-    """Extract ``content.text`` from an MCP ``CreateMessageResult``.
-
-    Returns an empty string for non-text content (image, audio, ...).
-    """
-
-    content = getattr(result, "content", None)
-    if content is None:
-        return ""
-    text = getattr(content, "text", None)
-    if isinstance(text, str):
-        return text
-    return ""
-
-
 def build_cli_backend(config: LlmConfig) -> LLMBackend:
     """Construct the CLI backend for the configured provider.
 
@@ -669,7 +465,6 @@ __all__ = [
     "AnthropicBackend",
     "EmptyResponseError",
     "LLMBackend",
-    "McpSamplingBackend",
     "OpenAIBackend",
     "build_cli_backend",
 ]

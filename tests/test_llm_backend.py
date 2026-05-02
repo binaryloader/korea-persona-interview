@@ -2,18 +2,20 @@
 
 Covered surface:
 
-- ``OpenAIBackend`` delegates to ``MlxLLMClient`` and satisfies the
+- ``OpenAIBackend`` delegates to ``LLMClient`` and satisfies the
   ``LLMBackend`` runtime-checkable protocol.
 - ``AnthropicBackend`` issues ``POST /v1/messages`` with ``x-api-key``,
   ``anthropic-version``, the ``system`` field separated from messages,
   retry/backoff policy parity with OpenAI, 401 -> ConfigError, and usage
   extraction from ``input_tokens``/``output_tokens``/``cache_read_input_tokens``.
-- ``McpSamplingBackend`` sampling capability check, message conversion, empty
-  response handling, and async with semantics with the MCP SDK fully mocked.
 - ``build_cli_backend`` selects backend by ``provider`` value.
 
 The OpenAI client's HTTP semantics are exercised in ``test_llm_client.py``;
 this module focuses on the backend abstraction layer.
+
+McpSamplingBackend는 v1.2.0(ADR-005)에서 제거됐다. sampling 호환 클라이언트
+보급률 한계로 실 사용 가치가 사라졌고, MCP orchestrator 모드가 호스트
+sub-agent를 통해 같은 가치를 제공한다.
 """
 
 from __future__ import annotations
@@ -26,10 +28,7 @@ from src.config import LlmConfig
 from src.llm_backend import (
     AnthropicBackend,
     LLMBackend,
-    McpSamplingBackend,
     OpenAIBackend,
-    _convert_to_sampling_messages,
-    _extract_sampling_text,
     _split_system_prompt,
     build_cli_backend,
 )
@@ -515,214 +514,7 @@ def test_split_system_prompt_알려지지_않은_role은_user로() -> None:
     assert msgs[0]["role"] == "user"
 
 
-# ---------------------------------------------------------------------------
-# McpSamplingBackend
-# ---------------------------------------------------------------------------
-
-
-class _FakeSamplingSession:
-    """Test double mimicking the relevant ``ServerSession`` surface.
-
-    - ``check_client_capability(cap)`` returns the boolean configured at init.
-    - ``create_message(...)`` returns a ``CreateMessageResult`` carrying the
-      configured response text, or raises ``raise_exc`` if set.
-    """
-
-    def __init__(
-        self,
-        *,
-        supports_sampling: bool = True,
-        response_text: str = "안녕",
-        raise_exc: Optional[Exception] = None,
-        capability_exc: Optional[Exception] = None,
-    ) -> None:
-        self.supports_sampling = supports_sampling
-        self.response_text = response_text
-        self.raise_exc = raise_exc
-        self.capability_exc = capability_exc
-        self.last_call_kwargs: Optional[dict] = None
-
-    def check_client_capability(self, capability: Any) -> bool:
-        if self.capability_exc is not None:
-            raise self.capability_exc
-        return self.supports_sampling
-
-    async def create_message(self, **kwargs: Any) -> Any:
-        self.last_call_kwargs = kwargs
-        if self.raise_exc is not None:
-            raise self.raise_exc
-
-        from mcp import types
-
-        return types.CreateMessageResult(
-            role="assistant",
-            content=types.TextContent(type="text", text=self.response_text),
-            model="claude-test",
-            stopReason="endTurn",
-        )
-
-
-@pytest.mark.asyncio
-async def test_mcp_sampling_healthcheck_capability_있음() -> None:
-    session = _FakeSamplingSession(supports_sampling=True)
-    backend = McpSamplingBackend(session)
-
-    models = await backend.healthcheck()
-
-    assert models == []
-
-
-@pytest.mark.asyncio
-async def test_mcp_sampling_healthcheck_capability_없음_ConfigError() -> None:
-    session = _FakeSamplingSession(supports_sampling=False)
-    backend = McpSamplingBackend(session)
-
-    with pytest.raises(ConfigError) as exc_info:
-        await backend.healthcheck()
-    message = str(exc_info.value)
-    assert "sampling" in message
-    assert "Claude Code" in message or "CLI" in message
-
-
-@pytest.mark.asyncio
-async def test_mcp_sampling_healthcheck_capability_확인_실패도_ServerNotReachable() -> None:
-    session = _FakeSamplingSession(
-        capability_exc=RuntimeError("session not initialized")
-    )
-    backend = McpSamplingBackend(session)
-
-    with pytest.raises(ServerNotReachableError):
-        await backend.healthcheck()
-
-
-@pytest.mark.asyncio
-async def test_mcp_sampling_chat_정상_응답() -> None:
-    session = _FakeSamplingSession(response_text="네 좋아요")
-    backend = McpSamplingBackend(session)
-
-    response = await backend.chat(
-        [
-            {"role": "system", "content": "당신은 30대 여성입니다"},
-            {"role": "user", "content": "이 서비스 쓸 의향이 있나요?"},
-        ],
-        max_tokens=200,
-        temperature=0.5,
-    )
-
-    assert isinstance(response, ChatResponse)
-    assert response.content == "네 좋아요"
-    assert response.usage == TokenUsage()
-    assert response.retry_count == 0
-    assert session.last_call_kwargs is not None
-    assert "30대 여성" in session.last_call_kwargs["system_prompt"]
-    assert session.last_call_kwargs["max_tokens"] == 200
-    assert session.last_call_kwargs["temperature"] == 0.5
-    msgs = session.last_call_kwargs["messages"]
-    assert len(msgs) == 1
-    assert msgs[0].role == "user"
-
-
-@pytest.mark.asyncio
-async def test_mcp_sampling_chat_user_없으면_ConfigError() -> None:
-    session = _FakeSamplingSession()
-    backend = McpSamplingBackend(session)
-
-    with pytest.raises(ConfigError):
-        await backend.chat([{"role": "system", "content": "프롬프트"}])
-
-
-@pytest.mark.asyncio
-async def test_mcp_sampling_chat_클라이언트_거부_ServerNotReachable() -> None:
-    session = _FakeSamplingSession(raise_exc=RuntimeError("user denied sampling"))
-    backend = McpSamplingBackend(session)
-
-    with pytest.raises(ServerNotReachableError) as exc_info:
-        await backend.chat([{"role": "user", "content": "x"}])
-    assert "sampling" in str(exc_info.value)
-
-
-@pytest.mark.asyncio
-async def test_mcp_sampling_chat_빈_응답_RetryExhausted() -> None:
-    session = _FakeSamplingSession(response_text="")
-    backend = McpSamplingBackend(session)
-
-    with pytest.raises(RetryExhaustedError):
-        await backend.chat([{"role": "user", "content": "x"}])
-
-
-@pytest.mark.asyncio
-async def test_mcp_sampling_chat_default_max_tokens() -> None:
-    session = _FakeSamplingSession()
-    backend = McpSamplingBackend(session, max_tokens_default=999)
-
-    await backend.chat([{"role": "user", "content": "x"}])
-
-    assert session.last_call_kwargs["max_tokens"] == 999
-
-
-@pytest.mark.asyncio
-async def test_mcp_sampling_async_with_지원() -> None:
-    session = _FakeSamplingSession()
-    async with McpSamplingBackend(session) as backend:
-        response = await backend.chat([{"role": "user", "content": "x"}])
-    assert response.content == "안녕"
-
-
-def test_convert_to_sampling_messages_system_분리() -> None:
-    from mcp import types
-
-    sampling_msgs, system_prompt = _convert_to_sampling_messages(
-        [
-            {"role": "system", "content": "프롬프트A"},
-            {"role": "system", "content": "프롬프트B"},
-            {"role": "user", "content": "안녕"},
-            {"role": "assistant", "content": "네"},
-        ],
-        types,
-    )
-
-    assert "프롬프트A" in system_prompt
-    assert "프롬프트B" in system_prompt
-    assert len(sampling_msgs) == 2
-    assert sampling_msgs[0].role == "user"
-    assert sampling_msgs[1].role == "assistant"
-
-
-def test_convert_to_sampling_messages_알려지지_않은_role은_user로() -> None:
-    from mcp import types
-
-    sampling_msgs, _ = _convert_to_sampling_messages(
-        [{"role": "tool", "content": "result"}],
-        types,
-    )
-
-    assert len(sampling_msgs) == 1
-    assert sampling_msgs[0].role == "user"
-
-
-def test_convert_to_sampling_messages_system_없으면_None() -> None:
-    from mcp import types
-
-    _, system_prompt = _convert_to_sampling_messages(
-        [{"role": "user", "content": "안녕"}],
-        types,
-    )
-    assert system_prompt is None
-
-
-def test_extract_sampling_text_TextContent_정상() -> None:
-    from mcp import types
-
-    result = types.CreateMessageResult(
-        role="assistant",
-        content=types.TextContent(type="text", text="응답 본문"),
-        model="m",
-    )
-    assert _extract_sampling_text(result) == "응답 본문"
-
-
-def test_extract_sampling_text_None_안전() -> None:
-    class _Empty:
-        content = None
-
-    assert _extract_sampling_text(_Empty()) == ""
+# McpSamplingBackend, _convert_to_sampling_messages, _extract_sampling_text는
+# v1.2.0(ADR-005)에서 모두 제거됐다. sampling 호환 클라이언트 보급률이 낮아 실
+# 사용 가치가 사라졌고, MCP orchestrator 모드가 호스트 sub-agent를 통해 같은
+# 가치를 제공한다.

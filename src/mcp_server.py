@@ -1,24 +1,23 @@
 """MCP 서버 엔트리 포인트.
 
-stdio JSON-RPC 위에 네 개의 도구(``healthcheck``, ``list_personas``,
-``interview``, ``report``)를 노출해서 외부 에이전트(Claude Code, Cursor,
-Codex 등)가 자연어로 인터뷰 파이프라인을 구동할 수 있게 한다.
+stdio JSON-RPC 위에 인터뷰 파이프라인 도구를 노출해서 외부 에이전트
+(Claude Code, Cursor, Codex 등)가 자연어로 본 도구를 구동할 수 있게 한다.
 
-추론 경로는 ``config.yaml`` ``mcp.mode``로 명시 선택한다(ADR-004).
+추론 경로는 ``config.yaml`` ``mcp.mode``로 명시 선택한다(ADR-005).
 
 - ``mode: "server"`` (기본): server-side ``OpenAIBackend``/``AnthropicBackend``
   를 사용한다. CLI와 동일한 ``LlmConfig``를 활용하므로 mcp.json ``env``에
   ``OPENAI_API_KEY``/``ANTHROPIC_API_KEY``를 박아 주어야 한다. 응답에는
   ``backend: "mcp_server"`` 라벨이 박힌다
-- ``mode: "sampling"``: 호스트 에이전트의 LLM에 ``sampling/createMessage``로
-  위임한다. server-side 키 불필요. 호스트가 sampling capability를 노출하지
-  않으면 CLI fallback을 안내하는 ConfigError로 차단된다. 응답에는
-  ``backend: "mcp_sampling"`` 라벨이 박힌다
+- ``mode: "orchestrator"``: server-side에서 LLM을 호출하지 않는다. 호스트
+  sub-agent가 자기 LLM으로 인터뷰를 수행하고 본 도구는 데이터/프롬프트
+  helper만 노출한다. server-side 키 불필요. 응답에는 ``backend:
+  "mcp_orchestrator"`` 라벨이 박힌다
 
 자동 fallback은 하지 않는다. yaml의 ``mcp.mode`` 값으로 분기가 결정된다.
 
 애플리케이션 계층 함수(``run_batch``, ``generate_report``)는 그대로
-재사용한다. MCP 서버는 비대화형으로 실행되므로 tqdm 프로그레스, ANSI
+재사용한다. MCP server는 비대화형으로 실행되므로 tqdm 프로그레스, ANSI
 색상, ``[OK]`` 라벨은 비활성화하고 결과는 ``TextContent`` 봉투에 JSON으로
 실어 보낸다. 로그는 stderr와 jsonl로 흘려보낸다.
 
@@ -40,7 +39,7 @@ from typing import Any, Optional
 
 from .batch import run_batch
 from .config import AppConfig, load_config
-from .llm_backend import LLMBackend, McpSamplingBackend, build_cli_backend
+from .llm_backend import LLMBackend, build_cli_backend
 from .load_personas import load_and_sample, parse_filter
 from .logging_setup import bind_request_id, configure_logging
 from .models import (
@@ -263,44 +262,23 @@ def _setup_logging_for_run(config: AppConfig) -> None:
     bind_request_id(uuid.uuid4().hex)
 
 
-def _current_sampling_session() -> Optional[Any]:
-    """현재 처리 중인 도구 호출의 활성 MCP ``ServerSession``을 돌려준다.
-
-    ``mcp`` SDK가 도구 핸들러 콜백에 서버 인스턴스를 전달하지 않기 때문에
-    모듈 레벨 변수에 보관한다. 프로세스당 stdio 서버는 하나만 돌아가므로
-    레이스가 발생하지 않는다.
-    """
-
-    server = _ACTIVE_SERVER
-    if server is None:
-        return None
-    try:
-        ctx = server.request_context
-    except (LookupError, AttributeError):
-        return None
-    return getattr(ctx, "session", None)
-
-
 def _build_backend(config: AppConfig) -> LLMBackend:
     """현재 도구 호출을 위한 LLM 백엔드를 ``mcp.mode``에 따라 구성한다.
 
-    분기는 두 가지뿐이다(ADR-004).
+    v1.2.0(ADR-005)부터 두 모드만 다룬다.
 
     - ``mode == "server"``: ``build_cli_backend(config.llm)``으로 CLI와 동일한
       OpenAIBackend/AnthropicBackend를 만든다. server-side에 API 키가 필요하다
-    - ``mode == "sampling"``: 활성 MCP 세션을 ``McpSamplingBackend``에 감싸
-      호스트 LLM에 위임한다. 세션이 없으면(MCP 호스트 밖에서 직접 실행) CLI
-      fallback 안내가 담긴 ``ConfigError``를 던진다
-
-    ``mode`` 값 자체는 ``McpConfig.__post_init__``에서 화이트리스트 검증되었으
-    므로 본 함수에서는 두 모드만 다룬다.
+    - ``mode == "orchestrator"``: server-side LLM을 호출하지 않으므로 본 함수
+      는 도달하지 않는다. orchestrator 도구 핸들러가 LLM 호출 없이 직접 응답을
+      만들어 돌려준다(``ConfigError``로 차단해 안전망을 둔다)
     """
 
     mode = config.mcp.mode
 
     if mode == "server":
         logger.info(
-            "MCP server-side 백엔드 사용(provider=%s, model=%s)",
+            "MCP server 백엔드 사용(provider=%s, model=%s)",
             config.llm.provider,
             config.llm.model,
             extra={
@@ -311,24 +289,18 @@ def _build_backend(config: AppConfig) -> LLMBackend:
         )
         return build_cli_backend(config.llm)
 
-    session = _current_sampling_session()
-    if session is None:
-        raise ConfigError(
-            "MCP sampling 세션이 없습니다. "
-            "이 모듈은 Claude Code/Cursor 같은 MCP 호스트가 stdio로 연결되고 sampling capability를 노출한 상태에서만 동작합니다. "
-            "독립 실행이 필요하면 `python main.py interview ...` 또는 `kpi interview ...`를 사용하거나 `config.yaml`의 `mcp.mode`를 `\"server\"`로 바꿔 주세요"
-        )
-    logger.info(
-        "MCP sampling 백엔드 사용(클라이언트 LLM 위임)",
-        extra={"llm_backend": "mcp_sampling"},
+    raise ConfigError(
+        "MCP orchestrator 모드에서는 server-side LLM 호출이 불가합니다. "
+        "본 도구를 호출한 호스트 sub-agent가 자기 LLM으로 인터뷰를 수행해야 합니다. "
+        "build_persona_prompt 또는 build_batch_prompts 도구로 시스템 프롬프트를 받고, "
+        "호스트가 인터뷰 결과 record를 모아 aggregate_results 도구로 리포트를 생성하는 흐름을 사용해 주세요"
     )
-    return McpSamplingBackend(session)
 
 
 def _backend_label(config: AppConfig) -> str:
-    """현재 모드에 대응하는 응답 라벨(``mcp_server`` 또는 ``mcp_sampling``)."""
+    """현재 모드에 대응하는 응답 라벨(``mcp_server`` 또는 ``mcp_orchestrator``)."""
 
-    return "mcp_server" if config.mcp.mode == "server" else "mcp_sampling"
+    return "mcp_server" if config.mcp.mode == "server" else "mcp_orchestrator"
 
 
 _ACTIVE_SERVER: Optional[Any] = None
@@ -337,9 +309,10 @@ _ACTIVE_SERVER: Optional[Any] = None
 async def _handle_healthcheck(arguments: dict) -> dict:
     """현재 모드에 맞는 LLM 가용성을 검증한다.
 
-    - server mode: CLI healthcheck와 동일하게 provider 엔드포인트에 ping
+    - MCP server mode: CLI healthcheck와 동일하게 provider 엔드포인트에 ping
       요청을 보낸다(OpenAI는 ``/models``, Anthropic은 1-token messages 호출)
-    - sampling mode: 호스트의 sampling capability 노출 여부만 확인한다
+    - MCP orchestrator mode: server-side LLM 호출이 없으므로 ok만 돌려준다.
+      ``cwd``와 dataset 가용성은 list_personas 도구로 검증할 수 있다
     """
 
     try:
@@ -349,6 +322,14 @@ async def _handle_healthcheck(arguments: dict) -> dict:
 
     _setup_logging_for_run(config)
     backend_label = _backend_label(config)
+
+    # MCP orchestrator mode는 server-side LLM 호출 없이 ok만 돌려준다.
+    if config.mcp.mode == "orchestrator":
+        return {
+            "ok": True,
+            "backend": backend_label,
+            "cwd": str(Path.cwd()),
+        }
 
     try:
         backend = _build_backend(config)
@@ -499,9 +480,9 @@ async def _handle_interview(arguments: dict) -> dict:
     overrides: dict = {
         "batch": {
             "concurrency": concurrency,
-            "persona_fields": [str(f) for f in persona_fields],
             "single_turn": single_turn,
         },
+        "common": {"persona": {"fields": [str(f) for f in persona_fields]}},
         "output": {"output_dir": str(output_dir)},
     }
 
@@ -512,6 +493,19 @@ async def _handle_interview(arguments: dict) -> dict:
 
     _setup_logging_for_run(config)
     backend_label = _backend_label(config)
+
+    # interview 도구는 server mode에서만 동작한다. orchestrator mode에서는 호스트
+    # sub-agent가 자기 LLM으로 인터뷰를 수행해야 하므로 build_batch_prompts +
+    # aggregate_results 흐름을 사용하라고 안내한다.
+    if config.mcp.mode == "orchestrator":
+        return _error_payload(
+            "tool_unavailable_in_orchestrator",
+            "MCP orchestrator 모드에서는 interview 도구를 사용할 수 없습니다. "
+            "build_batch_prompts 도구로 호스트 sub-agent용 시스템 프롬프트를 받고, "
+            "호스트가 인터뷰 결과 record를 모아 aggregate_results 도구로 리포트를 생성하는 흐름을 사용해 주세요",
+            exit_code=1,
+            backend=backend_label,
+        )
 
     try:
         parse_filter(
@@ -658,21 +652,34 @@ async def _handle_report(arguments: dict) -> dict:
         output_dir=output_dir,
     )
 
-    try:
-        backend = _build_backend(config)
-    except ConfigError as exc:
-        return _error_payload(
-            "config_error", str(exc), exit_code=1, backend=backend_label
-        )
+    # MCP orchestrator 모드는 server-side LLM 호출이 없으므로 정성 인사이트는
+    # fallback 메시지로 채우고 정량 지표만 렌더링한다. 호스트가 정성 인사이트
+    # 까지 받으려면 build_persona_prompt 도구로 직접 호출 흐름을 구성한다.
+    backend: Optional[LLMBackend] = None
+    if config.mcp.mode != "orchestrator":
+        try:
+            backend = _build_backend(config)
+        except ConfigError as exc:
+            return _error_payload(
+                "config_error", str(exc), exit_code=1, backend=backend_label
+            )
 
     try:
-        async with backend as client:
+        if backend is None:
             report_path = await generate_report(
                 json_path=json_path,
                 options=options,
-                llm=client,
+                llm=None,
                 config=config,
             )
+        else:
+            async with backend as client:
+                report_path = await generate_report(
+                    json_path=json_path,
+                    options=options,
+                    llm=client,
+                    config=config,
+                )
     except FileNotFoundError:
         return _error_payload(
             "input_file_not_found",
@@ -771,8 +778,9 @@ def _list_tools_metadata() -> list:
         types.Tool(
             name="healthcheck",
             description=(
-                "MCP 호스트가 sampling capability를 노출하는지 확인합니다. "
-                "최초 인터뷰 호출 전 한 번 실행해 호스트 LLM 가용성을 검증할 때 사용합니다."
+                "MCP server 모드에서는 provider 엔드포인트 도달성을 검증하고, "
+                "MCP orchestrator 모드에서는 도구 부팅 자체와 cwd 정보를 돌려줍니다. "
+                "최초 인터뷰 호출 전 한 번 실행해 환경 가용성을 점검할 때 사용합니다."
             ),
             inputSchema=_HEALTHCHECK_SCHEMA,
         ),
