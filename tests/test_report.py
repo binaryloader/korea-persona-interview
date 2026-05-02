@@ -483,6 +483,40 @@ def test_records_from_payload_v1_acceptable_price_signal_None_호환() -> None:
     assert restored[0].structured_summary.acceptable_price_signal is None
 
 
+def test_format_price_signal_for_llm_분포_표기() -> None:
+    """``acceptable_price_signal`` 분포가 expensive/fair/cheap/unknown 4종으로 직렬화된다."""
+
+    from src.report import _format_price_signal_for_llm
+
+    records = [
+        _record(
+            persona_id=str(i),
+            summary=StructuredSummary(
+                intent="positive",
+                willingness_to_pay=None,
+                willingness_to_pay_currency="KRW",
+                rejection_reasons=[],
+                one_line="x",
+                acceptable_price_signal=signal,
+            ),
+        )
+        for i, signal in enumerate(["expensive", "expensive", "fair", "cheap", None])
+    ]
+    text = _format_price_signal_for_llm(records)
+    assert "expensive" in text
+    assert "fair" in text
+    assert "cheap" in text
+    assert "unknown" in text
+
+
+def test_format_price_signal_for_llm_빈_records() -> None:
+    """record가 0건이면 안내 문구를 반환한다."""
+
+    from src.report import _format_price_signal_for_llm
+
+    assert "데이터 없음" in _format_price_signal_for_llm([])
+
+
 def test_records_from_payload_v2_acceptable_price_signal_로드() -> None:
     """v2 결과 JSON의 ``acceptable_price_signal`` 값이 그대로 복원된다."""
 

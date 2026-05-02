@@ -192,6 +192,7 @@ class ReportConfig:
     histogram_bins: int = 10
     bar_width: int = 30
     insight_model: Optional[str] = None
+    estimate_wtp_from_signal: bool = False
 
     def __post_init__(self) -> None:
         if self.cohort_min_cell < 1:
@@ -317,6 +318,7 @@ def _default_dict() -> dict:
             "histogram_bins": 10,
             "bar_width": 30,
             "insight_model": None,
+            "estimate_wtp_from_signal": False,
         },
         "output": {
             "output_dir": "outputs/",
@@ -597,6 +599,9 @@ def load_config(
             histogram_bins=int(report_raw.get("histogram_bins", 10)),
             bar_width=int(report_raw.get("bar_width", 30)),
             insight_model=insight_model_val,
+            estimate_wtp_from_signal=bool(
+                report_raw.get("estimate_wtp_from_signal", False)
+            ),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise ConfigError(f"설정 필드 변환 실패: {exc}") from exc

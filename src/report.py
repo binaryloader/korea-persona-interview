@@ -726,6 +726,34 @@ def _format_price_for_llm(price: PriceStats) -> str:
     )
 
 
+def _format_price_signal_for_llm(records: list) -> str:
+    """``acceptable_price_signal`` 분포를 한 줄로 직렬화한다(라운드 G17).
+
+    record당 한 번 채워지는 정성 신호이므로 명시 숫자 미응답이 많은 인터뷰
+    에서도 가격 의견 분포를 볼 수 있게 한다.
+    """
+
+    counts: Counter = Counter()
+    total = 0
+    for r in records:
+        summary = r.structured_summary
+        if summary is None:
+            continue
+        total += 1
+        if summary.acceptable_price_signal:
+            counts[summary.acceptable_price_signal] += 1
+        else:
+            counts["unknown"] += 1
+    if total == 0:
+        return "(가격 신호 데이터 없음)"
+    parts = []
+    for label in ("expensive", "fair", "cheap", "unknown"):
+        count = counts.get(label, 0)
+        ratio = (count / total * 100) if total else 0.0
+        parts.append(f"{label} {count}명({ratio:.1f}%)")
+    return ", ".join(parts)
+
+
 def _format_rejection_for_llm(rejection: list) -> str:
     if not rejection:
         return "(거절 사유 없음)"
@@ -773,6 +801,7 @@ def _build_insight_messages(
     rejection_text = _format_rejection_for_llm(quant.rejection_reasons)
     intent_text = _format_intent_for_llm(quant.intent)
     price_text = _format_price_for_llm(quant.price)
+    price_signal_text = _format_price_signal_for_llm(records)
 
     system_prompt = (
         "당신은 인터뷰 분석가입니다. 정량 지표와 인터뷰 record 일부를 보고 "
@@ -793,12 +822,14 @@ def _build_insight_messages(
         f"[사업 아이템]\n{product}\n\n"
         f"[정량 요약]\n"
         f"- 의향률: {intent_text}\n"
-        f"- 가격 수용가(KRW): {price_text}\n"
+        f"- 가격 수용가(KRW, 명시 숫자만): {price_text}\n"
+        f"- 가격 정성 신호 분포: {price_signal_text}\n"
         f"- 거절 사유 상위: {rejection_text}\n"
         f"- 정량 대상 record 수: {quant.valid_records}명, 제외 record: {quant.excluded_total}명\n\n"
         f"[인터뷰 샘플(최대 8명)]\n"
         f"{samples_json}\n\n"
-        "위 정보를 바탕으로 출력 JSON 스키마를 채워주세요."
+        "위 정보를 바탕으로 출력 JSON 스키마를 채워주세요. 가격 의향은 명시 숫자만이 "
+        "아니라 정성 신호(expensive/fair/cheap) 분포를 함께 참고해 시사점을 도출해 주세요."
     )
 
     return [

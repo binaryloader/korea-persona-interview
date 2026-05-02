@@ -133,6 +133,10 @@ report:
   # llm.model을 사용한다. 인터뷰는 gpt-4o-mini로 돌리고 인사이트 한 번만
   # gpt-4o로 깊이 있는 통찰을 받는 흐름을 단일 옵션으로 지원한다.
   insight_model: null
+  # 명시 숫자가 빠진 인터뷰에서 acceptable_price_signal과 product 가격을 보고
+  # willingness_to_pay 추정치를 보조 표기할지 여부. 기본 false. true로 두면
+  # 정성 신호와 product 단가만으로 추정한 값이 리포트 헤더에 별도 표시된다.
+  estimate_wtp_from_signal: false
 
 output:
   output_dir: "outputs/"

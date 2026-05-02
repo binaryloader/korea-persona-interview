@@ -326,6 +326,7 @@ def make_app_config():
         histogram_bins: int = 10,
         bar_width: int = 30,
         insight_model: str | None = None,
+        estimate_wtp_from_signal: bool = False,
     ) -> AppConfig:
         llm = LlmConfig(
             base_url=base_url,
@@ -397,6 +398,7 @@ def make_app_config():
             histogram_bins=histogram_bins,
             bar_width=bar_width,
             insight_model=insight_model,
+            estimate_wtp_from_signal=estimate_wtp_from_signal,
         )
         return AppConfig(
             llm=llm,
