@@ -98,6 +98,7 @@
 - 토글 옵션(`--persona-fields professional,sports,arts,travel,culinary,family` 형식의 다중 선택): 직업인/스포츠/예술/여행/미식/가족 페르소나 자유 서술 필드를 선택적으로 추가
 - 토글 기본값은 기본 묶음만 주입한다. 토큰 사용량과 페르소나 일관성의 균형 관점에서 가장 안정적인 조합이다
 - 시스템 프롬프트 [지침] 섹션에는 family_type 정보를 그대로 반영하고 거주 형태를 추측하지 않도록 한 줄을 명시한다. 25세 1인 가구 페르소나가 ``1인 가구가 아니라서 필요성을 못 느끼겠네요``로 응답하는 회귀 사례를 막기 위함이다
+- 시스템 프롬프트 본문은 `prompts/system_prompt.txt` 외부 파일에 보관한다(라운드 B4). 사용자는 본 파일을 편집하거나 `interview.system_prompt_path` 설정으로 다른 파일을 가리켜 도메인 맞춤 톤/지침을 적용할 수 있다. 템플릿에는 `{persona_json}`과 `{product}` 두 placeholder가 반드시 포함되어야 하며, 누락 또는 파일 부재 시 ConfigError로 차단된다(에러 메시지에 경로와 조치 안내 포함)
 
 데이터셋의 실제 컬럼명은 추측하지 않는다. 구현 단계 첫 게이트(§5.10)에서 `ds['train'].column_names` 출력을 확인한 후 위 묶음과 매핑한다. 매핑 결과를 `config.yaml`의 `dataset.field_map` 섹션에 기록해 어디서든 같은 매핑을 사용한다.
 

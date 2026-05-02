@@ -276,13 +276,93 @@ _COHABIT_NEGATION_RE = re.compile(
 # ---------------------------------------------------------------------------
 
 
+# 시스템 프롬프트 템플릿 in-memory 캐시. 프로세스 단위로 디스크 read를 1회만
+# 수행한다(매 인터뷰 호출마다 디스크 I/O 회피). 키는 (resolved_path, mtime_ns)
+# 튜플이라 사용자가 파일을 수정하면 자동으로 캐시가 무효화된다.
+_SYSTEM_PROMPT_TEMPLATE_CACHE: dict = {}
+
+
+# 프로젝트 루트(본 모듈이 ``src/interview.py``라 ``parents[1]``이 루트). yaml에
+# 적은 상대 경로(``prompts/system_prompt.txt``)를 프로젝트 루트 기준으로
+# 해석할 때 사용한다. cwd 기반 해석은 작업 디렉토리에 따라 결과가 달라져
+# 테스트/CI 격리를 깬다.
+from pathlib import Path as _Path  # noqa: E402
+
+_PROJECT_ROOT = _Path(__file__).resolve().parents[1]
+
+
+def _load_system_prompt_template(path_str: str) -> str:
+    """시스템 프롬프트 템플릿 파일을 읽어 캐시한다.
+
+    Args:
+        path_str: yaml의 ``interview.system_prompt_path``. 절대 경로 또는 프로젝트
+            루트 기준 상대 경로를 모두 받는다.
+
+    Returns:
+        템플릿 본문 문자열(``{persona_json}``, ``{product}`` placeholder 포함).
+
+    Raises:
+        ConfigError: 파일이 없거나 읽기 실패. 사용자에게 친절한 한국어 안내를 단다.
+    """
+
+    candidate = _Path(path_str)
+    if not candidate.is_absolute():
+        candidate = _PROJECT_ROOT / candidate
+
+    try:
+        mtime = candidate.stat().st_mtime_ns
+    except FileNotFoundError as exc:
+        raise ConfigError(
+            f"시스템 프롬프트 템플릿 파일을 찾을 수 없습니다: {candidate}. "
+            "config.yaml의 interview.system_prompt_path를 확인해 주세요. "
+            "기본 템플릿 경로는 'prompts/system_prompt.txt'입니다"
+        ) from exc
+    except OSError as exc:
+        raise ConfigError(
+            f"시스템 프롬프트 템플릿 파일에 접근할 수 없습니다: {candidate}: {exc}"
+        ) from exc
+
+    cache_key = (str(candidate.resolve()), mtime)
+    cached = _SYSTEM_PROMPT_TEMPLATE_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    try:
+        text = candidate.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ConfigError(
+            f"시스템 프롬프트 템플릿 파일을 읽을 수 없습니다: {candidate}: {exc}"
+        ) from exc
+
+    if "{persona_json}" not in text or "{product}" not in text:
+        raise ConfigError(
+            "시스템 프롬프트 템플릿에 {persona_json} 또는 {product} placeholder가 없다. "
+            f"파일 경로: {candidate}"
+        )
+
+    _SYSTEM_PROMPT_TEMPLATE_CACHE[cache_key] = text
+    return text
+
+
+def clear_system_prompt_cache() -> None:
+    """프로세스 캐시를 비운다. 테스트 격리와 외부 수동 무효화용."""
+
+    _SYSTEM_PROMPT_TEMPLATE_CACHE.clear()
+
+
 def build_system_prompt(
     persona: PersonaMeta,
     product: str,
     persona_fields: tuple,
     field_map: dict,
+    system_prompt_path: str = "prompts/system_prompt.txt",
 ) -> str:
-    """HANDOFF.md §시스템 프롬프트 템플릿에 페르소나 정보를 주입한다.
+    """시스템 프롬프트 템플릿 파일에 페르소나 정보를 주입한다.
+
+    템플릿은 ``prompts/system_prompt.txt``(기본)에서 읽으며, 본문에는
+    ``{persona_json}``과 ``{product}`` 두 개의 str.format placeholder가 들어 있어야
+    한다. 사용자는 본 파일을 직접 편집해 시스템 프롬프트의 톤/지침을 도메인에
+    맞게 조정할 수 있다(라운드 B4 외부화).
 
     기본 묶음은 인구 통계 7개 필드와 ``persona``(요약 자유 서술)다(TDD §1.4).
     토글 키워드(``professional``/``sports``/``arts``/``travel``/``culinary``/
@@ -294,9 +374,14 @@ def build_system_prompt(
         product: 사업 아이템 한 줄 설명. 시스템 프롬프트의 인터뷰 주제로 사용.
         persona_fields: 토글 키워드 튜플. ``("summary",)``가 기본값.
         field_map: ``DatasetConfig.field_map``. 토글 키워드 → 데이터셋 컬럼 매핑.
+        system_prompt_path: 템플릿 파일 경로. 절대 경로 또는 프로젝트 루트 기준
+            상대 경로. ``InterviewConfig.system_prompt_path``에서 받는다.
 
     Returns:
         시스템 프롬프트 문자열.
+
+    Raises:
+        ConfigError: 템플릿 파일 없음/접근 실패/placeholder 누락.
     """
 
     # 기본 묶음: 인구 통계 + summary 페르소나(TDD §1.4).
@@ -338,66 +423,20 @@ def build_system_prompt(
 
     persona_json = json.dumps(persona_obj, ensure_ascii=False, indent=2)
 
-    # HANDOFF.md §시스템 프롬프트 템플릿 + 페르소나 1인칭 일관성 강화 지침.
-    # gpt-4o-mini는 일반론/3인칭 일반화(``혼자 사시는 분들에겐 좋은 서비스``)를
-    # 즐겨 덧붙이는 경향이 있어 본 페르소나의 1인칭 입장에서 벗어나기 쉽다.
-    # 본 지침은 페르소나의 family_type/housing_type을 자기 입장으로 고정하고
-    # 3인칭 일반화 표현을 명시적으로 금지해 톤 일관성을 강화한다.
-    #
-    # OpenAI prompt caching 적합 구조: 정적 prefix(인트로 + 지침)를 앞쪽으로,
-    # 가변 부분(페르소나 + product)을 뒤쪽으로 배치한다. prefix가 1024 토큰
-    # 이상 + 동일 prefix가 반복되면 OpenAI가 자동으로 prompt cache를 적용해
-    # 입력 토큰 단가의 50%를 환급한다. 캐시 히트 여부는 응답의
-    # ``usage.prompt_tokens_details.cached_tokens``로 확인할 수 있다(`llm_client`
-    # 가 ``ChatResponse.usage``로 노출).
-    return (
-        "당신은 한국인 인물 페르소나를 1인칭으로 체화해 인터뷰에 답하는 응답자입니다. "
-        "사용자가 제공할 페르소나 정보(연령, 성별, 직업, 거주 지역, 거주 형태, 주거 유형, "
-        "혼인 상태, 학력 등)를 그대로 받아들여 그 인물의 정체성, 가치관, 말투, 관심사를 "
-        "일관되게 유지하며 답변합니다. 이 인터뷰는 사업 가설 검증 목적의 사용자 리서치 "
-        "시뮬레이션입니다. 응답자는 진짜 사람처럼 솔직하게 답하고, 인공지능이라는 사실을 "
-        "스스로 언급하지 않으며, 페르소나의 일상 경험과 가치관에 비추어 평가합니다.\n"
-        "\n"
-        "[말투와 1인칭 일관성 지침]\n"
-        "- 이 인물의 연령, 직업, 거주지역에 어울리는 말투를 사용하세요"
-        "(예: 60대는 정중한 평어, 20대는 캐주얼한 어투, 30-40대는 자연스러운 일상체).\n"
-        "- 본인의 경험과 입장에서만 답변하세요. 다른 사람의 입장이나 일반론은 "
-        "언급하지 마세요.\n"
-        "- 답변에 '혼자 사시는 분들에겐', '다른 사람들은', '일반적으로' 같은 3인칭 "
-        "일반화 표현을 피하세요. 항상 '저는', '제가' 같은 1인칭 시점을 유지하세요.\n"
-        "- 페르소나의 family_type/housing_type을 그대로 따르세요. 가상의 "
-        "다른 거주 상황을 가정하거나 추측하지 마세요.\n"
-        "- 페르소나의 family_type 정보(예: '혼자 거주', '배우자와 거주', '자녀와 거주')를 "
-        "그대로 반영해 답하세요. 1인 가구 여부 등 거주 형태에 대해 추측해서 답하면 "
-        "안 됩니다.\n"
-        "\n"
-        "[답변 내용 지침]\n"
-        "- 모르는 것은 솔직히 모른다고 답하세요. 모르는 분야를 아는 척하면 안 됩니다.\n"
-        "- 답변은 2-4문장으로 간결하게 작성하세요. 너무 길거나 너무 짧은 답변을 "
-        "피하고, 인터뷰 질문의 핵심에 답하세요.\n"
-        "- 솔직한 거절도 좋습니다. 무리해서 긍정하지 마세요. 본 페르소나가 관심 없거나 "
-        "필요하지 않다면 그 사실을 솔직하게 말씀하세요.\n"
-        "- 페르소나 정보에 없는 사실을 지어내지 마세요. 명시되지 않은 가족, 직장, "
-        "취미, 소득 수준은 답변에서 가급적 만들어내지 않습니다.\n"
-        "- 답변은 한국어 자연어로 작성합니다. 영어 단어 혼입은 최소화하고 "
-        "필요한 경우에도 일반적인 외래어 수준으로만 사용하세요. 한자 직접 표기는 "
-        "피하고 한글로 적습니다.\n"
-        "\n"
-        "[출력 형식]\n"
-        "- 인터뷰 질문에 대한 답변만 출력하고, 메타 설명"
-        "(예: '저는 ~로서 답하겠습니다')은 붙이지 마세요.\n"
-        "- 마크다운 헤딩이나 코드 펜스를 사용하지 말고 평문으로만 답하세요.\n"
-        "- 답변 마지막에 자기 호칭(예: '20대 여성으로서')을 다시 적지 않습니다.\n"
-        "\n"
-        "당신은 다음 한국인 인물입니다. 이 인물의 정체성, 가치관, 말투, 관심사를 "
-        "그대로 체화하여 답변하세요.\n"
-        "\n"
-        "[페르소나 정보]\n"
-        f"{persona_json}\n"
-        "\n"
-        "[인터뷰 주제]\n"
-        f"{product}"
-    )
+    # HANDOFF.md §시스템 프롬프트 템플릿 + 페르소나 1인칭 일관성 강화 지침을
+    # 외부 파일로 분리했다. OpenAI prompt caching 적합 구조(정적 prefix가 앞쪽,
+    # 가변 부분이 뒤쪽)는 템플릿 파일 자체에 박혀 있다. ``persona_json``과
+    # ``product``만 가변이라 같은 템플릿을 반복 호출하면 OpenAI가 자동으로
+    # 입력 토큰 단가의 50%를 환급한다(prefix 1024 토큰 이상 + 동일 prefix 반복).
+    template = _load_system_prompt_template(system_prompt_path)
+    try:
+        return template.format(persona_json=persona_json, product=product).rstrip()
+    except KeyError as exc:
+        # str.format 안에 알려지지 않은 placeholder가 있는 경우.
+        raise ConfigError(
+            f"시스템 프롬프트 템플릿에 알려지지 않은 placeholder가 있다: {exc}. "
+            "허용 placeholder: {persona_json}, {product}"
+        ) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -984,6 +1023,7 @@ class InterviewSession:
             self._product,
             self._config.batch.persona_fields,
             self._config.dataset.field_map,
+            self._interview_cfg.system_prompt_path,
         )
         messages: list = [MessageEntry(role="system", content=system_prompt)]
         raw_responses: list = []
@@ -1264,6 +1304,7 @@ class InterviewSession:
             self._product,
             self._config.batch.persona_fields,
             self._config.dataset.field_map,
+            self._interview_cfg.system_prompt_path,
         )
         all_questions = list(self._questions) + list(self._follow_ups)
 

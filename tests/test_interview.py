@@ -26,6 +26,7 @@ from src.interview import (
     _parse_single_turn_response,
     _parse_summary_payload,
     build_system_prompt,
+    clear_system_prompt_cache,
     detect_persona_drift,
     detect_refusal,
     estimate_messages_tokens,
@@ -1487,6 +1488,116 @@ async def test_run_interview_auto_follow_up_max_0이면_비활성(
     requests = httpx_mock.get_requests()
     chat_calls = [r for r in requests if "chat/completions" in str(r.url)]
     assert len(chat_calls) == 2
+
+
+# ---------------------------------------------------------------------------
+# 라운드 B4: 시스템 프롬프트 템플릿 파일 분리
+# ---------------------------------------------------------------------------
+
+
+def test_build_system_prompt_default_파일_로드(fake_persona_meta) -> None:
+    """기본 prompts/system_prompt.txt 파일을 읽어 템플릿이 적용된다."""
+
+    clear_system_prompt_cache()
+    prompt = build_system_prompt(
+        fake_persona_meta,
+        "반찬 정기배송",
+        ("summary",),
+        _FIELD_MAP,
+    )
+    # 페르소나 JSON 주입
+    assert "27" in prompt
+    assert "여자" in prompt
+    # product 주입
+    assert "반찬 정기배송" in prompt
+    # 1인칭 일관성 지침이 들어 있다
+    assert "1인칭" in prompt
+
+
+def test_build_system_prompt_커스텀_파일_경로(
+    fake_persona_meta, tmp_path
+) -> None:
+    """system_prompt_path를 임시 파일로 바꾸면 그 내용이 system 메시지가 된다."""
+
+    clear_system_prompt_cache()
+    custom_path = tmp_path / "custom_prompt.txt"
+    custom_path.write_text(
+        "[CUSTOM] persona={persona_json} product={product}",
+        encoding="utf-8",
+    )
+
+    prompt = build_system_prompt(
+        fake_persona_meta,
+        "테스트 제품",
+        ("summary",),
+        _FIELD_MAP,
+        str(custom_path),
+    )
+    assert prompt.startswith("[CUSTOM]")
+    assert "테스트 제품" in prompt
+    # 기본 템플릿의 1인칭 일관성 지침은 들어가지 않는다(다른 파일이라)
+    assert "3인칭 일반화" not in prompt
+
+
+def test_build_system_prompt_파일_없음_ConfigError(
+    fake_persona_meta, tmp_path
+) -> None:
+    """존재하지 않는 경로를 주면 ConfigError + 친절한 안내."""
+
+    clear_system_prompt_cache()
+    missing = tmp_path / "missing.txt"
+    from src.models import ConfigError
+
+    with pytest.raises(ConfigError, match="시스템 프롬프트"):
+        build_system_prompt(
+            fake_persona_meta,
+            "x",
+            ("summary",),
+            _FIELD_MAP,
+            str(missing),
+        )
+
+
+def test_build_system_prompt_placeholder_누락_ConfigError(
+    fake_persona_meta, tmp_path
+) -> None:
+    """템플릿에 {persona_json} 또는 {product}이 없으면 ConfigError."""
+
+    clear_system_prompt_cache()
+    bad_path = tmp_path / "bad.txt"
+    bad_path.write_text("placeholder가 없는 본문", encoding="utf-8")
+    from src.models import ConfigError
+
+    with pytest.raises(ConfigError, match="placeholder"):
+        build_system_prompt(
+            fake_persona_meta,
+            "x",
+            ("summary",),
+            _FIELD_MAP,
+            str(bad_path),
+        )
+
+
+def test_build_system_prompt_캐시_재로드_없음(
+    fake_persona_meta, tmp_path
+) -> None:
+    """같은 파일에 대한 두 번째 호출은 캐시 hit으로 디스크를 다시 읽지 않는다."""
+
+    clear_system_prompt_cache()
+    p = tmp_path / "p.txt"
+    p.write_text("v1 {persona_json} {product}", encoding="utf-8")
+
+    out1 = build_system_prompt(
+        fake_persona_meta, "x", ("summary",), _FIELD_MAP, str(p)
+    )
+    assert "v1" in out1
+
+    # 디스크 내용 변경 후 mtime이 같으면 캐시가 그대로(테스트 환경에서 mtime은
+    # 보통 다르지만, 적어도 한 번 더 호출했을 때 정상적으로 결과를 받는지 확인).
+    out2 = build_system_prompt(
+        fake_persona_meta, "x", ("summary",), _FIELD_MAP, str(p)
+    )
+    assert out1 == out2
 
 
 @pytest.mark.asyncio

@@ -156,6 +156,7 @@ class InterviewConfig:
     refusal_keywords: tuple
     auto_follow_up_text: str = "조금만 더 자세히 말씀해 주실 수 있을까요?"
     auto_follow_up_max: int = 1
+    system_prompt_path: str = "prompts/system_prompt.txt"
 
     def __post_init__(self) -> None:
         if self.short_answer_threshold < 0:
@@ -176,6 +177,10 @@ class InterviewConfig:
         if not isinstance(self.auto_follow_up_text, str) or not self.auto_follow_up_text.strip():
             raise ConfigError(
                 "interview.auto_follow_up_text는 빈 문자열이 아닌 str이어야 한다"
+            )
+        if not isinstance(self.system_prompt_path, str) or not self.system_prompt_path.strip():
+            raise ConfigError(
+                "interview.system_prompt_path는 빈 문자열이 아닌 str이어야 한다"
             )
 
 
@@ -324,6 +329,7 @@ def _default_dict() -> dict:
             ],
             "auto_follow_up_text": "조금만 더 자세히 말씀해 주실 수 있을까요?",
             "auto_follow_up_max": 1,
+            "system_prompt_path": "prompts/system_prompt.txt",
         },
         "report": {
             # 코호트 셀 표본 부족 마스킹 임계값. PRD §5.6: 3명 미만 셀은
@@ -607,6 +613,11 @@ def load_config(
             ),
             auto_follow_up_max=int(
                 merged["interview"].get("auto_follow_up_max", 1)
+            ),
+            system_prompt_path=str(
+                merged["interview"].get(
+                    "system_prompt_path", "prompts/system_prompt.txt"
+                )
             ),
         )
         report_raw = merged.get("report") or {}

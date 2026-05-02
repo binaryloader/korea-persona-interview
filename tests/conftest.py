@@ -61,6 +61,16 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
     except Exception:  # noqa: BLE001 - import 실패 시 안전망
         pass
 
+    # 시스템 프롬프트 템플릿 캐시도 비운다(라운드 B4 외부화로 도입). 같은
+    # 경로를 다른 내용으로 가리키는 테스트가 캐시 hit으로 잘못된 결과를 받지
+    # 않도록 한다.
+    try:
+        from src.interview import clear_system_prompt_cache
+
+        clear_system_prompt_cache()
+    except Exception:  # noqa: BLE001 - import 실패 시 안전망
+        pass
+
     # 프로젝트 루트 .env가 자동 탐색되어 실제 ``OPENAI_API_KEY``를 주입하던
     # 회귀를 막는다. 명시 경로를 받는 호출과 cwd가 프로젝트 루트가 아닌
     # 호출(monkeypatch.chdir(tmp_path) 사용)은 그대로 통과시킨다. 그래야 cwd를
@@ -302,6 +312,7 @@ def make_app_config():
         ),
         auto_follow_up_text: str = "조금만 더 자세히 말씀해 주실 수 있을까요?",
         auto_follow_up_max: int = 1,
+        system_prompt_path: str = "prompts/system_prompt.txt",
         partial_failure_threshold: float = 0.5,
         cohort_min_cell: int = 3,
         top_n_default: int = 10,
@@ -364,6 +375,7 @@ def make_app_config():
             refusal_keywords=refusal_keywords,
             auto_follow_up_text=auto_follow_up_text,
             auto_follow_up_max=auto_follow_up_max,
+            system_prompt_path=system_prompt_path,
         )
         report = ReportConfig(
             cohort_min_cell=cohort_min_cell,

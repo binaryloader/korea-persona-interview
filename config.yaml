@@ -113,6 +113,12 @@ interview:
   # 페르소나 1명당 자동 follow-up 발동 상한. 0이면 자동 follow-up 비활성.
   # 1이 PRD §5.1 권장값이다(과도한 추가 호출로 비용 증가 방지).
   auto_follow_up_max: 1
+  # 시스템 프롬프트 템플릿 파일 경로(절대 경로 또는 프로젝트 루트 기준 상대).
+  # 본 파일에 적힌 텍스트가 모든 인터뷰의 system 메시지로 들어간다. 사용자는
+  # prompts/system_prompt.txt를 직접 편집하거나 다른 파일을 가리켜 도메인 맞춤
+  # 톤/지침을 적용할 수 있다. 템플릿에는 {persona_json}과 {product} placeholder가
+  # 반드시 포함되어야 하며, 누락되면 ConfigError로 차단된다.
+  system_prompt_path: "prompts/system_prompt.txt"
 
 report:
   # 코호트 셀 표본 부족 마스킹 임계값. PRD §5.6 권장값 3. 5로 올리면 코호트

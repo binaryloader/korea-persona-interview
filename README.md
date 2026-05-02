@@ -178,6 +178,8 @@ korea-persona-interview/
 ├── config.yaml
 ├── .python-version
 ├── main.py
+├── prompts/
+│   └── system_prompt.txt
 ├── src/
 │   ├── batch.py
 │   ├── config.py
@@ -223,6 +225,13 @@ Notable keys.
 - `interview.short_answer_threshold` - 20 character trigger for the auto follow-up
 - `interview.english_ratio_threshold` - 0.30 trigger for persona drift detection
 - `interview.hanja_ratio_threshold` - 0.05 trigger for persona drift detection (CJK ideograph leakage safety net)
+- `interview.auto_follow_up_text` - the user message sent when the auto follow-up fires. Edit it to fit your domain tone
+- `interview.auto_follow_up_max` - per-persona cap on auto follow-ups (default 1, set to 0 to disable)
+- `interview.system_prompt_path` - path to the system prompt template (default `prompts/system_prompt.txt`). Edit the file or point this at a different one to customize tone, instructions, or output formatting. The template must include the `{persona_json}` and `{product}` placeholders
+- `report.cohort_min_cell` - cohort cell sample-size mask threshold (default 3, raise to 5 for more conservative reporting)
+- `report.histogram_bins` - price histogram bin count (default 10)
+- `report.bar_width` - text bar chart width (default 30, lower for narrow terminals)
+- `batch.partial_failure_threshold` - completion ratio under which the batch is flagged partial-failure (default 0.5, higher is stricter)
 
 ### Choosing a model
 
