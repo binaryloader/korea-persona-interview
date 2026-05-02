@@ -377,10 +377,29 @@ def _build_persona_meta(row: dict, field_map: dict) -> PersonaMeta:
         str(raw_housing_type) if raw_housing_type else None
     )
 
+    raw_gender = str(row.get(field_map.get("gender", "sex"), ""))
+    # 데이터셋이 ``남자``/``여자`` 외 표기(``남성``/``여성``/``M``/``F``)로 갱신되어도
+    # PersonaMeta 검증을 통과할 수 있도록 reverse alias를 적용한다(라운드 G16).
+    # gender_aliases는 yaml에 ``F``/``M``/``남성``/``여성`` → ``남자``/``여자`` 매핑이
+    # 들어 있으므로 그대로 활용한다. 함수 인자로 alias dict를 받지 않는 호출
+    # 경로(테스트 등)에서는 본 정규화가 no-op이다.
+    if raw_gender not in ("남자", "여자"):
+        # field_map과 같은 흐름으로 raw에서 alias를 시도한다. _build_persona_meta
+        # 단계는 alias dict를 직접 받지 않으므로 hard-coded 표준 매핑만 적용한다.
+        _gender_normalize = {
+            "남성": "남자",
+            "여성": "여자",
+            "M": "남자",
+            "F": "여자",
+            "male": "남자",
+            "female": "여자",
+        }
+        raw_gender = _gender_normalize.get(raw_gender, raw_gender)
+
     return PersonaMeta(
         persona_id=persona_id,
         name=name_value,
-        gender=str(row.get(field_map.get("gender", "sex"), "")),
+        gender=raw_gender,
         age=age_int,
         region=str(row.get(field_map.get("region", "province"), "")),
         subregion=str(row.get(field_map.get("subregion", "district"), "")),

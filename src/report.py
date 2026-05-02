@@ -1392,6 +1392,13 @@ async def generate_report(
 
     output_path = _resolve_output_path(json_path, options.output_dir)
     output_path.write_text(markdown_text, encoding="utf-8")
+    # 마크다운 리포트도 결과 JSON과 같은 0600으로 좁힌다(라운드 G16).
+    try:
+        import os as _os
+
+        _os.chmod(output_path, 0o600)
+    except (PermissionError, OSError):
+        pass
 
     logger.info(
         "리포트 저장",

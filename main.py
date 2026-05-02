@@ -144,6 +144,35 @@ def _emit_json_error(code: str, message: str, *, exit_code: int) -> None:
     )
 
 
+def _warn_if_output_outside_cwd(
+    path: Optional[Path],
+    console: Optional["Console"],
+    json_mode: bool,
+) -> None:
+    """``--output``/``--output-dir``가 현재 작업 디렉토리 외부면 경고를 찍는다.
+
+    경로 정규화 결과 cwd 트리 외부에 결과/리포트가 떨어지면 일부 호스트
+    환경에서 권한/sandbox 문제가 발생할 수 있다. 경로 자체를 막지는 않고 사람용
+    모드에서만 한 번 안내한다(json_mode는 묵음).
+    """
+
+    if path is None:
+        return
+    try:
+        resolved = Path(path).expanduser().resolve()
+        cwd = Path.cwd().resolve()
+        resolved.relative_to(cwd)
+    except (ValueError, RuntimeError):
+        if console is not None and not json_mode:
+            console.warn(
+                f"--output 경로가 작업 디렉토리 외부입니다: {resolved}. "
+                "권한/sandbox 문제가 발생하면 cwd 안 경로로 변경해 주세요"
+            )
+    except OSError:
+        # resolve() 자체가 실패하는 환경(존재하지 않는 부모 등)은 그대로 둔다.
+        pass
+
+
 def _exit_with_error(
     *,
     json_mode: bool,
@@ -764,6 +793,8 @@ def interview(
     questions_list = list(questions)
     follow_ups_list = list(follow_ups)
 
+    _warn_if_output_outside_cwd(output_dir, console, json_mode)
+
     # 필터 DSL 사전 검증.
     try:
         parse_filter(
@@ -1261,6 +1292,7 @@ def report(
         include_drift=include_drift,
         output_dir=output_dir,
     )
+    _warn_if_output_outside_cwd(output_dir, console, json_mode)
 
     if not json_mode:
         console.info(f"입력 JSON: {result_path}")

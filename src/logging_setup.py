@@ -124,6 +124,22 @@ def mask_product(product: Optional[str], head: int = 30) -> str:
     return f"{product[:head]}({n}자)"
 
 
+def mask_persona_id(persona_id: Optional[str], prefix_len: int = 12) -> str:
+    """persona_id를 sha256 prefix로 마스킹한다(라운드 G16).
+
+    데이터셋의 uuid가 그대로 로그에 남으면 동일 페르소나의 다른 실행 결과를
+    cross-link할 수 있다. sha256 hex prefix 12자만 노출해 동일 ID라는 사실은
+    유지하되 원본 uuid를 추적할 수 없게 한다(security.md §1, logging.md §2).
+    """
+
+    if not persona_id:
+        return ""
+    import hashlib as _hashlib
+
+    digest = _hashlib.sha256(str(persona_id).encode("utf-8")).hexdigest()
+    return digest[:prefix_len]
+
+
 # ---------------------------------------------------------------------------
 # JSON Lines 포맷터
 # ---------------------------------------------------------------------------

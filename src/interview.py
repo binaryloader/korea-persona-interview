@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Optional
 
 from ._json_utils import extract_json_object
 from .config import AppConfig, InterviewConfig, LlmConfig
-from .logging_setup import mask_name, mask_product
+from .logging_setup import mask_name, mask_persona_id, mask_product
 
 if TYPE_CHECKING:  # pragma: no cover - type-only import
     from .llm_backend import LLMBackend
@@ -277,6 +277,55 @@ _COHABIT_NEGATION_RE = re.compile(
 # 수행한다(매 인터뷰 호출마다 디스크 I/O 회피). 키는 (resolved_path, mtime_ns)
 # 튜플이라 사용자가 파일을 수정하면 자동으로 캐시가 무효화된다.
 _SYSTEM_PROMPT_TEMPLATE_CACHE: dict = {}
+
+
+# product/질문 본문 길이 상한. 사용자가 의도치 않게 거대한 본문을 넣어 토큰
+# 폭증을 일으키는 사례를 방지한다(security.md §3 입력 검증). 한도를 넘는 본문은
+# 호출 시점에 ConfigError로 차단해 호출자가 즉시 인지할 수 있게 한다.
+_MAX_PRODUCT_LENGTH = 2000
+_MAX_QUESTION_LENGTH = 2000
+
+
+# 시스템 프롬프트 템플릿이 ``[페르소나 정보]``/``[인터뷰 주제]`` 같은 마커로
+# 가변 본문 영역을 구분한다. product/질문 본문이 동일한 마커 텍스트를 그대로
+# 포함하면 모델이 새 시스템 지시로 잘못 해석할 수 있다(prompt injection).
+# escape는 마커의 첫 글자를 zero-width space로 갈아 끼워 형태는 보존하면서
+# 마커 일치를 깨뜨린다.
+_PROMPT_INJECTION_MARKERS: tuple = (
+    "[페르소나 정보]",
+    "[인터뷰 주제]",
+    "[말투와 1인칭 일관성 지침]",
+    "[답변 내용 지침]",
+    "[출력 형식]",
+)
+_ZERO_WIDTH_SPACE = "​"
+
+
+def _sanitize_user_text(text: str, *, max_length: int, label: str) -> str:
+    """길이 검증 + 시스템 프롬프트 마커 escape를 한 번에 수행한다.
+
+    호출자(InterviewSession.__init__, run_batch 등)에서 product/questions을
+    검증할 때 사용한다.
+
+    Raises:
+        ConfigError: 본문이 비어 있거나 ``max_length``를 초과하거나 str이 아님.
+    """
+
+    if text is None:
+        raise ConfigError(f"{label}이 비어 있다")
+    if not isinstance(text, str):
+        raise ConfigError(f"{label}은 str이어야 한다: {type(text).__name__}")
+    if len(text) > max_length:
+        raise ConfigError(
+            f"{label}이 {max_length}자 상한을 초과했다(입력 {len(text)}자). "
+            "본문을 줄여 다시 호출해 주세요"
+        )
+    cleaned = text
+    for marker in _PROMPT_INJECTION_MARKERS:
+        if marker in cleaned:
+            replacement = _ZERO_WIDTH_SPACE + marker[1:]
+            cleaned = cleaned.replace(marker, replacement)
+    return cleaned
 
 
 # 프로젝트 루트(본 모듈이 ``src/interview.py``라 ``parents[1]``이 루트). yaml에
@@ -1237,10 +1286,24 @@ class InterviewSession:
         if not questions:
             raise ConfigError("questions가 비어 있다. 1개 이상 지정해 주세요")
 
+        # 라운드 G16: product/questions 본문에 길이 상한과 prompt-injection
+        # 마커 escape를 적용한다(security.md §3). 한도를 넘으면 즉시 ConfigError.
+        product_clean = _sanitize_user_text(
+            product, max_length=_MAX_PRODUCT_LENGTH, label="--product"
+        )
+        questions_clean = [
+            _sanitize_user_text(q, max_length=_MAX_QUESTION_LENGTH, label="질문")
+            for q in questions
+        ]
+        follow_ups_clean = [
+            _sanitize_user_text(q, max_length=_MAX_QUESTION_LENGTH, label="follow-up")
+            for q in (follow_up_questions or [])
+        ]
+
         self._persona = persona
-        self._product = product
-        self._questions = list(questions)
-        self._follow_ups = list(follow_up_questions or [])
+        self._product = product_clean
+        self._questions = questions_clean
+        self._follow_ups = follow_ups_clean
         self._client = client
         self._config = config
         self._llm_cfg: LlmConfig = config.llm
@@ -1278,18 +1341,27 @@ class InterviewSession:
         status = "completed"
         error_payload: Optional[dict] = None
 
+        # persona_id는 sha256 prefix로 마스킹하고, 인구통계 필드는 DEBUG로 격하
+        # 한다(security.md §1, logging.md §1, §2). INFO 라인은 sequence 추적을
+        # 가능하게 하되 식별 가능한 인구통계 자체는 노출하지 않는다.
         logger.info(
             "인터뷰 시작",
             extra={
-                "persona_id": self._persona.persona_id,
-                "persona_name": mask_name(self._persona.name),
-                "persona_age": self._persona.age,
-                "persona_gender": self._persona.gender,
-                "persona_region": self._persona.region,
+                "persona_id_hash": mask_persona_id(self._persona.persona_id),
                 "product": mask_product(self._product),
                 "questions_count": len(self._questions),
                 "follow_ups_count": len(self._follow_ups),
                 "mode": "multi_turn",
+            },
+        )
+        logger.debug(
+            "인터뷰 페르소나 인구통계(DEBUG 격하)",
+            extra={
+                "persona_id_hash": mask_persona_id(self._persona.persona_id),
+                "persona_name": mask_name(self._persona.name),
+                "persona_age": self._persona.age,
+                "persona_gender": self._persona.gender,
+                "persona_region": self._persona.region,
             },
         )
 
@@ -1331,7 +1403,7 @@ class InterviewSession:
                     logger.warning(
                         "모델 거부 감지",
                         extra={
-                            "persona_id": self._persona.persona_id,
+                            "persona_id_hash": mask_persona_id(self._persona.persona_id),
                             "question_index": q_index,
                         },
                     )
@@ -1358,7 +1430,7 @@ class InterviewSession:
                         logger.warning(
                             "페르소나 깨짐 감지",
                             extra={
-                                "persona_id": self._persona.persona_id,
+                                "persona_id_hash": mask_persona_id(self._persona.persona_id),
                                 "question_index": q_index,
                             },
                         )
@@ -1366,7 +1438,7 @@ class InterviewSession:
                         logger.info(
                             "페르소나 깨짐 휴리스틱 trigger되었지만 LLM judge가 ok로 판정",
                             extra={
-                                "persona_id": self._persona.persona_id,
+                                "persona_id_hash": mask_persona_id(self._persona.persona_id),
                                 "question_index": q_index,
                             },
                         )
@@ -1387,7 +1459,7 @@ class InterviewSession:
                     logger.debug(
                         "자동 follow-up 트리거",
                         extra={
-                            "persona_id": self._persona.persona_id,
+                            "persona_id_hash": mask_persona_id(self._persona.persona_id),
                             "question_index": q_index,
                         },
                     )
@@ -1454,7 +1526,7 @@ class InterviewSession:
             logger.error(
                 "인터뷰 실패(재시도 한도 초과)",
                 extra={
-                    "persona_id": self._persona.persona_id,
+                    "persona_id_hash": mask_persona_id(self._persona.persona_id),
                     "reason": str(exc),
                 },
             )
@@ -1467,7 +1539,7 @@ class InterviewSession:
             logger.error(
                 "인터뷰 실패(서버 응답 없음)",
                 extra={
-                    "persona_id": self._persona.persona_id,
+                    "persona_id_hash": mask_persona_id(self._persona.persona_id),
                     "reason": str(exc),
                 },
             )
@@ -1490,7 +1562,7 @@ class InterviewSession:
                 logger.warning(
                     "구조화 요약 단계 예외(structured_summary=None로 보존)",
                     extra={
-                        "persona_id": self._persona.persona_id,
+                        "persona_id_hash": mask_persona_id(self._persona.persona_id),
                         "reason": str(exc),
                     },
                 )
@@ -1513,7 +1585,7 @@ class InterviewSession:
         logger.info(
             "인터뷰 종료",
             extra={
-                "persona_id": self._persona.persona_id,
+                "persona_id_hash": mask_persona_id(self._persona.persona_id),
                 "status": status,
                 "responses_count": len(raw_responses),
                 "flags": dataclasses.asdict(flags),
@@ -1614,7 +1686,7 @@ class InterviewSession:
         logger.info(
             "인터뷰 시작",
             extra={
-                "persona_id": self._persona.persona_id,
+                "persona_id_hash": mask_persona_id(self._persona.persona_id),
                 "persona_name": mask_name(self._persona.name),
                 "persona_age": self._persona.age,
                 "persona_gender": self._persona.gender,
@@ -1672,7 +1744,7 @@ class InterviewSession:
                         status = "drift"
                         logger.warning(
                             "페르소나 깨짐 감지(단일턴)",
-                            extra={"persona_id": self._persona.persona_id},
+                            extra={"persona_id_hash": mask_persona_id(self._persona.persona_id)},
                         )
 
                 parsed, parse_failed = _parse_single_turn_response(
@@ -1684,7 +1756,7 @@ class InterviewSession:
                         "단일턴 응답 번호 파싱 실패. fallback으로 마지막 "
                         "question에 통째 텍스트 저장",
                         extra={
-                            "persona_id": self._persona.persona_id,
+                            "persona_id_hash": mask_persona_id(self._persona.persona_id),
                             "questions_count": len(all_questions),
                         },
                     )
@@ -1714,7 +1786,7 @@ class InterviewSession:
             logger.error(
                 "인터뷰 실패(재시도 한도 초과, 단일턴)",
                 extra={
-                    "persona_id": self._persona.persona_id,
+                    "persona_id_hash": mask_persona_id(self._persona.persona_id),
                     "reason": str(exc),
                 },
             )
@@ -1727,7 +1799,7 @@ class InterviewSession:
             logger.error(
                 "인터뷰 실패(서버 응답 없음, 단일턴)",
                 extra={
-                    "persona_id": self._persona.persona_id,
+                    "persona_id_hash": mask_persona_id(self._persona.persona_id),
                     "reason": str(exc),
                 },
             )
@@ -1748,7 +1820,7 @@ class InterviewSession:
                 logger.warning(
                     "구조화 요약 단계 예외(structured_summary=None로 보존, 단일턴)",
                     extra={
-                        "persona_id": self._persona.persona_id,
+                        "persona_id_hash": mask_persona_id(self._persona.persona_id),
                         "reason": str(exc),
                     },
                 )
@@ -1771,7 +1843,7 @@ class InterviewSession:
         logger.info(
             "인터뷰 종료",
             extra={
-                "persona_id": self._persona.persona_id,
+                "persona_id_hash": mask_persona_id(self._persona.persona_id),
                 "status": status,
                 "responses_count": len(raw_responses),
                 "flags": dataclasses.asdict(flags),

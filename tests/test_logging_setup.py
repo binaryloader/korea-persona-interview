@@ -22,6 +22,7 @@ from src.logging_setup import (
     configure_logging,
     get_request_id,
     mask_name,
+    mask_persona_id,
     mask_product,
 )
 
@@ -45,6 +46,38 @@ from src.logging_setup import (
 )
 def test_mask_name_분기(raw, expected) -> None:
     assert mask_name(raw) == expected
+
+
+# ---------------------------------------------------------------------------
+# mask_persona_id(라운드 G16)
+# ---------------------------------------------------------------------------
+
+
+def test_mask_persona_id_None_빈문자열() -> None:
+    """None과 빈 문자열은 빈 문자열로 반환한다."""
+
+    assert mask_persona_id(None) == ""
+    assert mask_persona_id("") == ""
+
+
+def test_mask_persona_id_sha256_prefix_12자() -> None:
+    """동일 입력은 동일 출력(deterministic), 출력은 hex 12자."""
+
+    out1 = mask_persona_id("test-uuid-0001")
+    out2 = mask_persona_id("test-uuid-0001")
+    assert out1 == out2
+    assert len(out1) == 12
+    # hex만 들어 있어야 한다.
+    assert all(c in "0123456789abcdef" for c in out1)
+
+
+def test_mask_persona_id_원본_uuid_노출_방지() -> None:
+    """원본 uuid 본문은 마스킹 결과에 포함되지 않는다."""
+
+    pid = "p-0001-real"
+    out = mask_persona_id(pid)
+    assert "p-0001" not in out
+    assert pid not in out
 
 
 # ---------------------------------------------------------------------------

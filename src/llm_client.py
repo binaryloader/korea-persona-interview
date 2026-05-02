@@ -174,7 +174,8 @@ class LLMClient:
             raise ConfigError(_INVALID_API_KEY_MESSAGE)
         if 400 <= response.status_code < 500:
             raise ConfigError(
-                f"OpenAI 서버 4xx 응답: {response.status_code} {response.text[:200]}"
+                f"LLM 엔드포인트가 4xx 응답을 보냈습니다: HTTP {response.status_code}. "
+                f"base_url과 모델 ID를 확인해 주세요. 응답 본문: {response.text[:200]}"
             )
 
         try:

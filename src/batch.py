@@ -42,7 +42,7 @@ from .interview import run_interview
 
 if TYPE_CHECKING:  # pragma: no cover - type-only import
     from .llm_backend import LLMBackend
-from .logging_setup import mask_product
+from .logging_setup import mask_persona_id, mask_product
 from .models import (
     BatchResult,
     ConfigError,
@@ -196,6 +196,12 @@ def save_batch_result(
 
     ts = timestamp or _timestamp_filename()
     output_dir.mkdir(parents=True, exist_ok=True)
+    # outputs/ 디렉토리 권한을 0700으로 좁힌다(security.md §1, §4). Windows에서는
+    # chmod가 무시되지만 호출 자체는 안전하다.
+    try:
+        os.chmod(output_dir, 0o700)
+    except (PermissionError, OSError):
+        pass
     file_name = f"interview_{slug}_{ts}.json"
     target = output_dir / file_name
 
@@ -207,6 +213,12 @@ def save_batch_result(
     tmp_target = target.with_suffix(target.suffix + ".tmp")
     tmp_target.write_text(serialized, encoding="utf-8")
     os.replace(tmp_target, target)
+    # 결과 파일 권한을 0600으로 좁혀 동일 호스트의 다른 사용자가 인터뷰 응답
+    # 본문(외부 LLM 송신본)을 읽지 못하게 한다.
+    try:
+        os.chmod(target, 0o600)
+    except (PermissionError, OSError):
+        pass
 
     logger.info(
         "배치 결과 저장",
@@ -332,7 +344,7 @@ async def _run_single(
             logger.warning(
                 "페르소나 인터뷰 도메인 예외(흡수)",
                 extra={
-                    "persona_id": persona.persona_id,
+                    "persona_id_hash": mask_persona_id(persona.persona_id),
                     "reason": str(exc),
                     "type": _classify_exception(exc),
                 },
@@ -345,7 +357,7 @@ async def _run_single(
             logger.error(
                 "페르소나 인터뷰 예외(흡수)",
                 extra={
-                    "persona_id": persona.persona_id,
+                    "persona_id_hash": mask_persona_id(persona.persona_id),
                     "reason": str(exc),
                     "exception_type": type(exc).__name__,
                 },

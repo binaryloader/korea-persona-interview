@@ -741,6 +741,39 @@ async def test_review_drift_with_llm_호출실패_보수적_True() -> None:
     assert out is True
 
 
+def test_sanitize_user_text_길이_상한_ConfigError() -> None:
+    """``--product`` 본문이 2000자를 초과하면 ConfigError로 차단된다."""
+
+    from src.interview import _MAX_PRODUCT_LENGTH, _sanitize_user_text
+    from src.models import ConfigError
+
+    big = "가" * (_MAX_PRODUCT_LENGTH + 1)
+    with pytest.raises(ConfigError, match="상한"):
+        _sanitize_user_text(big, max_length=_MAX_PRODUCT_LENGTH, label="--product")
+
+
+def test_sanitize_user_text_프롬프트_인젝션_마커_escape() -> None:
+    """``[페르소나 정보]`` 같은 시스템 프롬프트 마커가 본문에 들어오면 escape된다."""
+
+    from src.interview import _sanitize_user_text
+
+    raw = "이 서비스는 [페르소나 정보] 같은 키워드를 보여요"
+    cleaned = _sanitize_user_text(raw, max_length=2000, label="--product")
+    assert "[페르소나 정보]" not in cleaned
+    # 형태는 보존(zero-width space로 첫 글자만 갈아 끼움).
+    assert "페르소나 정보]" in cleaned
+
+
+def test_sanitize_user_text_정상_본문_그대로_통과() -> None:
+    """일반 본문은 그대로 통과한다."""
+
+    from src.interview import _sanitize_user_text
+
+    raw = "1인 가구용 반찬 정기배송, 월 39,900원"
+    cleaned = _sanitize_user_text(raw, max_length=2000, label="--product")
+    assert cleaned == raw
+
+
 def _make_dummy_llm_config():
     """judge 테스트용 최소 LlmConfig."""
 
