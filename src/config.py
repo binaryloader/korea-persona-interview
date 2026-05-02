@@ -103,16 +103,26 @@ class BatchConfig:
     OpenAI 백엔드 전환 이후 메모리 가드가 무관해 1-10으로 상향한다. 동시성
     10은 OpenAI rate limit(tier별 분당 요청 수)을 한 번에 다 쓰지 않도록 둔
     완만한 상한이며, 그 이상은 비용 폭증과 rate limit 회귀를 동반한다.
+
+    ``partial_failure_threshold``는 부분 실패 판정 임계값(0.0-1.0)이다.
+    완료된 record 비율이 본 값 미만이면 ``BatchResultEnvelope.partial_failure``가
+    True로 표시되고 CLI는 종료 코드 3을 반환한다(라운드 B3 외부화).
     """
 
     concurrency: int
     persona_fields: tuple
     single_turn: bool = False
+    partial_failure_threshold: float = 0.5
 
     def __post_init__(self) -> None:
         if not (1 <= self.concurrency <= 10):
             raise ConfigError(
                 f"동시성은 1-10 범위만 허용한다. 입력값: {self.concurrency}"
+            )
+        if not (0.0 <= self.partial_failure_threshold <= 1.0):
+            raise ConfigError(
+                "batch.partial_failure_threshold는 0.0-1.0 범위만 허용한다. "
+                f"입력값: {self.partial_failure_threshold}"
             )
 
 
@@ -170,6 +180,45 @@ class InterviewConfig:
 
 
 @dataclass(frozen=True)
+class ReportConfig:
+    """리포트 생성 임계값/렌더 파라미터(라운드 B3 외부화).
+
+    이전에는 ``src/report.py``에 모듈 상수(`_MIN_COHORT_CELL`,
+    `_PRICE_HIST_BINS`, `_BAR_CHART_WIDTH`)로 박혀 있어 사용자가 yaml에서
+    조정할 수 없었다. 본 dataclass로 외부화해 리포트 표본 마스킹 임계값,
+    히스토그램 구간 수, 텍스트 막대 폭, 거절 사유 top N 기본값을 yaml에서
+    조정할 수 있다.
+    """
+
+    cohort_min_cell: int = 3
+    top_n_default: int = 10
+    histogram_bins: int = 10
+    bar_width: int = 30
+
+    def __post_init__(self) -> None:
+        if self.cohort_min_cell < 1:
+            raise ConfigError(
+                "report.cohort_min_cell는 1 이상이어야 한다. "
+                f"입력값: {self.cohort_min_cell}"
+            )
+        if self.top_n_default < 1:
+            raise ConfigError(
+                "report.top_n_default는 1 이상이어야 한다. "
+                f"입력값: {self.top_n_default}"
+            )
+        if self.histogram_bins < 1:
+            raise ConfigError(
+                "report.histogram_bins는 1 이상이어야 한다. "
+                f"입력값: {self.histogram_bins}"
+            )
+        if not (1 <= self.bar_width <= 200):
+            raise ConfigError(
+                "report.bar_width는 1-200 범위만 허용한다. "
+                f"입력값: {self.bar_width}"
+            )
+
+
+@dataclass(frozen=True)
 class AppConfig:
     """전체 애플리케이션 설정. 모든 모듈은 본 객체에 의존한다."""
 
@@ -177,6 +226,7 @@ class AppConfig:
     batch: BatchConfig
     dataset: DatasetConfig
     interview: InterviewConfig
+    report: ReportConfig
     output_dir: Path
     log_level: str
     no_color: bool
@@ -218,6 +268,9 @@ def _default_dict() -> dict:
             # 멀티턴 흐름 대신 모든 질문을 한 번의 chat 호출에 묶어 처리한다.
             # 토큰 절약 + 빠른 dry-run 용도.
             "single_turn": False,
+            # 부분 실패 판정 임계값(0.0-1.0). 완료 비율이 본 값 미만이면 partial.
+            # 0.5는 PRD §5.9 종료 코드 3 매핑(완료 record 50% 미만).
+            "partial_failure_threshold": 0.5,
         },
         "dataset": {
             "name": "nvidia/Nemotron-Personas-Korea",
@@ -271,6 +324,17 @@ def _default_dict() -> dict:
             ],
             "auto_follow_up_text": "조금만 더 자세히 말씀해 주실 수 있을까요?",
             "auto_follow_up_max": 1,
+        },
+        "report": {
+            # 코호트 셀 표본 부족 마스킹 임계값. PRD §5.6: 3명 미만 셀은
+            # ``표본 부족``으로 마스킹한다.
+            "cohort_min_cell": 3,
+            # ``--top-n`` CLI 기본값(거절 사유 상위 N개).
+            "top_n_default": 10,
+            # 가격 히스토그램 구간 수.
+            "histogram_bins": 10,
+            # 텍스트 막대 차트 폭(컬럼 수). 좁은 터미널은 20-25 권장.
+            "bar_width": 30,
         },
         "output": {
             "output_dir": "outputs/",
@@ -513,6 +577,9 @@ def load_config(
             concurrency=int(merged["batch"]["concurrency"]),
             persona_fields=tuple(str(x) for x in merged["batch"]["persona_fields"]),
             single_turn=bool(merged["batch"].get("single_turn", False)),
+            partial_failure_threshold=float(
+                merged["batch"].get("partial_failure_threshold", 0.5)
+            ),
         )
         dataset_cfg = DatasetConfig(
             name=str(merged["dataset"]["name"]),
@@ -542,6 +609,13 @@ def load_config(
                 merged["interview"].get("auto_follow_up_max", 1)
             ),
         )
+        report_raw = merged.get("report") or {}
+        report_cfg = ReportConfig(
+            cohort_min_cell=int(report_raw.get("cohort_min_cell", 3)),
+            top_n_default=int(report_raw.get("top_n_default", 10)),
+            histogram_bins=int(report_raw.get("histogram_bins", 10)),
+            bar_width=int(report_raw.get("bar_width", 30)),
+        )
     except (KeyError, TypeError, ValueError) as exc:
         raise ConfigError(f"설정 필드 변환 실패: {exc}") from exc
 
@@ -550,6 +624,7 @@ def load_config(
         batch=batch_cfg,
         dataset=dataset_cfg,
         interview=interview_cfg,
+        report=report_cfg,
         output_dir=Path(str(merged["output"]["output_dir"])),
         log_level=str(merged["output"]["log_level"]),
         no_color=bool(merged["output"]["no_color"]),

@@ -71,9 +71,12 @@ _DOMAIN_EXC_TYPE_MAP: dict = {
 logger = logging.getLogger(__name__)
 
 
-# 부분 실패 판정 임계값. 완료(`completed`/`drift`/`refused`) record 비율이 본 값
-# 미만이면 BatchResult.partial_failure를 True로 표시한다. CLI 단계에서 exit 3
-# 처리에 활용한다(PRD §5.9, UI §6.4).
+# 부분 실패 판정 임계값 default. 완료(`completed`/`drift`/`refused`) record 비율이
+# 본 값 미만이면 BatchResult.partial_failure를 True로 표시한다. CLI 단계에서
+# exit 3 처리에 활용한다(PRD §5.9, UI §6.4).
+#
+# 라운드 B3부터 ``BatchConfig.partial_failure_threshold``로 외부화되어 yaml에서
+# 변경 가능하다. 본 모듈 상수는 backward compat용 fallback이다.
 _PARTIAL_SUCCESS_RATIO = 0.5
 
 
@@ -642,12 +645,15 @@ async def run_batch(
     cancelled = cancel_event.is_set() or keyboard_interrupt or cancelled_count > 0
 
     # 부분 실패 판정: 실제 종료된 record 중 success(=completed/refused/drift)
-    # 비율이 50% 미만이면 partial로 본다(PRD §5.9, UI §6.4).
+    # 비율이 임계값 미만이면 partial로 본다(PRD §5.9, UI §6.4). 임계값은
+    # ``BatchConfig.partial_failure_threshold``에서 받는다(라운드 B3 외부화).
     if summary.requested == 0:
         partial_failure = False
     else:
         success_ratio = summary.success_count / summary.requested
-        partial_failure = success_ratio < _PARTIAL_SUCCESS_RATIO or cancelled
+        partial_failure = (
+            success_ratio < config.batch.partial_failure_threshold or cancelled
+        )
 
     aggregated_usage = _aggregate_usage(list(records))
     estimated_cost = estimate_cost_usd(aggregated_usage, config.llm.model)

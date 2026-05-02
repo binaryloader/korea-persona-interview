@@ -271,6 +271,7 @@ def make_app_config():
         DatasetConfig,
         InterviewConfig,
         LlmConfig,
+        ReportConfig,
     )
 
     def _build(
@@ -301,6 +302,11 @@ def make_app_config():
         ),
         auto_follow_up_text: str = "조금만 더 자세히 말씀해 주실 수 있을까요?",
         auto_follow_up_max: int = 1,
+        partial_failure_threshold: float = 0.5,
+        cohort_min_cell: int = 3,
+        top_n_default: int = 10,
+        histogram_bins: int = 10,
+        bar_width: int = 30,
     ) -> AppConfig:
         llm = LlmConfig(
             base_url=base_url,
@@ -317,6 +323,7 @@ def make_app_config():
             concurrency=concurrency,
             persona_fields=persona_fields,
             single_turn=single_turn,
+            partial_failure_threshold=partial_failure_threshold,
         )
         dataset = DatasetConfig(
             name="nvidia/Nemotron-Personas-Korea",
@@ -358,11 +365,18 @@ def make_app_config():
             auto_follow_up_text=auto_follow_up_text,
             auto_follow_up_max=auto_follow_up_max,
         )
+        report = ReportConfig(
+            cohort_min_cell=cohort_min_cell,
+            top_n_default=top_n_default,
+            histogram_bins=histogram_bins,
+            bar_width=bar_width,
+        )
         return AppConfig(
             llm=llm,
             batch=batch,
             dataset=dataset,
             interview=interview,
+            report=report,
             output_dir=output_dir,
             log_level=log_level,
             no_color=no_color,

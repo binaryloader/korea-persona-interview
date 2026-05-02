@@ -404,6 +404,88 @@ def test_InterviewConfig_auto_follow_up_text_빈_문자열_ConfigError() -> None
 
 
 # ---------------------------------------------------------------------------
+# 라운드 B3: ReportConfig/BatchConfig 외부화
+# ---------------------------------------------------------------------------
+
+
+def test_load_config_report_default(tmp_path: Path) -> None:
+    """ReportConfig default 값이 yaml 없을 때도 노출된다(라운드 B3)."""
+
+    cfg = load_config(yaml_path=tmp_path / "no.yaml")
+    assert cfg.report.cohort_min_cell == 3
+    assert cfg.report.top_n_default == 10
+    assert cfg.report.histogram_bins == 10
+    assert cfg.report.bar_width == 30
+
+
+def test_load_config_report_yaml_override(tmp_path: Path) -> None:
+    """yaml에서 ReportConfig 값을 변경하면 그대로 반영된다."""
+
+    yaml_path = tmp_path / "config.yaml"
+    yaml_path.write_text(
+        "report:\n"
+        "  cohort_min_cell: 5\n"
+        "  top_n_default: 20\n"
+        "  histogram_bins: 5\n"
+        "  bar_width: 20\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(yaml_path=yaml_path)
+    assert cfg.report.cohort_min_cell == 5
+    assert cfg.report.top_n_default == 20
+    assert cfg.report.histogram_bins == 5
+    assert cfg.report.bar_width == 20
+
+
+@pytest.mark.parametrize("c", [0, -1])
+def test_ReportConfig_cohort_min_cell_범위외_ConfigError(c: int) -> None:
+    with pytest.raises(ConfigError):
+        from src.config import ReportConfig
+
+        ReportConfig(cohort_min_cell=c)
+
+
+@pytest.mark.parametrize("w", [0, -1, 201, 1000])
+def test_ReportConfig_bar_width_범위외_ConfigError(w: int) -> None:
+    with pytest.raises(ConfigError):
+        from src.config import ReportConfig
+
+        ReportConfig(bar_width=w)
+
+
+def test_load_config_batch_partial_failure_threshold_default(tmp_path: Path) -> None:
+    """partial_failure_threshold default는 0.5(라운드 B3)."""
+
+    cfg = load_config(yaml_path=tmp_path / "no.yaml")
+    assert cfg.batch.partial_failure_threshold == 0.5
+
+
+def test_load_config_batch_partial_failure_threshold_override(tmp_path: Path) -> None:
+    """yaml override가 그대로 반영된다."""
+
+    yaml_path = tmp_path / "config.yaml"
+    yaml_path.write_text(
+        "batch:\n"
+        "  partial_failure_threshold: 0.8\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(yaml_path=yaml_path)
+    assert cfg.batch.partial_failure_threshold == 0.8
+
+
+@pytest.mark.parametrize("t", [-0.1, 1.1, 2.0])
+def test_BatchConfig_partial_failure_threshold_범위외_ConfigError(t: float) -> None:
+    with pytest.raises(ConfigError):
+        from src.config import BatchConfig
+
+        BatchConfig(
+            concurrency=2,
+            persona_fields=("summary",),
+            partial_failure_threshold=t,
+        )
+
+
+# ---------------------------------------------------------------------------
 # LlmConfig 상한 검증(__post_init__)
 # ---------------------------------------------------------------------------
 

@@ -879,3 +879,227 @@ async def test_generate_report_LLM_None_fallback_message_사용(
     assert "## 1. 정량 지표" in md
     # fallback 메시지가 정성 섹션에 표시된다
     assert "정성 인사이트" in md
+
+
+# ---------------------------------------------------------------------------
+# 라운드 B3: ReportConfig 외부화 효과 검증
+# ---------------------------------------------------------------------------
+
+
+def test_compute_cohort_min_cell_5_더_보수적_마스킹() -> None:
+    """min_cell을 5로 올리면 4명 셀도 표본 부족으로 마스킹된다."""
+
+    # 4명 모두 같은 코호트(20대 서울 여자)에 들어간다.
+    records = [
+        _record(persona_id=f"a{i}", summary=_summary())
+        for i in range(4)
+    ]
+    cohort_3 = compute_cohort(records, min_cell=3)
+    cohort_5 = compute_cohort(records, min_cell=5)
+
+    # 20대 셀: 3 임계에선 unmask, 5 임계에선 mask
+    target_3 = next(c for c in cohort_3.by_age if c.label == "20대")
+    target_5 = next(c for c in cohort_5.by_age if c.label == "20대")
+    assert target_3.masked is False
+    assert target_5.masked is True
+
+
+def test_compute_quant_histogram_bins_외부화() -> None:
+    """histogram_bins를 5로 줄이면 가격 히스토그램 구간이 5개가 된다."""
+
+    records = [
+        _record(persona_id=f"p{i}", summary=_summary(wtp=1000 * (i + 1)))
+        for i in range(20)
+    ]
+    quant_default = compute_quant(records, top_n=10, include_drift=False)
+    quant_5 = compute_quant(
+        records,
+        top_n=10,
+        include_drift=False,
+        histogram_bins=5,
+    )
+    # default는 10개 구간, 5는 5개 구간
+    assert len(quant_default.price.histogram) == 10
+    assert len(quant_5.price.histogram) == 5
+
+
+@pytest.mark.asyncio
+async def test_generate_report_bar_width_커스텀_적용(
+    tmp_path: Path,
+    make_app_config,
+) -> None:
+    """bar_width=10으로 줄이면 막대가 짧아져 마크다운 내 ▇ 최대 길이가 10이 된다."""
+
+    records = [
+        {
+            "persona_id": f"a{i}",
+            "persona_meta": {
+                "persona_id": f"a{i}",
+                "name": None,
+                "gender": "여자",
+                "age": 25,
+                "region": "서울",
+                "subregion": "",
+                "occupation": "직장인",
+                "marital": "미혼",
+                "education": "대학교",
+                "raw": {},
+            },
+            "started_at": "t",
+            "finished_at": "t",
+            "status": "completed",
+            "messages": [],
+            "raw_responses": [],
+            "structured_summary": {
+                "intent": "positive",
+                "willingness_to_pay": 30000,
+                "willingness_to_pay_currency": "KRW",
+                "rejection_reasons": [],
+                "one_line": "",
+            },
+            "flags": {},
+            "error": None,
+        }
+        for i in range(5)
+    ]
+    payload = {
+        "meta": {
+            "interview_id": "iv",
+            "slug": "korea-persona-interview",
+            "schema_version": SCHEMA_VERSION,
+            "product": "테스트",
+            "questions": ["Q"],
+            "follow_up_questions": [],
+            "model": "test-model",
+            "seed": 0,
+            "started_at": "",
+            "finished_at": "",
+            "config_snapshot": {},
+        },
+        "records": records,
+    }
+    json_path = tmp_path / "interview_test_x.json"
+    json_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    config = make_app_config(bar_width=10)
+    options = ReportOptions(top_n=10, include_drift=False, output_dir=None)
+
+    report_path = await generate_report(
+        json_path=json_path,
+        options=options,
+        llm=None,
+        config=config,
+    )
+    md = report_path.read_text(encoding="utf-8")
+    # 최대 길이가 10이 되도록 ▇▇▇▇▇▇▇▇▇▇(10개) 줄이 등장하고 11개 이상 연속은
+    # 등장하지 않는다.
+    assert "▇" * 10 in md
+    assert "▇" * 11 not in md
+
+
+@pytest.mark.asyncio
+async def test_run_batch_partial_failure_threshold_외부화(
+    httpx_mock,
+    fake_persona_meta,
+    make_app_config,
+    tmp_path: Path,
+) -> None:
+    """partial_failure_threshold를 0.9로 올리면 80% 성공도 partial로 분류한다."""
+
+    from src.batch import run_batch
+    from src.llm_client import MlxLLMClient
+
+    # /models healthcheck
+    httpx_mock.add_response(
+        method="GET",
+        url="https://api.openai.com/v1/models",
+        json={"data": [{"id": "test-model"}]},
+        status_code=200,
+    )
+    # 4명 정상(인터뷰 응답 + 요약 응답 = 2회씩)
+    normal_answer = "가격이 합리적이라 한번 시도해 볼 만한 것 같아요. 월 3만원 정도면 적당해 보입니다."
+    summary_json = json.dumps(
+        {
+            "intent": "positive",
+            "willingness_to_pay": 30000,
+            "willingness_to_pay_currency": "KRW",
+            "rejection_reasons": [],
+            "one_line": "ok",
+        },
+        ensure_ascii=False,
+    )
+    for _ in range(4):
+        httpx_mock.add_response(
+            method="POST",
+            url="https://api.openai.com/v1/chat/completions",
+            json={
+                "choices": [
+                    {"message": {"role": "assistant", "content": normal_answer}}
+                ]
+            },
+            status_code=200,
+        )
+        httpx_mock.add_response(
+            method="POST",
+            url="https://api.openai.com/v1/chat/completions",
+            json={
+                "choices": [
+                    {"message": {"role": "assistant", "content": summary_json}}
+                ]
+            },
+            status_code=200,
+        )
+    # 5번째 페르소나는 retry 한도 초과(3회 5xx)로 failed
+    for _ in range(3):
+        httpx_mock.add_response(
+            method="POST",
+            url="https://api.openai.com/v1/chat/completions",
+            status_code=500,
+        )
+
+    personas = [
+        type(fake_persona_meta)(
+            persona_id=f"p{i}",
+            name=None,
+            gender="여자",
+            age=25,
+            region="서울",
+            subregion="",
+            occupation="직장인",
+            marital="미혼",
+            education="대학교",
+            raw={},
+        )
+        for i in range(5)
+    ]
+
+    # 임계값 0.9 → 80% 성공이라 partial_failure=True가 되어야 함.
+    config = make_app_config(
+        concurrency=1,
+        partial_failure_threshold=0.9,
+        retry_max_attempts=3,
+        retry_backoff_seconds=(0.0, 0.0, 0.0),
+    )
+
+    async with MlxLLMClient(config.llm) as client:
+        envelope = await run_batch(
+            personas=personas,
+            product="제품",
+            questions=["Q"],
+            follow_ups=[],
+            llm=client,
+            config=config,
+            output_dir=tmp_path,
+            slug="test",
+            seed=0,
+            save=False,
+            progress_disable=True,
+        )
+
+    # 4 success / 5 = 0.8. 임계값 0.9 미만이라 partial_failure=True.
+    assert envelope.summary.completed == 4
+    assert envelope.summary.failed == 1
+    assert envelope.partial_failure is True
+
+    # 비교: 임계값 0.5(default)면 0.8 >= 0.5라서 partial_failure=False여야 한다.
+    # 동일 시나리오를 다시 돌리는 대신 직접 BatchConfig를 비교한다.
