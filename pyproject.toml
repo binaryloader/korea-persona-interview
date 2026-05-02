@@ -1,0 +1,101 @@
+# 본 파일은 PEP 621 메타데이터와 console script 등록만 담당한다.
+# 의존성 트리는 requirements.txt + requirements.lock(트랜지티브 동결)에 그대로
+# 두고, 본 라운드(C4)는 두 곳을 동시에 두되 정본은 requirements 계열을 유지한다.
+# 이중 관리 단순화는 v1.1 백로그(`requirements.txt`를 제거하고 pyproject.toml의
+# `dependencies`만 정본으로 둘지 결정)로 미룬다.
+[project]
+name = "korea-persona-interview"
+version = "0.1.0"
+description = "Synthetic Korean persona interview CLI on top of OpenAI Chat Completions API and the NVIDIA Nemotron-Personas-Korea dataset (CC BY 4.0)."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = { file = "LICENSE" }
+authors = [
+    { name = "binaryloader", email = "binaryloader.dev@gmail.com" }
+]
+keywords = [
+    "openai",
+    "llm",
+    "personas",
+    "interview",
+    "korean",
+    "mcp",
+    "model-context-protocol"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Natural Language :: Korean",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+# 직접 의존성. 정확 버전은 requirements.txt와 동기화한다(라운드 C4 시점에는
+# 두 파일을 같이 본다). 트랜지티브 트리는 requirements.lock에서 본다.
+dependencies = [
+    "httpx==0.27.2",
+    "datasets==3.6.0",
+    "pyyaml==6.0.3",
+    "tqdm==4.66.6",
+    "click==8.1.8",
+    "mcp==1.27.0",
+    # datasets가 트랜지티브로 끌어오는 aiohttp의 명시적 상한 핀(security.md §1).
+    "aiohttp>=3.13.5,<3.14",
+]
+
+[project.optional-dependencies]
+# pytest와 pytest-httpx만 분리. 다른 플러그인은 본 라운드에서는 추가하지 않는다.
+dev = [
+    "pytest==8.4.2",
+    "pytest-asyncio==0.23.8",
+    "pytest-httpx==0.30.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/binaryloader/korea-persona-interview"
+Repository = "https://github.com/binaryloader/korea-persona-interview"
+Issues = "https://github.com/binaryloader/korea-persona-interview/issues"
+
+# console script 두 개를 노출한다.
+# - kpi: 기존 click CLI(`python main.py ...` 대체)
+# - kpi-mcp-server: stdio MCP 서버(`python -m src.mcp_server` 대체)
+# main.py가 패키지가 아니라 루트 스크립트라 setuptools find가 동작하지 않는다.
+# 본 파일 [tool.setuptools] 섹션에서 ``py-modules = ["main"]``로 main.py를
+# 단일 모듈 취급해 import 가능하게 한다.
+[project.scripts]
+kpi = "main:main"
+kpi-mcp-server = "src.mcp_server:main"
+
+# ---------------------------------------------------------------------------
+# 빌드 백엔드 / 패키징 설정
+# ---------------------------------------------------------------------------
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+# main.py는 루트 단일 스크립트, src/는 패키지. 두 경로를 모두 포함한다.
+py-modules = ["main"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+exclude = ["tests*", "examples*", "outputs*", "docs*", "prompts*"]
+
+[tool.setuptools.package-data]
+# 시스템 프롬프트 템플릿은 패키지 외부(prompts/)에 있어 sdist에 포함되지 않는다.
+# 사용자가 본 도구를 ``pip install``로 설치한 경우 prompts/system_prompt.txt를
+# config.yaml의 ``interview.system_prompt_path``로 명시 지정해야 한다.
+# 본 동작은 v1.x의 알려진 한계이며 v1.1에서 패키지 내부로 옮길지 결정한다.
+
+# ---------------------------------------------------------------------------
+# 테스트/CI 도구 설정
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
+testpaths = ["tests"]

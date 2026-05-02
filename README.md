@@ -68,6 +68,16 @@ uv pip compile requirements.txt -o requirements.lock
 uv pip compile requirements-dev.txt -o requirements-dev.lock
 ```
 
+### Editable install with console scripts (optional)
+
+To run the CLI as `kpi` and the MCP server as `kpi-mcp-server` from anywhere instead of `python main.py` and `python -m src.mcp_server`, install the project in editable mode after the dependency sync above.
+
+```bash
+uv pip install -e .
+```
+
+After this you can call `kpi healthcheck`, `kpi interview ...`, `kpi-mcp-server`, and so on. The editable install does not duplicate the dependency tree because `pyproject.toml` and `requirements.txt` are kept in sync. Skip this step if you only need to run via `python main.py`.
+
 ## Quick Start
 
 Set the OpenAI API key in your shell, then run the four subcommands in order. Each step is independently verifiable.
