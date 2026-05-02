@@ -10,7 +10,7 @@ Only the latest minor release line receives security fixes. The current supporte
 | 1.0.x | 30-day EOL grace window for security-only fixes |
 | < 1.0.0 | No (no prior public release) |
 
-When v1.2 ships, the supported line will move to v1.2.x and v1.1.x will go into a 30-day EOL grace window for security-only fixes.
+When v1.2.0 ships, the supported line will move to v1.2.x and v1.1.x will go into a 30-day EOL grace window for security-only fixes.
 
 ## Reporting a vulnerability
 

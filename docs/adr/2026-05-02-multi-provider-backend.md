@@ -41,5 +41,5 @@ CLI와 MCP의 진입점을 분리하고 각각의 추론 경로를 단일 정책
 
 ## 5. 다음 단계
 
-- v1.1 백로그: Anthropic prompt caching `cache_control` 마커, persona quality 검증 보고서(provider별), 로컬 LLM thinking 옵션 등
+- v1.1.0 백로그: Anthropic prompt caching `cache_control` 마커, persona quality 검증 보고서(provider별), 로컬 LLM thinking 옵션 등
 - ADR-002는 본 ADR로 supersede된다. OpenAI 단일 백엔드 결정의 역사적 맥락은 그대로 보존한다

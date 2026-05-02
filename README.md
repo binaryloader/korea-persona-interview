@@ -340,7 +340,7 @@ Interview results are written to `outputs/interview_{slug}_{YYYYMMDD_HHMMSS}.jso
 | `records[].structured_summary` | object or null | `intent`, `acceptable_price_signal`, `willingness_to_pay`, `willingness_to_pay_currency`, `rejection_reasons`, `one_line`. In schema v2 `willingness_to_pay` is filled only for explicit numbers; qualitative price sentiment lives on `acceptable_price_signal` (`cheap`/`fair`/`expensive`/`null`) |
 | `records[].flags` | object | `persona_drift`, `auto_follow_up_used`, `refusal_detected`, `truncated`, `parse_failed` |
 
-See `docs/prd/korea-persona-interview.md` section 5.4 for the full schema. v1 JSON files (with `schema_version: 1`) load fine on v1.1+: the loader fills `acceptable_price_signal=null` for those records.
+See `docs/prd/korea-persona-interview.md` section 5.4 for the full schema. v1 JSON files (with `schema_version: 1`) load fine on v1.1.0+: the loader fills `acceptable_price_signal=null` for those records.
 
 ### Markdown report
 
@@ -608,7 +608,7 @@ korea-persona-interview/
 │   ├── adr/                   # Architecture decision records
 │   ├── ui/                    # CLI flow, console output, message dictionary
 │   ├── tasks/                 # Task breakdown
-│   └── backlog/               # v1.1 backlog
+│   └── backlog/               # v1.2.0 backlog
 └── outputs/                   # Generated JSON/markdown/logs (.gitignored)
     └── logs/
 ```
@@ -637,7 +637,7 @@ Manual smoke tests that exercise a real LLM API call live under `tests/manual/` 
 
 ### Lint and format
 
-A lint/format toolchain is intentionally not pinned in v1.x. The codebase reads cleanly with default formatting rules; if you want to add `ruff` or `black` locally, run them in your editor only and skip committing config files. A formal pre-commit setup is on the v1.1 backlog (see [docs/backlog/v1.1.md](docs/backlog/v1.1.md)).
+A lint/format toolchain is intentionally not pinned in v1.x. The codebase reads cleanly with default formatting rules; if you want to add `ruff` or `black` locally, run them in your editor only and skip committing config files. A formal pre-commit setup is on the v1.2.0 backlog (see [docs/backlog/v1.2.0.md](docs/backlog/v1.2.0.md)).
 
 ### Commit messages
 
@@ -659,12 +659,12 @@ Specific limitations to note for v1.1.
 
 - Streaming responses (`llm.streaming: true`) cover the OpenAI provider only. The Anthropic provider and the MCP sampling path do not stream
 - LLM-as-judge drift refinement (`interview.llm_drift_review: true`) is opt-in because it adds a small extra LLM call per drift candidate. The default heuristic-only path keeps the cost predictable
-- Schema bumped from v1 to v2 in v1.1.0 with the new `acceptable_price_signal` field. v1 result JSONs still load on v1.1+ (the loader fills `acceptable_price_signal=null`), but v1.1+ result JSONs cannot be read by older v1.0.x consumers
+- Schema bumped from v1 to v2 in v1.1.0 with the new `acceptable_price_signal` field. v1 result JSONs still load on v1.1.0+ (the loader fills `acceptable_price_signal=null`), but v1.1.0+ result JSONs cannot be read by older v1.0.x consumers
 - The `--persona-id` flag re-fetches the dataset to filter by uuid, so the persona-pool cache does not help on that path. Repeated calls with the same id list will still re-read the parquet files
 
 ## Roadmap
 
-A short list of v1.2 candidates, full details in [docs/backlog/v1.2.md](docs/backlog/v1.2.md).
+A short list of v1.2.0 candidates, full details in [docs/backlog/v1.2.0.md](docs/backlog/v1.2.0.md).
 
 - FastAPI REST API on top of the same application layer
 - OpenAI Batch API path for offline runs

@@ -47,7 +47,7 @@ The full directory tree is documented in the README under `Project Structure`. Q
 - `main.py` - click CLI entry point
 - `src/` - application code (config loader, LLM client, persona loader, interview engine, batch runner, report, MCP server)
 - `tests/` - 555-test regression
-- `docs/` - PRD, TDD, ADR, UI, tasks, v1.2 backlog
+- `docs/` - PRD, TDD, ADR, UI, tasks, v1.2.0 backlog
 - `prompts/system_prompt.txt` - editable system prompt template
 - `config.yaml` - annotated default config
 
@@ -87,14 +87,14 @@ Before opening a pull request, run through the list below.
 
 ### Lint
 
-A formal lint and format toolchain is intentionally not pinned in v1.x. The codebase reads cleanly with default formatting rules. A `ruff` and pre-commit setup is on the v1.1 backlog (see [docs/backlog/v1.1.md](docs/backlog/v1.1.md)). Until then, run any formatter you like locally and discard the config diff before committing.
+A formal lint and format toolchain is intentionally not pinned in v1.x. The codebase reads cleanly with default formatting rules. A `ruff` and pre-commit setup is on the v1.2.0 backlog (see [docs/backlog/v1.2.0.md](docs/backlog/v1.2.0.md)). Until then, run any formatter you like locally and discard the config diff before committing.
 
 ## Reporting bugs and proposing features
 
 Open an issue at https://github.com/binaryloader/korea-persona-interview/issues. There is no fixed template yet. A useful issue includes the following.
 
 - For bugs: command line that reproduces the problem, expected vs. actual output, Python version, OS, and the relevant `outputs/logs/run_*.jsonl` excerpt with API keys redacted
-- For features: the user goal, the smallest change that would unblock the goal, and a pointer to any related v1.1 backlog item
+- For features: the user goal, the smallest change that would unblock the goal, and a pointer to any related v1.2.0 backlog item
 
 For substantive feature work (anything that touches `src/interview.py`, `src/batch.py`, `src/report.py`, or the MCP tool surface), open an issue first so we can agree on the approach before code is written.
 

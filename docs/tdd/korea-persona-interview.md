@@ -659,7 +659,7 @@ OpenAI는 chat completions 입력 prefix가 1024 토큰 이상이고 동일 pref
 
 OpenAI 응답의 `usage` 필드는 `MlxLLMClient._extract_usage`가 `TokenUsage(prompt_tokens, completion_tokens, total_tokens, cached_tokens)`로 매핑한다. `cached_tokens`는 `usage.prompt_tokens_details.cached_tokens`에서 추출한다.
 
-`run_batch`는 모든 record의 `raw_responses[*].usage`를 `_aggregate_usage`로 합산해 `BatchResultEnvelope.usage`로 노출한다. 구조화 요약과 정성 인사이트 단계의 호출은 별도 흐름이라 본 합산에 포함되지 않는다. v1.x 한도이며 v1.1에서 record 단위로 추가 누적을 검토한다.
+`run_batch`는 모든 record의 `raw_responses[*].usage`를 `_aggregate_usage`로 합산해 `BatchResultEnvelope.usage`로 노출한다. 구조화 요약과 정성 인사이트 단계의 호출은 별도 흐름이라 본 합산에 포함되지 않는다. v1.x 한도이며 v1.2.0에서 record 단위로 추가 누적을 검토한다.
 
 CLI는 인터뷰 종료 시 콘솔에 `토큰 사용량: prompt N / completion N / cached N` 한 줄을 출력하고 결과 JSON의 `meta_extra.usage`에 같은 값을 박는다. 리포트 마크다운 헤더 표에도 토큰 사용량 한 행이 노출된다. v1.0.0 시점에 USD 비용 추정은 제거됐다(단가 표 갱신 부담과 추정-실제 청구 차이가 도구 신뢰성을 해친다는 판단). 사용자가 토큰 카운트와 자신의 provider 청구서를 직접 대조하는 흐름으로 이관한다.
 
@@ -667,7 +667,7 @@ CLI는 인터뷰 종료 시 콘솔에 `토큰 사용량: prompt N / completion N
 
 `load_and_sample`는 `(filter_str, n, seed, field_map, gender_aliases, province_aliases, dataset_name, split)` 튜플을 키로 in-memory 캐시(`_PERSONA_POOL_CACHE`)에 결과 `PersonaMeta` 리스트를 저장한다. 같은 spec으로 두 번째 호출하면 데이터셋 로드/필터/샘플링을 건너뛰고 캐시 hit으로 즉시 반환한다.
 
-CLI 단일 프로세스 흐름에서 `list-personas`(미리 보기) → `interview`(같은 시드/필터로 본 실행) → `interview --dry-run`(같은 시드/필터로 1명 시연) 순으로 동일 spec이 반복되는 패턴을 단축한다. 프로세스 종료 시 캐시는 함께 사라지고, 디스크 캐시는 v1.1 백로그다(다른 프로세스 간 재사용).
+CLI 단일 프로세스 흐름에서 `list-personas`(미리 보기) → `interview`(같은 시드/필터로 본 실행) → `interview --dry-run`(같은 시드/필터로 1명 시연) 순으로 동일 spec이 반복되는 패턴을 단축한다. 프로세스 종료 시 캐시는 함께 사라지고, 디스크 캐시는 v1.2.0 백로그다(다른 프로세스 간 재사용).
 
 캐시 무효화 API는 `clear_persona_pool_cache()`로 노출한다. 테스트 격리(`conftest._isolate_env`)가 매 테스트마다 호출해 누수를 막는다.
 
@@ -1045,7 +1045,7 @@ T1 스캐폴드
 ### 2. 페르소나 이름 누락
 
 - 위험은 데이터셋에 별도 `name` 컬럼이 없다는 점이다(§1.3 매핑표). PRD §5.4 스키마는 `persona_meta.name`을 string으로 정의했지만 실제로는 `null`이 된다
-- 완화는 TDD에서 `name: str | None`으로 타입을 변경하는 것이다. v1.1에서 `professional_persona` 본문에서 정규식으로 이름 추출(`(?P<name>[가-힣]{2,4})\s*씨는`)을 실험적으로 추가하는 안을 검토한다. 이 결정은 ADR로 기록하지 않는다(번복 가능성 낮음)
+- 완화는 TDD에서 `name: str | None`으로 타입을 변경하는 것이다. v1.2.0에서 `professional_persona` 본문에서 정규식으로 이름 추출(`(?P<name>[가-힣]{2,4})\s*씨는`)을 실험적으로 추가하는 안을 검토한다. 이 결정은 ADR로 기록하지 않는다(번복 가능성 낮음)
 
 ### 3. 컨텍스트 윈도우와 토큰 누적
 
@@ -1055,7 +1055,7 @@ T1 스캐폴드
 ### 4. 페르소나 깨짐 휴리스틱의 false positive
 
 - 위험은 페르소나가 영문 직업명을 가진 경우(예: occupation `IT 컨설턴트`) 응답에 영문 단어가 자연스럽게 30%에 근접할 수 있다는 것이다
-- 완화는 영어 비율 산정 시 페르소나 메타 자체에 등장하는 영문 토큰을 제외하는 화이트리스트 보정을 도입하는 것이다. v1에서는 단순 비율로 출시한 뒤 측정값을 보고 v1.1에서 보정한다. config로 임계값 조정도 가능하게 둔다
+- 완화는 영어 비율 산정 시 페르소나 메타 자체에 등장하는 영문 토큰을 제외하는 화이트리스트 보정을 도입하는 것이다. v1에서는 단순 비율로 출시한 뒤 측정값을 보고 v1.1.0에서 보정한다. config로 임계값 조정도 가능하게 둔다
 
 ### 5. tqdm + asyncio 호환성
 
