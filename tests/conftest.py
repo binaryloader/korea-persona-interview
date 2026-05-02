@@ -299,6 +299,7 @@ def make_app_config():
         provider: str = "openai",
         anthropic_cache_control: bool = True,
         extra_chat_kwargs: tuple = (),
+        streaming: bool = False,
         concurrency: int = 2,
         persona_fields: tuple = ("summary",),
         single_turn: bool = False,
@@ -337,6 +338,7 @@ def make_app_config():
             provider=provider,
             anthropic_cache_control=anthropic_cache_control,
             extra_chat_kwargs=extra_chat_kwargs,
+            streaming=streaming,
         )
         batch = BatchConfig(
             concurrency=concurrency,

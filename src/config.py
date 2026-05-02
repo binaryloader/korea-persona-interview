@@ -59,6 +59,7 @@ class LlmConfig:
     provider: str = "openai"
     anthropic_cache_control: bool = True
     extra_chat_kwargs: tuple = ()
+    streaming: bool = False
 
     def __post_init__(self) -> None:
         if not (1 <= self.max_tokens <= 16000):
@@ -244,6 +245,7 @@ def _default_dict() -> dict:
             "api_key": None,
             "anthropic_cache_control": True,
             "extra_chat_kwargs": {},
+            "streaming": False,
         },
         "batch": {
             "concurrency": 4,
@@ -529,6 +531,7 @@ def load_config(
             extra_chat_kwargs=tuple(
                 (str(k), v) for k, v in extra_chat_kwargs_raw.items()
             ),
+            streaming=bool(merged["llm"].get("streaming", False)),
         )
         batch_cfg = BatchConfig(
             concurrency=int(merged["batch"]["concurrency"]),

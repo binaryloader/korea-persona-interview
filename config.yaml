@@ -36,6 +36,10 @@ llm:
   #       enable_thinking: false
   # provider=anthropic에서는 무시된다.
   extra_chat_kwargs: {}
+  # OpenAI 호환 streaming(SSE) 응답을 사용한다. true로 두면 첫 토큰 시간이
+  # 빨라지지만 일부 호환 서버는 SSE 형식이 미묘하게 다르므로 default false로
+  # 둔다. provider=anthropic에서는 무시된다.
+  streaming: false
   # api_key 항목은 의도적으로 비워둔다. 환경변수 또는 .env에서만 받는다.
 
 batch:

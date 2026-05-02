@@ -36,6 +36,8 @@ def _make_llm_config(
     base_url: str = _API_BASE,
     api_key: str | None = "test-key",
     retry_max_attempts: int = 3,
+    streaming: bool = False,
+    extra_chat_kwargs: tuple = (),
 ) -> LlmConfig:
     return LlmConfig(
         base_url=base_url,
@@ -48,6 +50,8 @@ def _make_llm_config(
         # 백오프 0초로 두면 테스트가 빠르게 끝난다.
         retry_backoff_seconds=(0.0, 0.0, 0.0),
         api_key=api_key,
+        streaming=streaming,
+        extra_chat_kwargs=extra_chat_kwargs,
     )
 
 
@@ -470,3 +474,94 @@ async def test_async_with_미진입_RuntimeError() -> None:
     client = LLMClient(_make_llm_config())
     with pytest.raises(RuntimeError):
         await client.healthcheck()
+
+
+# ---------------------------------------------------------------------------
+# streaming 모드(라운드 G12, 옵트인 default OFF)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_chat_streaming_SSE_본문_조립_및_usage_매핑(httpx_mock) -> None:
+    """``llm.streaming=true``는 SSE 본문을 조립해 단일 ChatResponse로 반환한다.
+
+    각 ``data: {...}`` chunk의 ``choices[0].delta.content``를 합치고, 마지막
+    chunk의 ``usage`` 블록을 ``TokenUsage``로 매핑한다.
+    """
+
+    sse_body = (
+        'data: {"choices":[{"delta":{"content":"안녕"}}]}\n\n'
+        'data: {"choices":[{"delta":{"content":"하세요"}}]}\n\n'
+        'data: {"choices":[{"delta":{"content":"."}}]}\n\n'
+        'data: {"choices":[{"delta":{},"finish_reason":"stop"}],'
+        '"usage":{"prompt_tokens":12,"completion_tokens":3,"total_tokens":15,'
+        '"prompt_tokens_details":{"cached_tokens":8}}}\n\n'
+        'data: [DONE]\n\n'
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url=f"{_API_BASE}/chat/completions",
+        text=sse_body,
+        status_code=200,
+        headers={"content-type": "text/event-stream"},
+    )
+
+    async with LLMClient(_make_llm_config(streaming=True)) as client:
+        response = await client.chat([{"role": "user", "content": "안녕"}])
+
+    assert response.content == "안녕하세요."
+    assert response.usage.prompt_tokens == 12
+    assert response.usage.completion_tokens == 3
+    assert response.usage.total_tokens == 15
+    assert response.usage.cached_tokens == 8
+
+
+@pytest.mark.asyncio
+async def test_chat_streaming_request_body에_stream_true(httpx_mock) -> None:
+    """streaming 모드는 request body에 ``stream: true``와 stream_options를 박는다."""
+
+    sse_body = (
+        'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n'
+        'data: [DONE]\n\n'
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url=f"{_API_BASE}/chat/completions",
+        text=sse_body,
+        status_code=200,
+    )
+
+    async with LLMClient(_make_llm_config(streaming=True)) as client:
+        await client.chat([{"role": "user", "content": "x"}])
+
+    request = httpx_mock.get_requests()[0]
+    import json as _json
+
+    body = _json.loads(request.content)
+    assert body["stream"] is True
+    assert body["stream_options"] == {"include_usage": True}
+
+
+@pytest.mark.asyncio
+async def test_chat_streaming_default_OFF는_stream_플래그_없음(httpx_mock) -> None:
+    """default(streaming=False)는 stream 필드를 박지 않는다(안정성 우선)."""
+
+    httpx_mock.add_response(
+        method="POST",
+        url=f"{_API_BASE}/chat/completions",
+        json={
+            "choices": [{"message": {"content": "안녕"}}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        },
+        status_code=200,
+    )
+
+    async with LLMClient(_make_llm_config()) as client:
+        await client.chat([{"role": "user", "content": "x"}])
+
+    request = httpx_mock.get_requests()[0]
+    import json as _json
+
+    body = _json.loads(request.content)
+    assert "stream" not in body
+    assert "stream_options" not in body

@@ -34,6 +34,64 @@ logger = logging.getLogger(__name__)
 
 _JITTER_MAX_SECONDS = 0.5
 
+def _parse_streaming_body(body_text: str) -> tuple:
+    """OpenAI SSE 스트림 본문(``data: {...}\\n\\n`` 반복)을 (content, usage)로 합산한다.
+
+    스트리밍 응답은 여러 ``data: ...`` 라인이 이어지고 마지막에 ``data: [DONE]``
+    이 들어온다. 각 chunk의 ``choices[0].delta.content``를 합치고, 마지막
+    chunk의 ``usage`` 블록(``stream_options.include_usage`` 활성 시)을 그대로
+    사용한다.
+    """
+
+    import json as _json
+
+    content_parts: list = []
+    usage_dict: dict = {}
+    for raw_line in body_text.splitlines():
+        line = raw_line.strip()
+        if not line.startswith("data:"):
+            continue
+        payload = line[len("data:") :].strip()
+        if not payload or payload == "[DONE]":
+            continue
+        try:
+            chunk = _json.loads(payload)
+        except ValueError:
+            continue
+        if not isinstance(chunk, dict):
+            continue
+        choices = chunk.get("choices")
+        if isinstance(choices, list) and choices:
+            delta = choices[0].get("delta") if isinstance(choices[0], dict) else None
+            if isinstance(delta, dict):
+                segment = delta.get("content")
+                if isinstance(segment, str):
+                    content_parts.append(segment)
+        usage = chunk.get("usage")
+        if isinstance(usage, dict):
+            usage_dict = usage
+
+    content = "".join(content_parts)
+
+    def _as_int(value) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
+
+    prompt = _as_int(usage_dict.get("prompt_tokens"))
+    completion = _as_int(usage_dict.get("completion_tokens"))
+    total = _as_int(usage_dict.get("total_tokens"))
+    details = usage_dict.get("prompt_tokens_details")
+    cached = _as_int(details.get("cached_tokens")) if isinstance(details, dict) else 0
+    return content, TokenUsage(
+        prompt_tokens=prompt,
+        completion_tokens=completion,
+        total_tokens=total,
+        cached_tokens=cached,
+    )
+
+
 _MISSING_API_KEY_MESSAGE = (
     "OpenAI API 키가 설정되지 않았습니다. https://platform.openai.com/api-keys "
     "에서 발급 후 환경변수 OPENAI_API_KEY로 셸에 적용하거나"
@@ -180,6 +238,12 @@ class LLMClient:
                 else self._config.temperature
             ),
         }
+        if self._config.streaming:
+            body["stream"] = True
+            # Ask OpenAI for an aggregated usage block on the final stream
+            # chunk so the response usage stays comparable to non-streaming
+            # mode. OpenAI gates this behind ``stream_options.include_usage``.
+            body["stream_options"] = {"include_usage": True}
         # ``extra_chat_kwargs`` lets users forward backend-specific request
         # fields that fall outside the OpenAI Chat Completions spec, such as
         # ``chat_template_kwargs`` for mlx_lm.server / vLLM thinking toggles
@@ -235,13 +299,16 @@ class LLMClient:
                         f"5xx 응답: {response.status_code}"
                     )
                 else:
-                    content = self._extract_message_content(response)
+                    if self._config.streaming:
+                        content, usage = _parse_streaming_body(response.text)
+                    else:
+                        content = self._extract_message_content(response)
+                        usage = self._extract_usage(response)
                     if not content:
                         last_exc = EmptyResponseError(
                             "응답 message.content가 비어 있다"
                         )
                     else:
-                        usage = self._extract_usage(response)
                         logger.info(
                             "chat 응답 정상",
                             extra={
@@ -252,6 +319,7 @@ class LLMClient:
                                 "prompt_tokens": usage.prompt_tokens,
                                 "completion_tokens": usage.completion_tokens,
                                 "cached_tokens": usage.cached_tokens,
+                                "streaming": self._config.streaming,
                             },
                         )
                         return ChatResponse(

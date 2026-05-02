@@ -54,6 +54,7 @@ def _make_llm_config(
     api_key: Optional[str] = "test-key",
     anthropic_cache_control: bool = True,
     extra_chat_kwargs: tuple = (),
+    streaming: bool = False,
 ) -> LlmConfig:
     if base_url is None:
         base_url = _ANTHROPIC_BASE if provider == "anthropic" else _OPENAI_BASE
@@ -70,6 +71,7 @@ def _make_llm_config(
         provider=provider,
         anthropic_cache_control=anthropic_cache_control,
         extra_chat_kwargs=extra_chat_kwargs,
+        streaming=streaming,
     )
 
 
