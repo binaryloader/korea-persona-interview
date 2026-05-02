@@ -1,18 +1,16 @@
-"""click 기반 CLI 진입점.
+"""click-based CLI entry point.
 
-PRD §5.9, TDD §15, UI §2를 따른다. 4개 서브커맨드(``healthcheck``,
-``list-personas``, ``interview``, ``report``)를 노출하고 매크로 명령은 두지
-않는다(PRD §5.9). 사용자 안내 문구는 한국어이며 종료 코드 매핑은 아래와 같다.
+Exposes four subcommands (``healthcheck``, ``list-personas``, ``interview``,
+``report``) and maps them to exit codes:
 
-- 0: 정상
-- 1: 서버/입력/설정 오류
-- 2: 표본/필터 결과 0건 또는 정상 record 0건
-- 3: 부분 실패(완료 record 50% 미만)
-- 130: 사용자 중단(SIGINT)
+- 0: success
+- 1: server, input, or config error
+- 2: filter matched zero records, or no valid records to summarize
+- 3: partial failure (completed ratio below the configured threshold)
+- 130: user interrupt (SIGINT)
 
-비동기 진입은 ``asyncio.run(main_async())`` 패턴으로 click 명령 함수 안에서만
-이벤트 루프를 만든다(TDD §9). [OK]/[WARN]/[ERR] 라벨은 텍스트로 병기해 컬러
-비활성화 시에도 의미가 전달되게 한다(UI §5.1).
+Each command builds its own asyncio event loop with ``asyncio.run`` so the
+process exits cleanly when ``click`` returns.
 """
 
 from __future__ import annotations
@@ -34,7 +32,7 @@ from src.cli_views import render_persona_table as _render_persona_table
 from src.config import AppConfig, load_config
 from src.console import MESSAGES, Console, resolve_color as _resolve_color
 from src.interview import InterviewSession
-from src.llm_client import MlxLLMClient
+from src.llm_backend import LLMBackend, build_cli_backend
 from src.load_personas import load_and_sample, parse_filter
 from src.logging_setup import bind_request_id, configure_logging
 from src.models import (
@@ -236,34 +234,49 @@ def cli(
 # ---------------------------------------------------------------------------
 
 
-@cli.command(help="OpenAI 서버 응답과 모델 가용성을 확인합니다.")
+@cli.command(help="LLM 서버 응답과 모델 가용성을 확인합니다.")
+@click.option(
+    "--provider",
+    type=click.Choice(["openai", "anthropic"], case_sensitive=False),
+    default=None,
+    help=(
+        "LLM provider(openai|anthropic). 미지정 시 config.yaml의 llm.provider. "
+        "로컬 LLM은 provider=openai로 두고 --base-url로 엔드포인트만 바꿉니다."
+    ),
+)
 @click.option(
     "--base-url",
     default=None,
-    help="OpenAI 호환 서버 base URL(기본: config.yaml의 llm.base_url).",
+    help=(
+        "LLM 서버 base URL. 로컬 LLM(mlx_lm.server, vLLM, llama.cpp 등) 호출 시 "
+        "http://localhost:PORT/v1로 지정합니다(기본: config.yaml의 llm.base_url)."
+    ),
 )
 @click.option(
     "--model",
     "model_override",
     default=None,
     help=(
-        "이 호출에 한해 사용할 모델 ID(예: gpt-4o, gpt-4o-mini). "
+        "이 호출에 한해 사용할 모델 ID(예: gpt-4o, gpt-4o-mini, claude-haiku-4-5). "
         "config.yaml의 llm.model을 일회성으로 덮어쓴다(우선순위: --model > config.yaml > 기본값)."
     ),
 )
 @click.pass_context
 def healthcheck(
     ctx: click.Context,
+    provider: Optional[str],
     base_url: Optional[str],
     model_override: Optional[str],
 ) -> None:
-    """``GET /v1/models`` 200 응답과 모델 ID를 출력한다(PRD §5.9, UI §2.1)."""
+    """LLM 서버 가용성 확인."""
 
     json_mode: bool = bool(ctx.obj.get("json_mode"))
 
     cli_overrides: dict = {}
-    if base_url or model_override:
+    if provider or base_url or model_override:
         llm_overrides: dict = {}
+        if provider:
+            llm_overrides["provider"] = provider.lower()
         if base_url:
             llm_overrides["base_url"] = base_url
         if model_override:
@@ -312,12 +325,12 @@ def healthcheck(
         if json_mode:
             code = (
                 "api_key_invalid_or_missing"
-                if ("API 키" in message or "OPENAI_API_KEY" in message)
+                if ("API 키" in message or "OPENAI_API_KEY" in message or "ANTHROPIC_API_KEY" in message)
                 else "config_error"
             )
             _emit_json_error(code, message, exit_code=1)
         else:
-            if "API 키" in message or "OPENAI_API_KEY" in message:
+            if "API 키" in message or "OPENAI_API_KEY" in message or "ANTHROPIC_API_KEY" in message:
                 console.err(message)
             else:
                 console.err(MESSAGES["config_error"].format(reason=exc))
@@ -335,6 +348,7 @@ def healthcheck(
         _emit_json(
             {
                 "ok": True,
+                "provider": config.llm.provider,
                 "base_url": config.llm.base_url,
                 "model": config.llm.model,
                 "models": list(models),
@@ -342,7 +356,8 @@ def healthcheck(
         )
         sys.exit(0)
 
-    console.ok("OpenAI 서버 응답 정상")
+    console.ok("LLM 서버 응답 정상")
+    console.hint(f"Provider: {config.llm.provider}")
     console.hint(f"Base URL: {config.llm.base_url}")
     if models:
         console.hint(f"사용 가능한 모델 일부: {', '.join(models[:5])}")
@@ -351,7 +366,7 @@ def healthcheck(
 
 
 async def _run_healthcheck(config: AppConfig) -> list:
-    async with MlxLLMClient(config.llm) as client:
+    async with build_cli_backend(config.llm) as client:
         return await client.healthcheck()
 
 
@@ -596,11 +611,28 @@ def list_personas(
     ),
 )
 @click.option(
+    "--provider",
+    type=click.Choice(["openai", "anthropic"], case_sensitive=False),
+    default=None,
+    help=(
+        "LLM provider(openai|anthropic). 미지정 시 config.yaml의 llm.provider. "
+        "로컬 LLM은 provider=openai로 두고 --base-url로 엔드포인트만 바꿉니다."
+    ),
+)
+@click.option(
+    "--base-url",
+    default=None,
+    help=(
+        "LLM 서버 base URL. 로컬 LLM(mlx_lm.server, vLLM, llama.cpp 등) 호출 시 "
+        "http://localhost:PORT/v1로 지정합니다(기본: config.yaml의 llm.base_url)."
+    ),
+)
+@click.option(
     "--model",
     "model_override",
     default=None,
     help=(
-        "이 인터뷰 호출에 한해 사용할 모델 ID(예: gpt-4o, gpt-4o-mini). "
+        "이 인터뷰 호출에 한해 사용할 모델 ID(예: gpt-4o, gpt-4o-mini, claude-haiku-4-5). "
         "config.yaml의 llm.model을 일회성으로 덮어쓴다(우선순위: --model > config.yaml > 기본값)."
     ),
 )
@@ -619,6 +651,8 @@ def interview(
     dry_run: bool,
     output_dir: Path,
     auto_report: bool,
+    provider: Optional[str],
+    base_url: Optional[str],
     model_override: Optional[str],
 ) -> None:
     """배치 인터뷰 진입점(PRD §5.9, UI §2.3)."""
@@ -638,8 +672,15 @@ def interview(
         },
         "output": {"output_dir": str(output_dir)},
     }
-    if model_override:
-        overrides["llm"] = {"model": model_override}
+    if provider or base_url or model_override:
+        llm_overrides: dict = {}
+        if provider:
+            llm_overrides["provider"] = provider.lower()
+        if base_url:
+            llm_overrides["base_url"] = base_url
+        if model_override:
+            llm_overrides["model"] = model_override
+        overrides["llm"] = llm_overrides
 
     try:
         config, console = _common_setup(
@@ -998,7 +1039,7 @@ async def _run_batch_async(
     output_dir: Path,
     seed: int,
 ) -> BatchResultEnvelope:
-    async with MlxLLMClient(config.llm) as client:
+    async with build_cli_backend(config.llm) as client:
         return await run_batch(
             personas=personas,
             product=product,
@@ -1030,7 +1071,7 @@ async def _run_dry_run(
     if not json_mode:
         console.info("dry-run 모드: JSON 저장 없이 콘솔에만 출력합니다")
 
-    async with MlxLLMClient(config.llm) as client:
+    async with build_cli_backend(config.llm) as client:
         # 헬스체크 자동 수행.
         await client.healthcheck()
 
@@ -1125,6 +1166,22 @@ async def _run_dry_run(
     help="리포트 저장 디렉토리(기본: 입력 JSON과 같은 디렉토리).",
 )
 @click.option(
+    "--provider",
+    type=click.Choice(["openai", "anthropic"], case_sensitive=False),
+    default=None,
+    help=(
+        "LLM provider(openai|anthropic). 미지정 시 config.yaml의 llm.provider."
+    ),
+)
+@click.option(
+    "--base-url",
+    default=None,
+    help=(
+        "LLM 서버 base URL. 로컬 LLM 사용 시 http://localhost:PORT/v1로 지정합니다"
+        "(기본: config.yaml의 llm.base_url)."
+    ),
+)
+@click.option(
     "--model",
     "model_override",
     default=None,
@@ -1140,6 +1197,8 @@ def report(
     top_n: int,
     include_drift: bool,
     output_dir: Optional[Path],
+    provider: Optional[str],
+    base_url: Optional[str],
     model_override: Optional[str],
 ) -> None:
     """report 진입점(PRD §5.9, UI §2.4)."""
@@ -1147,8 +1206,15 @@ def report(
     json_mode: bool = bool(ctx.obj.get("json_mode"))
 
     cli_overrides: dict = {}
-    if model_override:
-        cli_overrides["llm"] = {"model": model_override}
+    if provider or base_url or model_override:
+        llm_overrides: dict = {}
+        if provider:
+            llm_overrides["provider"] = provider.lower()
+        if base_url:
+            llm_overrides["base_url"] = base_url
+        if model_override:
+            llm_overrides["model"] = model_override
+        cli_overrides["llm"] = llm_overrides
 
     try:
         config, console = _common_setup(
@@ -1254,7 +1320,7 @@ async def _run_report_async(
 ) -> Path:
     """리포트는 LLM 호출 1회를 포함한다. 호출 실패는 ``generate_report``에서 흡수."""
 
-    async with MlxLLMClient(config.llm) as client:
+    async with build_cli_backend(config.llm) as client:
         return await generate_report(
             json_path=json_path,
             options=options,

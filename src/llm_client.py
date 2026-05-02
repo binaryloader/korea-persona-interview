@@ -1,15 +1,12 @@
-"""OpenAI Chat Completions API 비동기 클라이언트.
+"""OpenAI Chat Completions HTTP client.
 
-``httpx.AsyncClient`` 위에 헬스체크, chat, 재시도, 타임아웃, 응답 후처리, JSON
-Lines 로깅을 얹는다. ``openai``/``anthropic`` SDK와 ``tenacity`` 의존을 회피한다
-(dependency.md §1, leftpad 회피). 백오프는 6줄 직접 구현이다.
+Async client built on ``httpx.AsyncClient`` with retry, timeout, and content
+extraction. The official ``openai`` SDK is intentionally not used to keep
+dependencies minimal; backoff is a six-line in-house implementation.
 
-본 모듈은 외부 HTTP를 다루는 infrastructure 계층이다(architecture.md §1).
-도메인 예외와의 매핑은 본 모듈에서 일원화하며, 호출자(InterviewSession 등)는
-도메인 예외만 다룬다.
-
-API 키는 ``LlmConfig.api_key``에서 받아 ``Authorization: Bearer`` 헤더로
-전송한다. 키 누락 시 ``ConfigError``로 친절한 한국어 안내가 나온다.
+The same client is used unchanged for OpenAI-compatible local servers
+(``mlx_lm.server``, ``vLLM``, ``llama.cpp``). Configure ``base_url`` and any
+non-empty ``api_key`` to talk to those.
 """
 
 from __future__ import annotations
@@ -35,11 +32,8 @@ from .models import (
 logger = logging.getLogger(__name__)
 
 
-# 백오프 시퀀스의 jitter 폭. thundering herd 방지(TDD §3.3 비고).
 _JITTER_MAX_SECONDS = 0.5
 
-# OpenAI API 키 누락 시 사용자에게 보여줄 한국어 안내. main.py의
-# MESSAGES 사전과 별개이며 서버/키 둘을 분리해 안내한다(error-handling.md §1).
 _MISSING_API_KEY_MESSAGE = (
     "OpenAI API 키가 설정되지 않았습니다. https://platform.openai.com/api-keys "
     "에서 발급 후 환경변수 OPENAI_API_KEY로 셸에 적용하거나"
@@ -54,25 +48,24 @@ _INVALID_API_KEY_MESSAGE = (
 
 
 class MlxLLMClient:
-    """OpenAI Chat Completions 호환 비동기 클라이언트.
+    """Async client for the OpenAI Chat Completions API and compatible servers.
 
-    클래스명은 외부 import 호환을 위해 보존한다. 본 클라이언트는 OpenAI 공식
-    엔드포인트(또는 호환 엔드포인트)로 호출한다.
+    Class name is preserved for import compatibility with earlier releases of
+    this package. New code should depend on the ``LLMBackend`` protocol from
+    ``llm_backend`` rather than this concrete class.
 
-    사용 예시는 아래와 같다.
-
-    ::
+    Example::
 
         async with MlxLLMClient(cfg.llm) as client:
             models = await client.healthcheck()
             response = await client.chat(messages, max_tokens=500)
 
-    재시도 정책은 HTTP 5xx, 429, 타임아웃, 연결 실패에 대해 지수 백오프(기본
-    1s, 2s, 4s)를 최대 ``retry_max_attempts``회 적용한다. 401/4xx(429 제외)는
-    즉시 실패한다. 모든 retry 소진 시 ``RetryExhaustedError``.
+    Retry policy: HTTP 5xx, 429, timeouts, and connect failures are retried
+    with exponential backoff up to ``retry_max_attempts`` times. 401 and other
+    4xx responses fail fast. ``RetryExhaustedError`` is raised when retries
+    are exhausted.
 
-    API 키가 누락된 상태로 ``healthcheck``/``chat``을 호출하면 즉시
-    ``ConfigError``로 차단해 외부 호출이 발생하지 않게 한다(security.md §1).
+    A missing API key is rejected with ``ConfigError`` before any HTTP call.
     """
 
     def __init__(self, config: LlmConfig) -> None:
@@ -80,8 +73,6 @@ class MlxLLMClient:
         self._client: Optional[httpx.AsyncClient] = None
 
     async def __aenter__(self) -> "MlxLLMClient":
-        # 단일 AsyncClient를 생성해 keep-alive를 활용한다. base_url은
-        # __init__에서 박지 않고 매 호출 절대 경로로 다룬다(테스트 용이성).
         self._client = httpx.AsyncClient(timeout=self._config.timeout)
         return self
 
@@ -90,22 +81,15 @@ class MlxLLMClient:
             await self._client.aclose()
             self._client = None
 
-    # ------------------------------------------------------------------
-    # 공개 API
-    # ------------------------------------------------------------------
-
     async def healthcheck(self) -> list:
-        """``GET {base_url}/models``로 모델 가용성을 검증한다.
-
-        OpenAI 엔드포인트는 본 호출에 인증을 요구한다. 키 누락 시
-        ``ConfigError``로 친절한 한국어 안내를 띄운다.
+        """Verify connectivity by listing models.
 
         Returns:
-            응답의 ``data`` 배열에서 추출한 모델 ID 목록.
+            Model ids extracted from ``data[*].id``.
 
         Raises:
-            ServerNotReachableError: 네트워크 실패, 5xx, ``data`` 비어있음.
-            ConfigError: 401(키 무효), 4xx(요청 거부), 키 누락.
+            ServerNotReachableError: Network failure, 5xx, or empty payload.
+            ConfigError: 401 or other 4xx response, or missing API key.
         """
 
         self._require_api_key()
@@ -167,26 +151,18 @@ class MlxLLMClient:
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
     ) -> ChatResponse:
-        """``POST {base_url}/chat/completions``으로 응답을 받는다.
-
-        키 누락 시 ``ConfigError``로 차단한다. 재시도/타임아웃 정책은
-        ``LlmConfig``의 값을 따른다. OpenAI 응답에는 ``message.reasoning``
-        필드가 없으므로 ``ChatResponse.reasoning_trace``는 항상 ``None``이다
-        (도메인 모델 호환 유지).
+        """Send a chat completion request and return the response.
 
         Args:
-            messages: OpenAI Chat Completions 형식의 messages 배열.
-            max_tokens: 명시 시 config 기본값을 덮는다.
-            temperature: 명시 시 config 기본값을 덮는다.
-
-        Returns:
-            ``ChatResponse(content, latency_ms, retry_count, ...)``.
+            messages: OpenAI-shaped messages array.
+            max_tokens: Per-call override of ``LlmConfig.max_tokens``.
+            temperature: Per-call override of ``LlmConfig.temperature``.
 
         Raises:
-            ConfigError: API 키 누락/무효, 4xx 응답.
-            ServerNotReachableError: 단일 호출 단계 네트워크 실패.
-            RetryExhaustedError: 5xx/429/타임아웃/빈 content가 retry 한도를
-                넘어선 경우.
+            ConfigError: Missing or invalid API key, or 4xx response.
+            ServerNotReachableError: Single-call network failure.
+            RetryExhaustedError: 5xx, 429, timeout, or empty content beyond
+                the configured retry limit.
         """
 
         self._require_api_key()
@@ -204,8 +180,8 @@ class MlxLLMClient:
             ),
         }
 
-        # 디버그 레벨에서도 messages 본문은 출력하지 않는다(security.md §1, PRD §6.6).
-        # 길이 메타만 남긴다.
+        # Message bodies stay out of the structured log per security policy.
+        # Only counts and char totals are recorded.
         logger.debug(
             "chat 요청 시작",
             extra={
@@ -231,15 +207,12 @@ class MlxLLMClient:
                 last_exc = ServerNotReachableError(f"타임아웃: {exc}")
             else:
                 latency_ms = int((asyncio.get_event_loop().time() - start) * 1000)
-                # 401은 키 무효라 즉시 실패. retry해도 같은 결과.
                 if response.status_code == 401:
                     raise ConfigError(_INVALID_API_KEY_MESSAGE)
-                # 429는 OpenAI rate limit. 재시도 대상으로 본다.
                 if response.status_code == 429:
                     last_exc = ServerNotReachableError(
                         f"429 rate limit: {response.text[:200]}"
                     )
-                # 그 외 4xx는 즉시 실패.
                 elif 400 <= response.status_code < 500:
                     raise ConfigError(
                         f"chat 4xx 응답: {response.status_code} "
@@ -252,7 +225,6 @@ class MlxLLMClient:
                 else:
                     content = self._extract_message_content(response)
                     if not content:
-                        # OpenAI에선 거의 발생하지 않지만 안전망으로 retry 대상.
                         last_exc = EmptyResponseError(
                             "응답 message.content가 비어 있다"
                         )
@@ -278,7 +250,6 @@ class MlxLLMClient:
                             usage=usage,
                         )
 
-            # retry 가능한 실패. 마지막 시도면 백오프를 건너뛴다.
             if attempt < self._config.retry_max_attempts - 1:
                 backoff = self._compute_backoff(attempt)
                 logger.warning(
@@ -291,18 +262,11 @@ class MlxLLMClient:
                 )
                 await asyncio.sleep(backoff)
 
-        # 모든 retry 소진. 도메인 예외로 변환한다.
         raise RetryExhaustedError(
             f"chat 재시도 {self._config.retry_max_attempts}회 모두 실패: {last_exc}"
         )
 
-    # ------------------------------------------------------------------
-    # 내부 헬퍼
-    # ------------------------------------------------------------------
-
     def _require_client(self) -> httpx.AsyncClient:
-        """``async with`` 컨텍스트 안에서만 호출 가능하도록 강제한다."""
-
         if self._client is None:
             raise RuntimeError(
                 "MlxLLMClient는 async with 블록 안에서만 사용할 수 있다"
@@ -310,30 +274,13 @@ class MlxLLMClient:
         return self._client
 
     def _require_api_key(self) -> None:
-        """API 키 누락 시 즉시 ConfigError로 차단한다.
-
-        외부 호출이 발생하기 전 단계에서 차단해 시크릿 누락 상태로 네트워크
-        호출이 일어나는 것을 막는다(security.md §1).
-        """
-
         if not self._config.api_key:
             raise ConfigError(_MISSING_API_KEY_MESSAGE)
 
     def _auth_headers(self) -> dict:
-        """``Authorization: Bearer ${api_key}`` 헤더를 만든다.
-
-        키 존재 여부는 ``_require_api_key``에서 사전 검증되므로 본 함수는
-        헤더 dict 조립만 담당한다.
-        """
-
         return {"Authorization": f"Bearer {self._config.api_key}"}
 
     def _compute_backoff(self, attempt: int) -> float:
-        """attempt 인덱스를 백오프 시퀀스에 매핑하고 jitter를 더한다.
-
-        ``retry_backoff_seconds``의 마지막 값을 넘는 attempt는 마지막 값을 사용한다.
-        """
-
         seq = self._config.retry_backoff_seconds
         if not seq:
             base = 1.0
@@ -343,16 +290,6 @@ class MlxLLMClient:
 
     @staticmethod
     def _extract_message_content(response: httpx.Response) -> str:
-        """첫 choice의 ``content``를 안전하게 꺼낸다.
-
-        OpenAI 표준 스키마에서는 ``choices[0].message.content``만 사용한다.
-        호환 서버가 ``message.reasoning`` 같은 확장 필드를 보내도 도메인 모델은
-        무시한다.
-
-        Returns:
-            content 문자열. 누락/비정상 응답은 빈 문자열을 반환한다.
-        """
-
         try:
             payload = response.json()
         except ValueError:
@@ -373,21 +310,11 @@ class MlxLLMClient:
 
     @staticmethod
     def _extract_usage(response: httpx.Response) -> TokenUsage:
-        """응답의 ``usage`` 필드에서 ``TokenUsage``를 만든다.
+        """Extract ``TokenUsage`` from an OpenAI ``usage`` block.
 
-        OpenAI 표준 응답 스키마는 아래와 같다.
-
-        ::
-
-            "usage": {
-              "prompt_tokens": 100,
-              "completion_tokens": 50,
-              "total_tokens": 150,
-              "prompt_tokens_details": {"cached_tokens": 80}
-            }
-
-        모킹 응답이나 ``usage``를 돌려주지 않는 호환 서버에서는 0으로 채운
-        ``TokenUsage()``를 반환한다.
+        Returns zeros for mocked responses or compatible servers that omit
+        the field. ``cached_tokens`` lives under
+        ``usage.prompt_tokens_details.cached_tokens`` per the OpenAI schema.
         """
 
         try:
@@ -409,7 +336,6 @@ class MlxLLMClient:
         prompt = _as_int(usage_raw.get("prompt_tokens"))
         completion = _as_int(usage_raw.get("completion_tokens"))
         total = _as_int(usage_raw.get("total_tokens"))
-        # cached_tokens는 prompt_tokens_details 안에 들어 있다.
         details = usage_raw.get("prompt_tokens_details")
         cached = 0
         if isinstance(details, dict):

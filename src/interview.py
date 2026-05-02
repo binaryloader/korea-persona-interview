@@ -24,12 +24,14 @@ import json
 import logging
 import re
 from datetime import datetime, timezone
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from ._json_utils import extract_json_object
 from .config import AppConfig, InterviewConfig, LlmConfig
-from .llm_client import MlxLLMClient
 from .logging_setup import mask_name, mask_product
+
+if TYPE_CHECKING:  # pragma: no cover - type-only import
+    from .llm_backend import LLMBackend
 from .models import (
     ChatResponse,
     ConfigError,
@@ -900,7 +902,7 @@ def _parse_summary_payload(text: str) -> StructuredSummary:
 
 async def summarize_interview(
     messages: list,
-    client: MlxLLMClient,
+    client: "LLMBackend",
     config: LlmConfig,
 ) -> Optional[StructuredSummary]:
     """별도 single-turn 호출로 ``StructuredSummary``를 생성한다(ADR-001 §2).
@@ -978,7 +980,7 @@ class InterviewSession:
         product: str,
         questions: list,
         follow_up_questions: list,
-        client: MlxLLMClient,
+        client: "LLMBackend",
         config: AppConfig,
     ) -> None:
         if not questions:
@@ -1501,7 +1503,7 @@ async def run_interview(
     product: str,
     questions: list,
     follow_ups: list,
-    llm: MlxLLMClient,
+    llm: "LLMBackend",
     config: AppConfig,
 ) -> InterviewRecord:
     """``InterviewSession``의 함수형 진입점.

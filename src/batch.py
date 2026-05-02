@@ -33,14 +33,16 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from tqdm import tqdm
 
 from ._pricing import estimate_cost_usd
 from .config import AppConfig
 from .interview import run_interview
-from .llm_client import MlxLLMClient
+
+if TYPE_CHECKING:  # pragma: no cover - type-only import
+    from .llm_backend import LLMBackend
 from .logging_setup import mask_product
 from .models import (
     BatchResult,
@@ -290,7 +292,7 @@ async def _run_single(
     product: str,
     questions: list,
     follow_ups: list,
-    llm: MlxLLMClient,
+    llm: "LLMBackend",
     config: AppConfig,
     semaphore: asyncio.Semaphore,
     cancel_event: asyncio.Event,
@@ -460,7 +462,7 @@ async def run_batch(
     product: str,
     questions: list,
     follow_ups: list,
-    llm: MlxLLMClient,
+    llm: "LLMBackend",
     config: AppConfig,
     output_dir: Path,
     *,

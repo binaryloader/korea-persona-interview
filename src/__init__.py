@@ -1,7 +1,16 @@
-"""korea-persona-interview 패키지.
+"""korea-persona-interview: synthetic Korean persona interview pipeline.
 
-한국인 합성 페르소나 인터뷰 CLI 도구의 도메인/인프라/프레젠테이션 계층을 포함한다
-(architecture.md §1). 진입점은 프로젝트 루트의 ``main.py``에 있다.
+Public surface:
+
+- ``InterviewSession`` and ``run_interview`` — single-persona interview engine.
+- ``run_batch`` and ``BatchResultEnvelope`` — concurrent batch runner.
+- ``generate_report`` and ``ReportOptions`` — markdown report renderer.
+- ``OpenAIBackend``, ``AnthropicBackend``, ``McpSamplingBackend`` — LLM
+  backends that all satisfy the ``LLMBackend`` protocol.
+- ``load_config`` and ``AppConfig`` — layered configuration loader.
+
+CLI entry points are exposed via ``main.py`` (``kpi`` console script) and the
+MCP stdio server lives in ``src.mcp_server`` (``kpi-mcp-server``).
 """
 
 __version__ = "0.1.0"

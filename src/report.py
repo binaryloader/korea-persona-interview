@@ -29,11 +29,10 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from ._json_utils import extract_json_object
 from .config import AppConfig
-from .llm_client import MlxLLMClient
 from .models import (
     ConfigError,
     EmptyValidRecordsError,
@@ -43,6 +42,9 @@ from .models import (
     ServerNotReachableError,
     StructuredSummary,
 )
+
+if TYPE_CHECKING:  # pragma: no cover - type-only import
+    from .llm_backend import LLMBackend
 
 
 logger = logging.getLogger(__name__)
@@ -855,7 +857,7 @@ def _parse_insight_payload(text: str) -> QualitativeInsights:
 async def generate_qualitative_insights(
     records: list,
     quant: QuantStats,
-    llm: MlxLLMClient,
+    llm: "LLMBackend",
     config: AppConfig,
     *,
     product: str,
@@ -1305,7 +1307,7 @@ async def generate_report(
     json_path: Path,
     *,
     options: ReportOptions,
-    llm: Optional[MlxLLMClient],
+    llm: Optional["LLMBackend"],
     config: AppConfig,
 ) -> Path:
     """배치 결과 JSON에서 마크다운 리포트를 만들고 파일로 저장한다.

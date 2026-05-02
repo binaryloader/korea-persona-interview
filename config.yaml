@@ -1,50 +1,42 @@
-# korea-persona-interview 설정
-# 우선순위는 default → 본 yaml → CLI 옵션이다(낮은 → 높은 순).
+# korea-persona-interview configuration.
+# Precedence: built-in defaults < this yaml < .env / environment variables < CLI options.
 #
-# 환경변수 정책: "비밀=env, 기본=yaml, 일회성=CLI"
-# - 비밀(API 키)만 환경변수에서 받는다(OPENAI_API_KEY 또는 KPI_OPENAI_API_KEY,
-#   .env 파일 fallback). yaml/CLI에 키 직접 입력 금지(security.md §1)
-# - 일반 설정(모델, 동시성, 토큰 한도, 타임아웃 등)은 본 yaml과 CLI 옵션
-#   (--model, --concurrency 등) 두 경로로만 다룬다
-# - 출력 디렉토리만 KPI_OUTPUT_DIR 환경변수를 유지한다(테스트/CI 격리 편의)
+# Secrets policy:
+# - API keys come only from environment variables, never from this file or CLI.
+#   provider=openai uses OPENAI_API_KEY (KPI_OPENAI_API_KEY fallback).
+#   provider=anthropic uses ANTHROPIC_API_KEY.
+# - Output directory honors KPI_OUTPUT_DIR for test/CI isolation.
 #
-# LLM 백엔드 기본은 llm.backend=auto다(MCP 서버에서 클라이언트 sampling 가용 시
-# 그쪽으로 위임, 아니면 OpenAI Chat Completions API 호출). CLI 진입점은 항상
-# OpenAI로 동작한다.
+# Local LLM tip:
+# Keep provider=openai and override --base-url to http://localhost:PORT/v1.
+# mlx_lm.server, vLLM, and llama.cpp all expose an OpenAI-compatible interface.
 
 llm:
+  # provider: "openai" | "anthropic". Local OpenAI-compatible servers stay on
+  # provider=openai; only the base_url changes.
+  provider: "openai"
+  # Default base_url and model are picked to match the provider when both are
+  # left at the historical openai defaults. Override either explicitly to pin.
   base_url: "https://api.openai.com/v1"
-  model: "gpt-4o-mini"          # 비용/속도/품질 균형 기본값. 변경 가능
+  model: "gpt-4o-mini"
   max_tokens: 500
   temperature: 0.8
   timeout: 120
-  context_budget: 32000         # 멀티턴 누적 토큰 한계(TDD §7, ADR-001 §2)
+  context_budget: 32000
   retry_max_attempts: 3
   retry_backoff_seconds: [1, 2, 4]
-  # api_key는 환경변수에서만 받는다. yaml에 직접 박으면 lock 파일/저장소에
-  # 시크릿이 새므로 차단한다(security.md §1).
-  # 백엔드 선택. "openai"/"mcp_sampling"/"auto" 셋 중 하나.
-  # - openai: 항상 OpenAI Chat Completions API로 호출한다(OPENAI_API_KEY 필수)
-  # - mcp_sampling: MCP sampling으로 클라이언트 LLM에 위임한다(OpenAI 키 불필요).
-  #   CLI 진입점에서는 클라이언트 세션이 없어 ConfigError로 차단된다
-  # - auto(기본): MCP 서버 진입점에서 클라이언트가 sampling을 지원하면 sampling 사용,
-  #   그 외에는 OpenAI fallback. CLI 진입점은 항상 OpenAI로 동작
-  backend: "auto"
+  # api_key 항목은 의도적으로 비워둔다. 환경변수 또는 .env에서만 받는다.
 
 batch:
-  concurrency: 4              # 1-10 허용. OpenAI 백엔드 안정 동시성 기본 4
+  concurrency: 4              # 1-10 허용
   persona_fields: ["summary"]
-  # 부분 실패 판정 임계값(0.0-1.0). 완료된 record 비율이 본 값 미만이면
-  # partial_failure=True로 처리되고 CLI는 종료 코드 3을 반환한다.
-  # 0.5는 PRD §5.9 표준값이며, 0.8로 올리면 더 민감하게(많은 batch가 partial로
-  # 분류) 0.3으로 내리면 더 관대하게 동작한다.
   partial_failure_threshold: 0.5
 
 dataset:
   name: "nvidia/Nemotron-Personas-Korea"
   split: "train"
   field_map:
-    name: null                # 데이터셋에 별도 이름 컬럼 없음. v1은 null
+    name: null
     gender: "sex"
     age: "age"
     region: "province"
@@ -88,16 +80,8 @@ dataset:
     제주특별자치도: "제주"
 
 interview:
-  # 자동 follow-up 트리거 길이(글자, 공백 제거 기준). 답변이 본 길이 미만이면
-  # follow-up이 1회 발동된다. 30으로 올리면 더 긴 답변에도 follow-up이 발동되어
-  # 인터뷰 평균 토큰이 늘어난다. 0이면 길이 기준은 사실상 비활성(키워드만).
   short_answer_threshold: 20
-  # 영어 비율 임계값(0.0-1.0). 응답의 영어 단어 비율이 본 값을 초과하면
-  # persona_drift로 판정한다. 0.5로 올리면 더 관대해지고, 0.2로 내리면 영어
-  # 단어 한두 개에도 drift가 발동된다.
   english_ratio_threshold: 0.30
-  # 모호 키워드. 답변에 본 토큰 중 하나라도 부분 문자열로 포함되면 자동
-  # follow-up이 발동된다. 빈 리스트로 두면 키워드 트리거가 비활성화된다.
   ambiguous_keywords:
     - "글쎄요"
     - "잘 모르겠습니다"
@@ -105,8 +89,6 @@ interview:
     - "딱히"
     - "별로 생각 안 해봤"
     - "모르겠"
-  # 거부 키워드. 응답에 본 토큰 중 하나라도 포함되면 status=refused로
-  # 변환되고 인터뷰가 즉시 중단된다(retry 불가).
   refusal_keywords:
     - "답변할 수 없습니다"
     - "답변하기 어렵"
@@ -115,28 +97,14 @@ interview:
     - "As an AI"
     - "저는 인공지능"
     - "AI 모델"
-  # 자동 follow-up 발동 시 모델에 추가로 보내는 user 발화. PRD §5.1, §5.8
-  # 표준 문구다. 사용자가 도메인에 맞게 바꾸면 그대로 적용된다.
   auto_follow_up_text: "조금만 더 자세히 말씀해 주실 수 있을까요?"
-  # 페르소나 1명당 자동 follow-up 발동 상한. 0이면 자동 follow-up 비활성.
-  # 1이 PRD §5.1 권장값이다(과도한 추가 호출로 비용 증가 방지).
   auto_follow_up_max: 1
-  # 시스템 프롬프트 템플릿 파일 경로(절대 경로 또는 프로젝트 루트 기준 상대).
-  # 본 파일에 적힌 텍스트가 모든 인터뷰의 system 메시지로 들어간다. 사용자는
-  # prompts/system_prompt.txt를 직접 편집하거나 다른 파일을 가리켜 도메인 맞춤
-  # 톤/지침을 적용할 수 있다. 템플릿에는 {persona_json}과 {product} placeholder가
-  # 반드시 포함되어야 하며, 누락되면 ConfigError로 차단된다.
   system_prompt_path: "prompts/system_prompt.txt"
 
 report:
-  # 코호트 셀 표본 부족 마스킹 임계값. PRD §5.6 권장값 3. 5로 올리면 코호트
-  # 비교가 더 보수적이지만 작은 표본(10-30명) 인터뷰에선 셀 대부분 마스킹됨.
   cohort_min_cell: 3
-  # 거절 사유 상위 N개 default(--top-n CLI 옵션이 없을 때 사용).
   top_n_default: 10
-  # 가격 히스토그램 구간 수.
   histogram_bins: 10
-  # 텍스트 막대 차트 폭(컬럼 수). 좁은 터미널은 20-25 권장.
   bar_width: 30
 
 output:

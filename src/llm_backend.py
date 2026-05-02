@@ -1,25 +1,31 @@
-"""LLM 백엔드 추상화와 구현 두 종.
+"""LLM backend abstractions for the interview pipeline.
 
-본 도구의 인터뷰 호출 경로는 두 가지 백엔드를 선택적으로 사용한다.
+Three backends are exposed:
 
-- ``OpenAIBackend``: 기존 ``MlxLLMClient``를 그대로 감싼다. CLI/MCP 어느 진입점에서
-  쓰든 자체 OpenAI Chat Completions 호출을 수행한다. 비용은 사용자 OpenAI 키에서 빠진다
-- ``McpSamplingBackend``: MCP 표준의 ``sampling/createMessage`` request로 클라이언트
-  (Claude Code, Cursor 등)에 추론을 위임한다. OpenAI 키 없이도 동작하며 비용은
-  클라이언트 측 LLM 사용량으로 청구된다
+- ``OpenAIBackend``: OpenAI Chat Completions API and any OpenAI-compatible
+  endpoint (mlx_lm.server, vLLM, llama.cpp). Used by the CLI.
+- ``AnthropicBackend``: Anthropic Messages API. Used by the CLI when
+  ``provider=anthropic``.
+- ``McpSamplingBackend``: MCP ``sampling/createMessage`` request that delegates
+  inference to the host agent (Claude Code, Cursor, ...). Used exclusively by
+  the MCP server entry point.
 
-두 구현은 ``LLMBackend`` 프로토콜을 만족한다. ``run_batch``/``run_interview``/
-``generate_report``는 본 프로토콜에 의존해 백엔드를 그대로 swap할 수 있다
-(architecture.md §3 의존성 주입).
+All three implementations satisfy the ``LLMBackend`` protocol so the
+application layer (``run_batch``, ``run_interview``, ``generate_report``) can
+swap them via dependency injection.
 
-본 모듈은 ``mcp`` SDK 부재 환경에서도 import 자체가 깨지지 않도록 ``mcp`` import는
-``McpSamplingBackend`` 내부에서 lazy하게 수행한다.
+The ``mcp`` SDK is imported lazily inside ``McpSamplingBackend`` so this module
+imports cleanly when the SDK is absent.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import random
 from typing import Any, Optional, Protocol, runtime_checkable
+
+import httpx
 
 from .config import LlmConfig
 from .llm_client import MlxLLMClient
@@ -36,15 +42,33 @@ from .models import (
 logger = logging.getLogger(__name__)
 
 
+_JITTER_MAX_SECONDS = 0.5
+
+_MISSING_ANTHROPIC_KEY_MESSAGE = (
+    "Anthropic API 키가 설정되지 않았습니다. https://console.anthropic.com/ "
+    "에서 발급 후 환경변수 ANTHROPIC_API_KEY로 셸에 적용하거나 프로젝트 루트의 "
+    ".env 파일에 `ANTHROPIC_API_KEY=...` 형식으로 저장해 주세요"
+)
+
+_INVALID_ANTHROPIC_KEY_MESSAGE = (
+    "Anthropic API 키가 유효하지 않거나 권한이 없습니다. "
+    "환경변수 ANTHROPIC_API_KEY를 다시 확인해 주세요"
+)
+
+_MCP_SAMPLING_UNSUPPORTED_MESSAGE = (
+    "호스트 에이전트가 MCP sampling을 지원하지 않습니다. "
+    "Claude Code 최신 버전으로 업데이트하거나 CLI"
+    "(`python main.py interview ...` 또는 `kpi interview ...`)로 호출해 주세요"
+)
+
+
 @runtime_checkable
 class LLMBackend(Protocol):
-    """인터뷰 호출 경로가 의존하는 최소 인터페이스.
+    """Minimal interface used by the interview pipeline.
 
-    ``MlxLLMClient``의 공개 메서드(``healthcheck``/``chat``)와 호환된다. 본 프로토콜을
-    만족하는 객체라면 ``run_batch``/``run_interview``/``generate_report`` 어느 곳에서도
-    그대로 swap할 수 있다.
-
-    구현체는 ``async with`` 컨텍스트 매니저 프로토콜도 함께 지원한다(리소스 정리 일관성).
+    Compatible with ``MlxLLMClient`` so any object conforming to this protocol
+    is interchangeable in ``run_batch``/``run_interview``/``generate_report``.
+    Implementations must support the async context manager protocol.
     """
 
     async def healthcheck(self) -> list:  # pragma: no cover - protocol stub
@@ -66,11 +90,12 @@ class LLMBackend(Protocol):
 
 
 class OpenAIBackend:
-    """``MlxLLMClient``를 위임받아 본 프로토콜로 노출한다.
+    """Adapter for OpenAI Chat Completions and OpenAI-compatible servers.
 
-    구현은 단순 위임이라 기존 인터뷰/리포트/배치 회귀 테스트가 그대로 통과한다.
-    명시적인 별칭 클래스를 둔 이유는 호출 지점에서 백엔드 종류가 명확히 드러나도록
-    하기 위함이다(``isinstance(backend, OpenAIBackend)`` 분기 가능).
+    Wraps ``MlxLLMClient`` so the interview pipeline can also target
+    self-hosted OpenAI-compatible endpoints (mlx_lm.server, vLLM, llama.cpp)
+    by configuring ``base_url`` and ``api_key`` (the local servers usually
+    accept any string).
     """
 
     def __init__(self, config: LlmConfig) -> None:
@@ -98,34 +123,295 @@ class OpenAIBackend:
         )
 
 
-# 사용자가 클라이언트가 sampling을 지원한다고 명시했지만 실제 호출에서 거부하는 경우의
-# 메시지. ``ServerNotReachableError``로 변환해 호출자가 OpenAI fallback을 시도하거나
-# 사용자에게 알릴 수 있게 한다.
-_SAMPLING_REJECTED_MESSAGE = (
-    "MCP 클라이언트가 sampling 요청을 거부했습니다. "
-    "클라이언트의 sampling 권한 설정을 확인하거나 OpenAI 백엔드로 전환해 주세요"
-)
+class AnthropicBackend:
+    """Adapter for the Anthropic Messages API.
+
+    Implements ``POST /v1/messages`` directly over httpx. The official
+    ``anthropic`` SDK is intentionally not used to avoid the dependency. Caller
+    is responsible for providing ``api_key`` via the ``ANTHROPIC_API_KEY``
+    environment variable.
+
+    Notes on the request shape that differ from OpenAI:
+
+    - ``system`` is a top-level field, not a message with ``role=system``.
+    - ``max_tokens`` is required.
+    - Authentication uses the ``x-api-key`` header plus ``anthropic-version``.
+
+    Token usage maps as follows for cost accounting parity with OpenAI:
+
+    - ``usage.input_tokens`` -> ``TokenUsage.prompt_tokens``
+    - ``usage.output_tokens`` -> ``TokenUsage.completion_tokens``
+    - ``usage.cache_read_input_tokens`` -> ``TokenUsage.cached_tokens``
+
+    Anthropic prompt caching ``cache_control`` markers are not emitted by this
+    backend. They are tracked in the v1.1 backlog.
+    """
+
+    _ANTHROPIC_VERSION = "2023-06-01"
+
+    def __init__(self, config: LlmConfig) -> None:
+        self._config = config
+        self._client: Optional[httpx.AsyncClient] = None
+
+    async def __aenter__(self) -> "AnthropicBackend":
+        self._client = httpx.AsyncClient(timeout=self._config.timeout)
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
+
+    async def healthcheck(self) -> list:
+        """Verify connectivity by issuing a 1-token ping request.
+
+        The Messages API does not expose a list-models endpoint, so the
+        healthcheck sends a minimal request and treats any 2xx response as
+        success. Returns the configured model id wrapped in a list to match
+        the OpenAI backend's contract.
+        """
+
+        self._require_api_key()
+        client = self._require_client()
+        url = f"{self._config.base_url.rstrip('/')}/messages"
+        body = {
+            "model": self._config.model,
+            "max_tokens": 1,
+            "messages": [{"role": "user", "content": "ping"}],
+        }
+
+        try:
+            response = await client.post(url, json=body, headers=self._auth_headers())
+        except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+            raise ServerNotReachableError(f"Anthropic 서버 연결 실패: {exc}") from exc
+        except httpx.TimeoutException as exc:
+            raise ServerNotReachableError(f"Anthropic 서버 응답 타임아웃: {exc}") from exc
+
+        if 500 <= response.status_code < 600:
+            raise ServerNotReachableError(
+                f"Anthropic 서버 5xx 응답: {response.status_code}"
+            )
+        if response.status_code == 401:
+            raise ConfigError(_INVALID_ANTHROPIC_KEY_MESSAGE)
+        if 400 <= response.status_code < 500:
+            raise ConfigError(
+                f"Anthropic 서버 4xx 응답: {response.status_code} {response.text[:200]}"
+            )
+
+        logger.info(
+            "헬스체크 응답 정상",
+            extra={
+                "base_url": self._config.base_url,
+                "provider": "anthropic",
+                "model": self._config.model,
+            },
+        )
+        return [self._config.model]
+
+    async def chat(
+        self,
+        messages: list,
+        max_tokens: Optional[int] = None,
+        temperature: Optional[float] = None,
+    ) -> ChatResponse:
+        """Call ``POST /v1/messages`` with retry/backoff parity with OpenAI."""
+
+        self._require_api_key()
+        client = self._require_client()
+        url = f"{self._config.base_url.rstrip('/')}/messages"
+
+        anthropic_messages, system_prompt = _split_system_prompt(messages)
+        if not anthropic_messages:
+            raise ConfigError(
+                "Anthropic 호출에 보낼 user/assistant 메시지가 없습니다. "
+                "messages 배열에 system 외 1개 이상 포함되어야 합니다"
+            )
+
+        body: dict = {
+            "model": self._config.model,
+            "max_tokens": int(max_tokens or self._config.max_tokens),
+            "messages": anthropic_messages,
+            "temperature": (
+                float(temperature)
+                if temperature is not None
+                else float(self._config.temperature)
+            ),
+        }
+        if system_prompt:
+            body["system"] = system_prompt
+
+        logger.debug(
+            "chat 요청 시작",
+            extra={
+                "messages_count": len(anthropic_messages),
+                "model": self._config.model,
+                "provider": "anthropic",
+            },
+        )
+
+        last_exc: Optional[Exception] = None
+        for attempt in range(self._config.retry_max_attempts):
+            start = asyncio.get_event_loop().time()
+            try:
+                response = await client.post(
+                    url, json=body, headers=self._auth_headers()
+                )
+            except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+                last_exc = ServerNotReachableError(f"연결 실패: {exc}")
+            except httpx.TimeoutException as exc:
+                last_exc = ServerNotReachableError(f"타임아웃: {exc}")
+            else:
+                latency_ms = int((asyncio.get_event_loop().time() - start) * 1000)
+                if response.status_code == 401:
+                    raise ConfigError(_INVALID_ANTHROPIC_KEY_MESSAGE)
+                if response.status_code == 429:
+                    last_exc = ServerNotReachableError(
+                        f"429 rate limit: {response.text[:200]}"
+                    )
+                elif 400 <= response.status_code < 500:
+                    raise ConfigError(
+                        f"chat 4xx 응답: {response.status_code} "
+                        f"{response.text[:200]}"
+                    )
+                elif 500 <= response.status_code < 600:
+                    last_exc = ServerNotReachableError(
+                        f"5xx 응답: {response.status_code}"
+                    )
+                else:
+                    content = self._extract_message_content(response)
+                    if not content:
+                        last_exc = EmptyResponseError(
+                            "Anthropic 응답 content가 비어 있다"
+                        )
+                    else:
+                        usage = self._extract_usage(response)
+                        logger.info(
+                            "chat 응답 정상",
+                            extra={
+                                "model": self._config.model,
+                                "provider": "anthropic",
+                                "response_chars": len(content),
+                                "latency_ms": latency_ms,
+                                "retry_count": attempt,
+                                "prompt_tokens": usage.prompt_tokens,
+                                "completion_tokens": usage.completion_tokens,
+                                "cached_tokens": usage.cached_tokens,
+                            },
+                        )
+                        return ChatResponse(
+                            content=content,
+                            latency_ms=latency_ms,
+                            retry_count=attempt,
+                            reasoning_trace=None,
+                            usage=usage,
+                        )
+
+            if attempt < self._config.retry_max_attempts - 1:
+                backoff = self._compute_backoff(attempt)
+                logger.warning(
+                    "chat 재시도",
+                    extra={
+                        "attempt": attempt + 1,
+                        "backoff_seconds": round(backoff, 3),
+                        "reason": str(last_exc),
+                        "provider": "anthropic",
+                    },
+                )
+                await asyncio.sleep(backoff)
+
+        raise RetryExhaustedError(
+            f"chat 재시도 {self._config.retry_max_attempts}회 모두 실패: {last_exc}"
+        )
+
+    def _require_client(self) -> httpx.AsyncClient:
+        if self._client is None:
+            raise RuntimeError(
+                "AnthropicBackend는 async with 블록 안에서만 사용할 수 있다"
+            )
+        return self._client
+
+    def _require_api_key(self) -> None:
+        if not self._config.api_key:
+            raise ConfigError(_MISSING_ANTHROPIC_KEY_MESSAGE)
+
+    def _auth_headers(self) -> dict:
+        return {
+            "x-api-key": str(self._config.api_key),
+            "anthropic-version": self._ANTHROPIC_VERSION,
+            "content-type": "application/json",
+        }
+
+    def _compute_backoff(self, attempt: int) -> float:
+        seq = self._config.retry_backoff_seconds
+        if not seq:
+            base = 1.0
+        else:
+            base = float(seq[min(attempt, len(seq) - 1)])
+        return base + random.uniform(0, _JITTER_MAX_SECONDS)
+
+    @staticmethod
+    def _extract_message_content(response: httpx.Response) -> str:
+        try:
+            payload = response.json()
+        except ValueError:
+            return ""
+        if not isinstance(payload, dict):
+            return ""
+        content = payload.get("content")
+        if not isinstance(content, list) or not content:
+            return ""
+        first = content[0]
+        if not isinstance(first, dict):
+            return ""
+        text = first.get("text")
+        return text if isinstance(text, str) else ""
+
+    @staticmethod
+    def _extract_usage(response: httpx.Response) -> TokenUsage:
+        try:
+            payload = response.json()
+        except ValueError:
+            return TokenUsage()
+        if not isinstance(payload, dict):
+            return TokenUsage()
+        usage_raw = payload.get("usage")
+        if not isinstance(usage_raw, dict):
+            return TokenUsage()
+
+        def _as_int(value) -> int:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return 0
+
+        input_tokens = _as_int(usage_raw.get("input_tokens"))
+        output_tokens = _as_int(usage_raw.get("output_tokens"))
+        cached_read = _as_int(usage_raw.get("cache_read_input_tokens"))
+        return TokenUsage(
+            prompt_tokens=input_tokens,
+            completion_tokens=output_tokens,
+            total_tokens=input_tokens + output_tokens,
+            cached_tokens=cached_read,
+        )
 
 
 class McpSamplingBackend:
-    """MCP ``sampling/createMessage`` request로 추론을 클라이언트에 위임하는 백엔드.
+    """Adapter that delegates inference to the MCP host via ``sampling/createMessage``.
 
-    호출 흐름은 아래와 같다.
+    Used exclusively by the MCP server entry point. The host agent (Claude
+    Code, Cursor, ...) generates the response using its own LLM, so no API
+    key is required server-side and ``estimated_cost_usd`` is always 0 for
+    runs that use this backend.
 
-    - ``chat(messages, ...)`` 호출 시 OpenAI 형식 messages를 MCP ``SamplingMessage``
-      리스트로 변환하고, system role은 ``system_prompt`` 인자로 분리해 전달
-    - 클라이언트(Claude Code 등)가 자기 LLM(Anthropic Claude, 사용자 설정 모델 등)으로
-      응답을 생성해 ``CreateMessageResult``로 반환
-    - 응답의 ``content.text``를 ``ChatResponse.content``로 매핑
+    Constraints:
 
-    제약 사항은 아래와 같다.
-
-    - ``healthcheck``는 클라이언트 sampling capability 존재 확인만 수행한다. 실제
-      LLM 가용성 검증은 클라이언트에 맡긴다(서버는 클라이언트 LLM에 직접 접근 불가)
-    - ``usage`` 정보는 표준 sampling 응답에 포함되지 않으므로 0으로 채운 ``TokenUsage``
-      를 반환한다. 비용 추정은 클라이언트 측에서 수행한다(``estimated_cost_usd``는 본
-      백엔드 사용 시 항상 0)
-    - retry/timeout 정책은 클라이언트가 결정한다. 서버 측 재시도는 적용하지 않는다
+    - ``healthcheck`` only verifies the client's sampling capability. The
+      sampling protocol does not expose a list-models endpoint, so it returns
+      an empty list on success.
+    - The standard sampling response carries no ``usage`` block, so
+      ``TokenUsage()`` (all zeros) is returned.
+    - Retry and timeout policies are owned by the client. Server-side retries
+      are not applied.
     """
 
     def __init__(
@@ -135,14 +421,6 @@ class McpSamplingBackend:
         max_tokens_default: int = 500,
         temperature_default: float = 0.8,
     ) -> None:
-        """MCP ``ServerSession``을 주입받는다.
-
-        Args:
-            session: MCP ``ServerSession`` 인스턴스. ``create_message`` 메서드를 가져야 한다
-            max_tokens_default: ``chat``에 ``max_tokens`` 인자가 없을 때 사용할 기본값
-            temperature_default: ``chat``에 ``temperature`` 인자가 없을 때 사용할 기본값
-        """
-
         self._session = session
         self._max_tokens_default = int(max_tokens_default)
         self._temperature_default = float(temperature_default)
@@ -154,15 +432,11 @@ class McpSamplingBackend:
         return None
 
     async def healthcheck(self) -> list:
-        """클라이언트 sampling capability 존재 확인.
-
-        실제 LLM 호출 없이 capability만 검증한다. 모델 ID 리스트는 sampling 표준에
-        존재하지 않으므로 빈 리스트를 반환한다(호출자는 ``len(models)``로 가용성을 판단하지
-        않도록 주의).
+        """Verify the client exposes the sampling capability.
 
         Raises:
-            ServerNotReachableError: 클라이언트가 sampling을 지원하지 않거나 capability
-                확인 자체가 실패한 경우
+            ConfigError: The host agent does not advertise sampling support.
+            ServerNotReachableError: Capability check itself failed.
         """
 
         try:
@@ -176,22 +450,18 @@ class McpSamplingBackend:
             supports = self._session.check_client_capability(
                 types.ClientCapabilities(sampling=types.SamplingCapability())
             )
-        except Exception as exc:  # noqa: BLE001 - capability 검증 안전망
+        except Exception as exc:  # noqa: BLE001 - capability check safety net
             raise ServerNotReachableError(
                 f"MCP 클라이언트 capability 확인 실패: {exc}"
             ) from exc
 
         if not supports:
-            raise ServerNotReachableError(
-                "MCP 클라이언트가 sampling capability를 노출하지 않습니다. "
-                "클라이언트 설정을 확인하거나 OpenAI 백엔드를 사용해 주세요"
-            )
+            raise ConfigError(_MCP_SAMPLING_UNSUPPORTED_MESSAGE)
 
         logger.info(
             "MCP sampling capability 확인",
             extra={"backend": "mcp_sampling"},
         )
-        # sampling 표준은 모델 가용성 조회 API가 없다. 호환 위해 빈 리스트 반환
         return []
 
     async def chat(
@@ -200,21 +470,17 @@ class McpSamplingBackend:
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
     ) -> ChatResponse:
-        """MCP sampling/createMessage로 클라이언트 LLM에 추론을 위임한다.
+        """Forward an OpenAI-shaped messages array to the host via sampling.
 
-        Args:
-            messages: OpenAI Chat Completions 형식 messages 배열. ``role`` 키로 system/
-                user/assistant를 구분한다
-            max_tokens: 명시 시 본 호출 한정 max_tokens. 없으면 default 사용
-            temperature: 명시 시 본 호출 한정 temperature. 없으면 default 사용
-
-        Returns:
-            ``ChatResponse(content, latency_ms=0, retry_count=0, usage=TokenUsage())``
+        ``system`` role messages are concatenated and passed as the
+        ``system_prompt`` argument. ``user`` and ``assistant`` messages are
+        forwarded as-is. Unknown roles are coerced to ``user``.
 
         Raises:
-            ConfigError: messages 형식이 sampling 호환 변환 불가
-            ServerNotReachableError: 클라이언트가 sampling을 거부 또는 SDK 미설치
-            RetryExhaustedError: 클라이언트 응답 본문이 비어 있는 경우(retry 정책 없음)
+            ConfigError: The messages array contains no user/assistant entries.
+            ServerNotReachableError: The host rejected the sampling request or
+                the SDK is missing.
+            RetryExhaustedError: The host returned an empty response.
         """
 
         try:
@@ -228,7 +494,7 @@ class McpSamplingBackend:
 
         if not sampling_messages:
             raise ConfigError(
-                "MCP sampling 호출에 보낼 user/assistant 메시지가 없다. "
+                "MCP sampling 호출에 보낼 user/assistant 메시지가 없습니다. "
                 "messages 배열에 system 외 1개 이상 포함되어야 합니다"
             )
 
@@ -243,11 +509,9 @@ class McpSamplingBackend:
                     else self._temperature_default
                 ),
             )
-        except Exception as exc:  # noqa: BLE001 - 클라이언트 응답 안전망
-            # mcp SDK의 ``McpError``는 본 모듈에서 직접 import하지 않는다(SDK 부재
-            # 환경 호환). 모든 예외를 ``ServerNotReachableError``로 변환한다
+        except Exception as exc:  # noqa: BLE001 - host response safety net
             raise ServerNotReachableError(
-                f"{_SAMPLING_REJECTED_MESSAGE} (원인: {exc})"
+                f"MCP 클라이언트가 sampling 요청을 거부했습니다 (원인: {exc})"
             ) from exc
 
         content_text = _extract_sampling_text(result)
@@ -274,25 +538,49 @@ class McpSamplingBackend:
         )
 
 
-# ---------------------------------------------------------------------------
-# 변환 헬퍼
-# ---------------------------------------------------------------------------
+def _split_system_prompt(messages: list) -> tuple:
+    """Split OpenAI-shaped messages into Anthropic ``messages`` + ``system``.
+
+    Anthropic Messages API takes the system prompt as a top-level field rather
+    than a ``role=system`` message. All ``role=system`` entries are joined
+    with ``\\n\\n`` and returned as the second element. ``user``/``assistant``
+    entries are returned as a list of ``{role, content}`` dicts. Unknown roles
+    are coerced to ``user``.
+    """
+
+    system_parts: list = []
+    out_messages: list = []
+    for m in messages:
+        if hasattr(m, "role") and hasattr(m, "content"):
+            role = m.role
+            content = m.content
+        elif isinstance(m, dict):
+            role = m.get("role", "")
+            content = m.get("content", "")
+        else:
+            continue
+
+        text = str(content) if content is not None else ""
+
+        if role == "system":
+            if text:
+                system_parts.append(text)
+            continue
+        if role not in ("user", "assistant"):
+            role = "user"
+
+        out_messages.append({"role": role, "content": text})
+
+    system_prompt = "\n\n".join(system_parts) if system_parts else None
+    return out_messages, system_prompt
 
 
 def _convert_to_sampling_messages(messages: list, types_mod: Any) -> tuple:
-    """OpenAI 형식 messages를 MCP ``SamplingMessage`` 리스트로 변환한다.
+    """Convert OpenAI-shaped messages into ``mcp.types.SamplingMessage`` list.
 
-    sampling 표준은 ``role``로 ``user``/``assistant``만 허용하고 ``system``은 별도
-    ``system_prompt`` 인자로 분리해 전달한다. 본 함수는 system role 메시지를 모두 추출해
-    하나의 system_prompt로 결합하고, 나머지를 ``SamplingMessage`` 리스트로 만든다.
-
-    Args:
-        messages: OpenAI 형식 messages 배열. dict 또는 ``MessageEntry`` 모두 받는다
-        types_mod: ``mcp.types`` 모듈 참조. 호출자에서 lazy import한 결과를 넘긴다
-
-    Returns:
-        ``(sampling_messages, system_prompt)``. system_prompt는 추출된 system 메시지가
-        없으면 ``None``
+    The MCP sampling spec only allows ``user``/``assistant`` roles; ``system``
+    is a separate ``system_prompt`` argument. All ``role=system`` entries are
+    extracted and joined; the rest are wrapped in ``SamplingMessage``.
     """
 
     system_parts: list = []
@@ -315,7 +603,6 @@ def _convert_to_sampling_messages(messages: list, types_mod: Any) -> tuple:
                 system_parts.append(text)
             continue
         if role not in ("user", "assistant"):
-            # tool/function 등 sampling이 모르는 role은 user로 강제 변환
             role = "user"
 
         sampling_messages.append(
@@ -330,10 +617,9 @@ def _convert_to_sampling_messages(messages: list, types_mod: Any) -> tuple:
 
 
 def _extract_sampling_text(result: Any) -> str:
-    """``CreateMessageResult``에서 텍스트 본문을 안전하게 꺼낸다.
+    """Extract ``content.text`` from an MCP ``CreateMessageResult``.
 
-    표준 응답은 ``result.content``가 ``TextContent``(``type="text"``, ``text=...``)다.
-    이미지/오디오 등 비-텍스트 응답은 본 도구가 다루지 않으므로 빈 문자열을 반환한다.
+    Returns an empty string for non-text content (image, audio, ...).
     """
 
     content = getattr(result, "content", None)
@@ -345,87 +631,25 @@ def _extract_sampling_text(result: Any) -> str:
     return ""
 
 
-# ---------------------------------------------------------------------------
-# 백엔드 선택 정책
-# ---------------------------------------------------------------------------
+def build_cli_backend(config: LlmConfig) -> LLMBackend:
+    """Construct the CLI backend for the configured provider.
 
-
-_VALID_BACKEND_VALUES = frozenset({"openai", "mcp_sampling", "auto"})
-
-
-def normalize_backend_choice(value: Optional[str]) -> str:
-    """config.yaml의 ``llm.backend`` 값을 정규화하고 검증한다.
-
-    허용 값은 ``openai``/``mcp_sampling``/``auto``다. 미지정(``None`` 또는 빈 문자열)은
-    ``auto``로 본다. 그 외 값은 ``ConfigError``로 차단한다(error-handling.md §1).
+    Returns ``OpenAIBackend`` for ``provider=openai`` (also covers any
+    OpenAI-compatible local server) and ``AnthropicBackend`` for
+    ``provider=anthropic``.
     """
 
-    if value is None:
-        return "auto"
-    raw = str(value).strip().lower()
-    if not raw:
-        return "auto"
-    if raw not in _VALID_BACKEND_VALUES:
-        raise ConfigError(
-            f"llm.backend는 {sorted(_VALID_BACKEND_VALUES)} 중 하나여야 합니다. "
-            f"입력값: {value!r}"
-        )
-    return raw
-
-
-def select_backend(
-    *,
-    config: LlmConfig,
-    backend_choice: str,
-    sampling_session: Optional[Any] = None,
-) -> LLMBackend:
-    """선택 정책에 따라 백엔드 인스턴스를 만든다.
-
-    정책은 아래와 같다.
-
-    - ``openai``: 항상 ``OpenAIBackend``를 만든다(API 키 누락 시 chat/healthcheck
-      호출 시점에 ConfigError로 차단)
-    - ``mcp_sampling``: ``sampling_session``이 있어야 한다. 없으면 ``ConfigError``
-    - ``auto``: ``sampling_session``이 있으면 ``McpSamplingBackend``, 없으면 ``OpenAIBackend``
-
-    Args:
-        config: ``LlmConfig``. OpenAI 백엔드 사용 시 base_url/model/key를 사용한다
-        backend_choice: ``normalize_backend_choice``로 정규화된 값
-        sampling_session: MCP 서버 진입점에서 ``request_context.session``으로 가져온
-            ``ServerSession``. CLI 진입점에서는 ``None``
-
-    Returns:
-        ``LLMBackend`` 프로토콜을 만족하는 인스턴스
-    """
-
-    choice = normalize_backend_choice(backend_choice)
-
-    if choice == "openai":
-        return OpenAIBackend(config)
-
-    if choice == "mcp_sampling":
-        if sampling_session is None:
-            raise ConfigError(
-                "llm.backend=mcp_sampling은 MCP 서버 진입점에서만 사용할 수 있습니다. "
-                "CLI 진입점에서는 llm.backend=openai 또는 auto로 두어 주세요"
-            )
-        return McpSamplingBackend(sampling_session)
-
-    # auto: sampling 세션이 있으면 우선 사용, 없으면 OpenAI fallback
-    if sampling_session is not None:
-        return McpSamplingBackend(sampling_session)
+    provider = config.provider.strip().lower()
+    if provider == "anthropic":
+        return AnthropicBackend(config)
     return OpenAIBackend(config)
 
 
-# ``EmptyResponseError``는 본 모듈에서 직접 raise하지 않지만 ``OpenAIBackend``가 위임한
-# ``MlxLLMClient.chat``가 빈 content에 대해 retry를 거쳐 ``RetryExhaustedError``로
-# 변환하는 흐름과의 호환성을 명시하기 위해 re-export한다(호출자가 ``except`` 블록에서
-# 본 모듈에서 한 번에 import할 수 있게 한다).
 __all__ = [
+    "AnthropicBackend",
     "EmptyResponseError",
     "LLMBackend",
     "McpSamplingBackend",
     "OpenAIBackend",
-    "normalize_backend_choice",
-    "select_backend",
+    "build_cli_backend",
 ]
