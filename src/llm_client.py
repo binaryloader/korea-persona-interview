@@ -34,7 +34,7 @@ def _parse_streaming_body(body_text: str) -> tuple:
     """OpenAI Server-Sent Events 스트림 본문을 ``(content, usage)``로 합산한다.
 
     스트리밍 응답은 ``data: {...}`` 라인 시퀀스이며 ``data: [DONE]``으로 끝난다.
-    각 chunk의 ``choices[0].delta.content``를 이어 붙이고, 마지막 chunk의 ``usage`` 블록(요청 시 ``stream_options.include_usage``를 켠 경우)을 응답 usage로 사용한다.
+    각 chunk의 ``choices[0].delta.content``를 이어 붙이고 마지막 chunk의 ``usage`` 블록(요청 시 ``stream_options.include_usage``를 켠 경우)을 응답 usage로 사용한다.
     JSON 파싱이 실패하거나 기대 필드가 없는 라인은 건너뛴다. 부분 chunk가 합산 결과를 오염시키지 못하게 한 안전 장치다.
     """
 

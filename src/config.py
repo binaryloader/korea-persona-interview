@@ -260,7 +260,7 @@ class McpConfig:
 
     v1.2.0(ADR-005)부터 ``mode``는 ``server``와 ``orchestrator`` 두 값만 허용한다. sampling 모드는 v1.2.0에서 제거됐다(보급률 한계).
 
-    - ``orchestrator`` (기본): server-side에서 LLM을 호출하지 않는다. 호스트 sub-agent가 자기 LLM으로 인터뷰를 수행하고, 본 도구는 데이터/프롬프트 helper만 노출한다. server-side 키 불필요. v1.2.0 후속 정리에서 default가 ``server``에서 본 값으로 바뀌었다(사용자 friction 최소화. orchestrator는 mcp.json 추가 설정 없이 즉시 동작한다)
+    - ``orchestrator`` (기본): server-side에서 LLM을 호출하지 않는다. 호스트 sub-agent가 자기 LLM으로 인터뷰를 수행하고 본 도구는 데이터/프롬프트 helper만 노출한다. server-side 키 불필요. v1.2.0 후속 정리에서 default가 ``server``에서 본 값으로 바뀌었다(사용자 friction 최소화. orchestrator는 mcp.json 추가 설정 없이 즉시 동작한다)
     - ``server``: MCP 도구 호출이 server-side ``OpenAIBackend``/``AnthropicBackend``를 사용한다. CLI와 동일한 ``LlmConfig`` 필드를 그대로 활용한다. mcp.json의 ``env``나 ``.env``에 ``OPENAI_API_KEY``/``ANTHROPIC_API_KEY``를 박아 주어야 한다
 
     자동 fallback은 하지 않는다. 모드 전환은 명시 토글로만 가능하다(ADR-005 §3 결정 근거).

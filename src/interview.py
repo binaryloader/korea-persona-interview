@@ -11,7 +11,7 @@
 
 순수 함수(``build_system_prompt``, ``estimate_tokens``, ``truncate_history``, ``should_auto_follow_up``, ``detect_persona_drift``, ``detect_refusal``)는 모듈 함수로 분리해 단위 테스트 용이성을 확보한다(TDD §16).
 
-application 계층이며, infrastructure(``LLMClient``, OpenAI 호환 클라이언트)와 domain(``PersonaMeta``, ``InterviewRecord`` 등)을 조합한다(architecture.md §1, §2).
+application 계층이며 infrastructure(``LLMClient``, OpenAI 호환 클라이언트)와 domain(``PersonaMeta``, ``InterviewRecord`` 등)을 조합한다(architecture.md §1, §2).
 """
 
 from __future__ import annotations
@@ -405,7 +405,7 @@ def build_system_prompt(
 ) -> str:
     """시스템 프롬프트 템플릿 파일에 페르소나 정보를 주입한다.
 
-    템플릿은 ``prompts/system_prompt.txt``(기본)에서 읽으며, 본문에는 ``{persona_json}``과 ``{product}`` 두 개의 str.format placeholder가 들어 있어야 한다. 사용자는 본 파일을 직접 편집해 시스템 프롬프트의 톤/지침을 도메인에 맞게 조정할 수 있다.
+    템플릿은 ``prompts/system_prompt.txt``(기본)에서 읽으며 본문에는 ``{persona_json}``과 ``{product}`` 두 개의 str.format placeholder가 들어 있어야 한다. 사용자는 본 파일을 직접 편집해 시스템 프롬프트의 톤/지침을 도메인에 맞게 조정할 수 있다.
 
     기본 묶음은 인구 통계 7개 필드와 ``persona``(요약 자유 서술)다(TDD §1.4). 토글 키워드(``professional``/``sports``/``arts``/``travel``/``culinary``/``family``)가 ``persona_fields``에 있으면 해당 자유 서술 컬럼을 raw에서 꺼내 추가한다.
 
@@ -540,7 +540,7 @@ def truncate_history(
     if not messages:
         return list(messages), False
 
-    # 진입 시 1회 전체 토큰을 계산하고, 페어 제거 시 제거된 메시지들의 토큰만 차감한다(O(n) 보장).
+    # 진입 시 1회 전체 토큰을 계산하고 페어 제거 시 제거된 메시지들의 토큰만 차감한다(O(n) 보장).
     # 기존 구현은 매 iteration마다 ``head + body`` 전체를 재계산해 O(n²)였다.
     total_tokens = estimate_messages_tokens(messages)
     if total_tokens <= max_tokens:
@@ -707,7 +707,7 @@ def _has_solo_living_assertion(text: str) -> bool:
 
     부정 단언(``혼자 살지 않``, ``1인 가구가 아니``)이 같은 문장에 있으면
     그 문장은 정합으로 보고 매칭에서 제외한다. 단독 거주 페르소나가 본 단언을
-    하면 정합이지만, 가족 동거 페르소나가 본 단언을 하면 drift다.
+    하면 정합이지만 가족 동거 페르소나가 본 단언을 하면 drift다.
     """
 
     for sentence in _split_sentences(text):
@@ -722,7 +722,7 @@ def _has_cohabit_assertion(text: str) -> bool:
     """본문에 가족 동거 1인칭 긍정 단언이 한 문장이라도 들어 있는지 판정한다.
 
     부정 단언(``가족과 살지 않``)이 같은 문장에 있으면 정합으로 보고 매칭에서
-    제외한다. 가족 동거 페르소나가 본 단언을 하면 정합이지만, 단독 거주
+    제외한다. 가족 동거 페르소나가 본 단언을 하면 정합이지만 단독 거주
     페르소나가 본 단언을 하면 drift다.
     """
 
@@ -750,7 +750,7 @@ _GENERIC_THIRD_PERSON_RE = re.compile(
 def _has_age_bucket_assertion(sentence: str, bucket_label: str) -> bool:
     """문장 안에서 ``저는 {bucket_label}`` 형태 자기 단언이 발견되면 True.
 
-    1인칭 주어가 같은 문장에 있어야 하며, 부정문(``20대가 아니라``)은 정합으로
+    1인칭 주어가 같은 문장에 있어야 하며 부정문(``20대가 아니라``)은 정합으로
     보고 trigger에서 제외한다.
     """
 
@@ -941,7 +941,7 @@ async def review_drift_with_llm(
 
     휴리스틱이 drift 의심으로 판정한 record에 한해 호출된다(yaml
     ``interview.llm_drift_review: true`` 옵트인). 호출자는 judge가 ``True``를
-    돌려주면 drift 라벨을 유지하고, ``False``를 돌려주면 drift 플래그를 해제해
+    돌려주면 drift 라벨을 유지하고 ``False``를 돌려주면 drift 플래그를 해제해
     false positive를 줄인다.
 
     LLM 응답이 ``judge: drift``/``judge: ok`` 둘 중 하나로만 떨어지도록
@@ -1027,7 +1027,7 @@ def detect_refusal(response: str, refusal_keywords: tuple) -> bool:
 def _build_summary_messages(messages: list) -> list:
     """구조화 요약용 single-turn messages 배열을 만든다.
 
-    인터뷰 messages를 본문에 직렬화하고, 출력 JSON 스키마를 강제한다. 시스템
+    인터뷰 messages를 본문에 직렬화하고 출력 JSON 스키마를 강제한다. 시스템
     프롬프트는 인터뷰분석가 역할을 부여한다(ADR-001 §2).
     """
 
@@ -1281,7 +1281,7 @@ class InterviewSession:
         status = "completed"
         error_payload: Optional[dict] = None
 
-        # persona_id는 sha256 prefix로 마스킹하고, 인구통계 필드는 DEBUG로 격하
+        # persona_id는 sha256 prefix로 마스킹하고 인구통계 필드는 DEBUG로 격하
         # 한다(security.md §1, logging.md §1, §2). INFO 라인은 sequence 추적을
         # 가능하게 하되 식별 가능한 인구통계 자체는 노출하지 않는다.
         logger.info(
@@ -1384,7 +1384,7 @@ class InterviewSession:
                         )
 
                 # 자동 follow-up은 메인 질문 구간(q_index < len(self._questions))
-                # 에서만, ``auto_follow_up_max`` 만큼 적용한다(기본 1회).
+                # 에서만 ``auto_follow_up_max`` 만큼 적용한다(기본 1회).
                 if (
                     q_index < len(self._questions)
                     and not flags.auto_follow_up_used
@@ -1583,7 +1583,7 @@ class InterviewSession:
         본 메서드에서 "각 질문에 번호 순서대로 답변" 형식 지침을 추가 user
         메시지에 넣는다. 응답 텍스트는 ``^\\s*(\\d+)[.)]\\s*...`` 정규식으로
         question_index별 응답으로 분리한다. 파싱이 한 항목이라도 실패하면
-        flags.parse_failed=True로 표시하고, 통째 텍스트를 마지막 question에
+        flags.parse_failed=True로 표시하고 통째 텍스트를 마지막 question에
         담아 fallback한다(데이터를 잃지 않음).
 
         Returns:

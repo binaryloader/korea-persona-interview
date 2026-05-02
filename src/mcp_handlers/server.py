@@ -71,7 +71,7 @@ async def healthcheck(arguments: dict) -> dict:
 async def interview(arguments: dict) -> dict:
     """배치 인터뷰를 server-side에서 실행한다.
 
-    MCP orchestrator 모드에서는 본 도구가 노출되지 않으며, 호스트 sub-agent가 build_batch_prompts로 시스템 프롬프트를 받아 자기 LLM으로 인터뷰를 수행한 다음 aggregate_results로 리포트를 생성하는 흐름을 사용한다.
+    MCP orchestrator 모드에서는 본 도구가 노출되지 않으며 호스트 sub-agent가 build_batch_prompts로 시스템 프롬프트를 받아 자기 LLM으로 인터뷰를 수행한 다음 aggregate_results로 리포트를 생성하는 흐름을 사용한다.
     """
 
     product = arguments.get("product")

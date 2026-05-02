@@ -72,7 +72,7 @@ common:
       제주특별자치도: "제주"
   # persona: 페르소나 토글과 시스템 프롬프트 템플릿 경로. 모든 진입점에서 사용한다.
   persona:
-    # 시스템 프롬프트에 추가 주입할 페르소나 토글 키워드. 기본값 `summary`는 항상 주입되며, `professional`/`sports`/`arts`/`travel`/`culinary`/`family`를 추가하면 해당 자유 서술 컬럼이 페르소나 객체에 합쳐진다.
+    # 시스템 프롬프트에 추가 주입할 페르소나 토글 키워드. 기본값 `summary`는 항상 주입되며 `professional`/`sports`/`arts`/`travel`/`culinary`/`family`를 추가하면 해당 자유 서술 컬럼이 페르소나 객체에 합쳐진다.
     fields: ["summary"]
     # 시스템 프롬프트 템플릿 파일 경로(절대 경로 또는 프로젝트 루트 기준 상대 경로).
     # pip-installed 환경에서 본 경로가 부재하고 default 경로면 패키지 내부 `src._prompts.system_prompt.txt`로 fallback한다.
@@ -121,7 +121,7 @@ llm:
   retry_max_attempts: 3
   retry_backoff_seconds: [1, 2, 4]
   # context_budget은 backend로 보내기 전 multi-turn 메시지 히스토리에 cap을 씌운다.
-  # 시스템 프롬프트는 보존하고, 가장 오래된 user/assistant 쌍부터 drop한다.
+  # 시스템 프롬프트는 보존하고 가장 오래된 user/assistant 쌍부터 drop한다.
   context_budget: 32000
   # provider=anthropic 호출에서 system 메시지에 cache_control: ephemeral 마커를 박아 prompt caching을 활성화한다.
   # 예전 Messages API 리비전이 마커를 거부하면 false로 두어 끈다(provider=anthropic 한정).
@@ -147,7 +147,7 @@ batch:
   partial_failure_threshold: 0.5
 
 # heuristics: 인터뷰 휴리스틱 임계값과 키워드 묶음. 자동 follow-up 트리거, 페르소나 깨짐(drift) 감지, 모델 거부 감지의 정본이다.
-# CLI와 MCP server에서는 자동으로 적용되고, MCP orchestrator에서는 helper 도구를 호스트가 명시 호출했을 때 같은 임계값/키워드를 사용한다.
+# CLI와 MCP server에서는 자동으로 적용되고 MCP orchestrator에서는 helper 도구를 호스트가 명시 호출했을 때 같은 임계값/키워드를 사용한다.
 heuristics:
   # 답변 글자 수(공백 제외)가 본 값 미만이면 자동 follow-up trigger.
   short_answer_threshold: 20
@@ -188,7 +188,7 @@ heuristics:
 #
 # - mode: "orchestrator" (default)
 #     server-side에서 LLM을 호출하지 않는다.
-#     호스트 sub-agent가 자기 LLM으로 인터뷰를 수행하고, 본 도구는 데이터/프롬프트 helper만 노출한다(예: build_persona_prompt, build_batch_prompts, aggregate_results, helper 도구 4종).
+#     호스트 sub-agent가 자기 LLM으로 인터뷰를 수행하고 본 도구는 데이터/프롬프트 helper만 노출한다(예: build_persona_prompt, build_batch_prompts, aggregate_results, helper 도구 4종).
 #     server-side 키 불필요. 응답에 `backend: "mcp_orchestrator"` 라벨이 박힌다.
 #     v1.2.0 후속 정리에서 default가 "server"에서 본 값으로 바뀌었다(키 설정 없이 즉시 동작하므로 신규 사용자 마찰 최소화).
 #

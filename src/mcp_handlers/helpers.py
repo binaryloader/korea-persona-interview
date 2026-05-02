@@ -1,6 +1,6 @@
 """모든 MCP mode 공통 helper 도구.
 
-CLI와 MCP server 모드는 휴리스틱(`detect_persona_drift`, `should_auto_follow_up`, `_parse_summary_payload`)이 자동 적용되지만, MCP orchestrator 모드는 호스트 sub-agent가 인터뷰를 수행하므로 호스트가 동일 임계값/키워드로 판정 가능하도록 본 휴리스틱을 도구로 노출한다.
+CLI와 MCP server 모드는 휴리스틱(`detect_persona_drift`, `should_auto_follow_up`, `_parse_summary_payload`)이 자동 적용되지만 MCP orchestrator 모드는 호스트 sub-agent가 인터뷰를 수행하므로 호스트가 동일 임계값/키워드로 판정 가능하도록 본 휴리스틱을 도구로 노출한다.
 
 본 모듈의 도구는 server-side LLM을 호출하지 않는다(순수 Python 함수). 따라서 MCP server / MCP orchestrator 어느 모드에서나 동일한 응답을 돌려준다.
 """

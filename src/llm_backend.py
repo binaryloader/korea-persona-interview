@@ -52,7 +52,7 @@ _INVALID_ANTHROPIC_KEY_MESSAGE = (
 class LLMBackend(Protocol):
     """인터뷰 파이프라인이 사용하는 최소 인터페이스.
 
-    ``LLMClient``와 호환되어, 본 프로토콜을 만족하는 객체는 ``run_batch``/``run_interview``/``generate_report`` 어디에서든 교체 사용 가능하다. 구현체는 async context manager 프로토콜을 지원해야 한다.
+    ``LLMClient``와 호환되어 본 프로토콜을 만족하는 객체는 ``run_batch``/``run_interview``/``generate_report`` 어디에서든 교체 사용 가능하다. 구현체는 async context manager 프로토콜을 지원해야 한다.
     """
 
     async def healthcheck(self) -> list:  # pragma: no cover - protocol stub
@@ -147,7 +147,7 @@ class AnthropicBackend:
     async def healthcheck(self) -> list:
         """1-token ping 요청으로 연결성을 검증한다.
 
-        Messages API는 모델 목록 엔드포인트를 노출하지 않으므로, 본 healthcheck는 최소 요청을 보내 2xx 응답이면 성공으로 본다. OpenAI 백엔드 계약과 같은 모양을 유지하기 위해 설정된 모델 ID를 리스트로 wrapping해 반환한다.
+        Messages API는 모델 목록 엔드포인트를 노출하지 않으므로 본 healthcheck는 최소 요청을 보내 2xx 응답이면 성공으로 본다. OpenAI 백엔드 계약과 같은 모양을 유지하기 위해 설정된 모델 ID를 리스트로 wrapping해 반환한다.
         """
 
         self._require_api_key()
@@ -217,9 +217,9 @@ class AnthropicBackend:
             ),
         }
         if system_prompt:
-            # Anthropic prompt caching이 켜진 경우, 시스템 프롬프트를 ``cache_control: ephemeral`` 마커가 붙은 단일 text 블록으로 보낸다.
-            # Messages API가 본 마커를 캐시 경계로 인식해, 동일한 시스템 텍스트를 가진 후속 요청은 정적 prefix를 재사용한다.
-            # 캐시가 적중하면 ``cache_creation_input_tokens``와 ``cache_read_input_tokens``가 응답 usage에 함께 노출되며, ``_extract_usage``가 OpenAI와의 통일성 유지를 위해 두 값을 합쳐 ``TokenUsage.cached_tokens``로 매핑한다.
+            # Anthropic prompt caching이 켜진 경우 시스템 프롬프트를 ``cache_control: ephemeral`` 마커가 붙은 단일 text 블록으로 보낸다.
+            # Messages API가 본 마커를 캐시 경계로 인식해 동일한 시스템 텍스트를 가진 후속 요청은 정적 prefix를 재사용한다.
+            # 캐시가 적중하면 ``cache_creation_input_tokens``와 ``cache_read_input_tokens``가 응답 usage에 함께 노출되며 ``_extract_usage``가 OpenAI와의 통일성 유지를 위해 두 값을 합쳐 ``TokenUsage.cached_tokens``로 매핑한다.
             if self._config.anthropic_cache_control:
                 body["system"] = [
                     {

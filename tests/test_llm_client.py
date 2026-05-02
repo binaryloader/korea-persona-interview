@@ -484,7 +484,7 @@ async def test_async_with_미진입_RuntimeError() -> None:
 async def test_chat_streaming_SSE_본문_조립_및_usage_매핑(httpx_mock) -> None:
     """``llm.streaming=true``는 SSE 본문을 조립해 단일 ChatResponse로 반환한다.
 
-    각 ``data: {...}`` chunk의 ``choices[0].delta.content``를 합치고, 마지막
+    각 ``data: {...}`` chunk의 ``choices[0].delta.content``를 합치고 마지막
     chunk의 ``usage`` 블록을 ``TokenUsage``로 매핑한다.
     """
 

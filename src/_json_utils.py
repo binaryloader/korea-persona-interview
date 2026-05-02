@@ -1,6 +1,6 @@
 """``interview``와 ``report`` 모듈이 공유하는 내부 JSON 추출 헬퍼.
 
-선행 언더스코어는 module-private 신호이며, 패키지 외부에서 본 모듈을 import해서는 안 된다.
+선행 언더스코어는 module-private 신호이며 패키지 외부에서 본 모듈을 import해서는 안 된다.
 """
 
 from __future__ import annotations

@@ -245,7 +245,7 @@ def parse_filter(
 def _row_matches(row: dict, spec: FilterSpec, field_map: dict) -> bool:
     """단일 row가 ``FilterSpec``을 만족하는지 판정한다.
 
-    같은 키 내부는 OR, 다른 키 사이는 AND다. 본 함수는 row 단위 ad-hoc 호출(테스트 등)을 위해 그대로 유지하며, 매 호출마다 field 키를 dict에서 조회한다. 데이터셋 전량 순회 경로는 ``_make_row_predicate``를 사용해 키 조회를 사전에 한 번만 수행하도록 한다(N+1 회피).
+    같은 키 내부는 OR, 다른 키 사이는 AND다. 본 함수는 row 단위 ad-hoc 호출(테스트 등)을 위해 그대로 유지하며 매 호출마다 field 키를 dict에서 조회한다. 데이터셋 전량 순회 경로는 ``_make_row_predicate``를 사용해 키 조회를 사전에 한 번만 수행하도록 한다(N+1 회피).
     """
 
     return _make_row_predicate(spec, field_map)(row)
@@ -659,7 +659,7 @@ def _load_by_persona_ids(
 
     ``filter_str``이 함께 지정되면 ID 매칭 후 필터를 추가로 적용한다(교집합). 누락된 ID가 있으면 ``ConfigError``로 차단해 사용자가 정확히 어떤 ID가 데이터셋에 없는지 즉시 알 수 있게 한다.
 
-    캐시는 사용하지 않는다. ID 직접 지정 경로는 빈도가 낮고, 같은 프로세스 안에서도 ID 부분 집합을 바꿔 가며 호출되는 사례가 흔해 캐시 hit 효과가 낮기 때문이다.
+    캐시는 사용하지 않는다. ID 직접 지정 경로는 빈도가 낮고 같은 프로세스 안에서도 ID 부분 집합을 바꿔 가며 호출되는 사례가 흔해 캐시 hit 효과가 낮기 때문이다.
     """
 
     spec = parse_filter(filter_str, gender_aliases, province_aliases)
@@ -732,7 +732,7 @@ def _filter_and_sample(ds, *, spec: FilterSpec, field_map: dict, n: int, seed: i
 
     ``Dataset.filter``는 디스크 기반 메모리 매핑 위에서 column을 읽으며 매칭 인덱스만 수집한다. ``apply_filter`` 같은 dict 변환 순회를 우회한다(O(n) 유지, 메모리 점유 최소화).
 
-    인덱스 보존을 위해 ``with_indices=True``로 호출하고, 매칭된 부분 ``filtered_ds``의 길이로 ``_sample_indices``를 만들어 ``select``한다. 같은 seed/같은 spec/같은 데이터셋 버전이면 동일한 결과를 보장한다.
+    인덱스 보존을 위해 ``with_indices=True``로 호출하고 매칭된 부분 ``filtered_ds``의 길이로 ``_sample_indices``를 만들어 ``select``한다. 같은 seed/같은 spec/같은 데이터셋 버전이면 동일한 결과를 보장한다.
     """
 
     predicate = _make_row_predicate(spec, field_map)

@@ -280,7 +280,7 @@ _HELPER_RECORD_SCHEMA_SCHEMA: dict = {
 # 도구 이름 → (description, inputSchema) 매핑. list_tools 메타데이터를 mode별로 잘라낼 때 사용한다.
 _TOOL_METADATA: dict = {
     "healthcheck": (
-        "MCP server 모드에서는 provider 엔드포인트 도달성을 검증하고, MCP orchestrator 모드에서는 도구 부팅 자체와 cwd, dataset 정보를 돌려줍니다.",
+        "MCP server 모드에서는 provider 엔드포인트 도달성을 검증하고 MCP orchestrator 모드에서는 도구 부팅 자체와 cwd, dataset 정보를 돌려줍니다.",
         _HEALTHCHECK_SCHEMA,
     ),
     "list_personas": (
@@ -292,7 +292,7 @@ _TOOL_METADATA: dict = {
         _INTERVIEW_SCHEMA,
     ),
     "report": (
-        "결과 JSON에서 마크다운 리포트를 생성합니다. 정량 지표는 모든 모드에서 동일하게 채워지며, 정성 인사이트는 MCP server 모드에서만 server-side LLM 호출로 채웁니다(MCP orchestrator 모드는 fallback 메시지).",
+        "결과 JSON에서 마크다운 리포트를 생성합니다. 정량 지표는 모든 모드에서 동일하게 채워지며 정성 인사이트는 MCP server 모드에서만 server-side LLM 호출로 채웁니다(MCP orchestrator 모드는 fallback 메시지).",
         _REPORT_SCHEMA,
     ),
     "build_persona_prompt": (
@@ -308,7 +308,7 @@ _TOOL_METADATA: dict = {
         _AGGREGATE_RESULTS_SCHEMA,
     ),
     "detect_persona_drift": (
-        "페르소나 깨짐 휴리스틱(영어 비율 + 4축 정밀 정규식)을 호스트가 명시 호출할 수 있도록 노출합니다. CLI와 MCP server는 자동 적용하지만, MCP orchestrator는 호스트가 본 도구를 호출해야 같은 임계값으로 drift를 판정할 수 있습니다.",
+        "페르소나 깨짐 휴리스틱(영어 비율 + 4축 정밀 정규식)을 호스트가 명시 호출할 수 있도록 노출합니다. CLI와 MCP server는 자동 적용하지만 MCP orchestrator는 호스트가 본 도구를 호출해야 같은 임계값으로 drift를 판정할 수 있습니다.",
         _HELPER_DRIFT_SCHEMA,
     ),
     "should_auto_follow_up": (

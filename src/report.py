@@ -603,7 +603,7 @@ def compute_cohort(records: list, *, min_cell: int = _MIN_COHORT_CELL) -> Cohort
     )
 
     # 시도 라벨은 데이터셋 표기(짧은 17개)를 사용한다. 표본 0인 시도도
-    # 표시할지 여부는 출력량 관점에서 표본 1 이상만 보여주고 싶지만, PRD
+    # 표시할지 여부는 출력량 관점에서 표본 1 이상만 보여주고 싶지만 PRD
     # §5.6은 "셀별 표본 3명 미만 표본 부족 마스킹"으로 명시되어 0 셀도
     # 보존한다. 다만 0 셀은 너무 많아질 수 있어 데이터에 등장한 시도만 골라
     # 정렬 순서대로 출력한다.
@@ -1149,7 +1149,7 @@ def _render_footer(model_id: str) -> str:
     return (
         "본 리포트는 합성 페르소나 데이터(`nvidia/Nemotron-Personas-Korea`)와 "
         "사용자가 설정한 LLM 백엔드의 추론 결과를 결합하여 생성되었습니다. 합성 페르소나의 "
-        "분포는 실제 인구 통계 분포와 일치하지 않을 수 있고, 응답은 모델의 추론 결과이므로 "
+        "분포는 실제 인구 통계 분포와 일치하지 않을 수 있고 응답은 모델의 추론 결과이므로 "
         "실제 한국인 응답자의 의견을 대체하지 않습니다. 본 도구는 실제 인터뷰 직전 단계의 "
         "가설 검증과 질문지 점검 용도로 사용하시기 바랍니다. 사업 아이템 본문(`--product`)과 "
         "페르소나 정보는 인터뷰 호출 시 사용자가 설정한 LLM 백엔드(OpenAI / Anthropic / "
@@ -1270,7 +1270,7 @@ def render_markdown(
 def _records_summary(payload: dict, records: list) -> dict:
     """헤더 표용 record 통계.
 
-    먼저 payload의 ``meta_extra.summary``를 사용하고, 없으면 record 리스트로
+    먼저 payload의 ``meta_extra.summary``를 사용하고 없으면 record 리스트로
     재계산한다(SIGINT partial 저장본도 호환).
     """
 

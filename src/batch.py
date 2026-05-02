@@ -103,7 +103,7 @@ class BatchSummary:
 class BatchResultEnvelope:
     """``run_batch``의 반환 컨테이너.
 
-    직렬화 단위는 ``BatchResult``지만, CLI가 종료 메시지를 그리고 exit code를
+    직렬화 단위는 ``BatchResult``지만 CLI가 종료 메시지를 그리고 exit code를
     결정하려면 출력 경로, partial/cancellation 플래그, 실패 사유 히스토그램,
     합산 토큰 사용량까지 함께 필요하다. 본 envelope이 그 전부를 묶어
     ``main.py``가 결과 구조 내부로 손을 뻗지 않아도 되게 한다.
@@ -351,7 +351,7 @@ async def _run_single(
 def _classify_exception(exc: BaseException) -> str:
     """예외 인스턴스를 ``error.type`` 문자열로 분류한다.
 
-    도메인 예외는 ``_DOMAIN_EXC_TYPE_MAP``으로 명시 매핑하고, 나머지는
+    도메인 예외는 ``_DOMAIN_EXC_TYPE_MAP``으로 명시 매핑하고 나머지는
     ``unhandled_exception``으로 떨어진다. 부분 실패 안내(UI §2.3.6)에서 사유
     분포를 사람이 읽을 수 있게 표기하기 위함이다.
     """
@@ -545,7 +545,7 @@ async def run_batch(
     """주어진 페르소나에 대해 배치 인터뷰를 동시 실행한다.
 
     동시성은 ``config.batch.concurrency``에서 결정된다. ``BatchConfig``는
-    생성 시점에 1-10 범위를 강제하지만, 본 함수에서도 한 번 더 검증해 직접
+    생성 시점에 1-10 범위를 강제하지만 본 함수에서도 한 번 더 검증해 직접
     호출(tests, scripts)이 우회하지 못하게 한다.
 
     SIGINT 1회는 ``cancel_event``를 set해 새 페르소나가 시작되지 않게 한다.
@@ -554,7 +554,7 @@ async def run_batch(
     그대로 전파한다.
 
     resume 모드는 이전 run의 record를 재사용한다. ``resume_records``에 이전
-    ``InterviewRecord`` 리스트를 넣고, ``resume_run_id``는
+    ``InterviewRecord`` 리스트를 넣고 ``resume_run_id``는
     ``meta_extra.previous_run_id``에 저장된다. 이전 status가 ``failed``가 아닌
     페르소나는 그대로 보존되고 새 배치에서 건너뛴다. 실패한 persona ID만 재시도되어
     다운스트림 diff용 안정 식별자를 유지한다.
@@ -590,7 +590,7 @@ async def run_batch(
         raise ConfigError("questions가 비어 있다. 1개 이상 지정해 주세요")
 
     # resume 분기: 이전에 완료된 record(completed, refused, drift)는 그대로
-    # 보존하고, status가 ``failed``인 persona ID만 재시도한다. caller는 같은
+    # 보존하고 status가 ``failed``인 persona ID만 재시도한다. caller는 같은
     # seed/필터로 페르소나를 재샘플링해 두 run 사이에서 persona ID가 일치하도록
     # 책임진다.
     resume_completed_records: list = []

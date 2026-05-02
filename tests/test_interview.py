@@ -838,7 +838,7 @@ def test_detect_persona_drift_가족동거_product_키워드_누설_False_정합
 
     실제 인터뷰 사례 회귀(record 3/4, 첫 응답): ``저는 어머니와 함께 살고 있어서
     1인 가구용 반찬 정기배송 서비스는 필요하지 않을 것 같아요`` 처럼 자기소개
-    뒤에 product 키워드가 따라와도, ``1인 가구``를 본인 거주 형태로 단언하는
+    뒤에 product 키워드가 따라와도 ``1인 가구``를 본인 거주 형태로 단언하는
     1인칭 단언 동사(``라``/``입``/``예요``)가 없으면 drift 트리거 대상이 아니다.
     """
 
@@ -1884,7 +1884,7 @@ def test_build_system_prompt_캐시_재로드_없음(
     assert "v1" in out1
 
     # 디스크 내용 변경 후 mtime이 같으면 캐시가 그대로(테스트 환경에서 mtime은
-    # 보통 다르지만, 적어도 한 번 더 호출했을 때 정상적으로 결과를 받는지 확인).
+    # 보통 다르지만 적어도 한 번 더 호출했을 때 정상적으로 결과를 받는지 확인).
     out2 = build_system_prompt(
         fake_persona_meta, "x", ("summary",), _FIELD_MAP, str(p)
     )

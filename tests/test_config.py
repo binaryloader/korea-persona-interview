@@ -94,7 +94,7 @@ def test_load_config_v1_x_KPI_LLM_MODEL_env_무시(
     """v1.x: ``KPI_LLM_MODEL``은 더 이상 인정되지 않는다. yaml 기본이 우선이다.
 
     v1.0의 KPI_LLM_* 환경변수 override는 비밀이 아닌 일반 설정값을 셸/CI 환경에서
-    조작 가능하게 했지만, 우선순위 분기가 늘면서 디버깅 비용이 컸다. v1.x부터는
+    조작 가능하게 했지만 우선순위 분기가 늘면서 디버깅 비용이 컸다. v1.x부터는
     yaml(기본)과 CLI(일회성) 두 경로만 인정한다.
     """
 

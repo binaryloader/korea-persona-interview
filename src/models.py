@@ -2,7 +2,7 @@
 
 본 모듈은 외부 의존이 없는 순수 도메인 계층이다(architecture.md §1). 인터뷰 결과 record, 페르소나 메타, 구조화 요약, 배치 결과를 담는 frozen dataclass와 사용자 노출/내부 도메인 예외 9종을 정의한다.
 
-사용자 노출 예외는 main.py에서 종료 코드로 매핑하고, 내부 예외는 InterviewRecord의 status/flags/error로 변환한다(TDD §5).
+사용자 노출 예외는 main.py에서 종료 코드로 매핑하고 내부 예외는 InterviewRecord의 status/flags/error로 변환한다(TDD §5).
 """
 
 from __future__ import annotations

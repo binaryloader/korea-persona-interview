@@ -14,7 +14,7 @@ The OpenAI client's HTTP semantics are exercised in ``test_llm_client.py``;
 this module focuses on the backend abstraction layer.
 
 McpSamplingBackend는 v1.2.0(ADR-005)에서 제거됐다. sampling 호환 클라이언트
-보급률 한계로 실 사용 가치가 사라졌고, MCP orchestrator 모드가 호스트
+보급률 한계로 실 사용 가치가 사라졌고 MCP orchestrator 모드가 호스트
 sub-agent를 통해 같은 가치를 제공한다.
 """
 
@@ -516,5 +516,5 @@ def test_split_system_prompt_알려지지_않은_role은_user로() -> None:
 
 # McpSamplingBackend, _convert_to_sampling_messages, _extract_sampling_text는
 # v1.2.0(ADR-005)에서 모두 제거됐다. sampling 호환 클라이언트 보급률이 낮아 실
-# 사용 가치가 사라졌고, MCP orchestrator 모드가 호스트 sub-agent를 통해 같은
+# 사용 가치가 사라졌고 MCP orchestrator 모드가 호스트 sub-agent를 통해 같은
 # 가치를 제공한다.

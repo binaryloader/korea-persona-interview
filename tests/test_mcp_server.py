@@ -8,7 +8,7 @@ label invariant.
 For each test the cwd is overridden with a yaml that pins ``mcp.mode`` and
 provider backends are stubbed via ``pytest_httpx``.
 
-McpSamplingBackend는 v1.2.0(ADR-005)에서 제거됐고, MCP orchestrator 모드가
+McpSamplingBackend는 v1.2.0(ADR-005)에서 제거됐고 MCP orchestrator 모드가
 호스트 sub-agent를 통해 같은 가치를 제공한다. orchestrator 모드 dispatch
 테스트는 별도 모듈 분리 후 추가된다.
 """

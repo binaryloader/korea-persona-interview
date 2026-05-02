@@ -1,6 +1,6 @@
 """MCP orchestrator 모드 전용 핸들러.
 
-본 모드는 server-side LLM을 호출하지 않는다. 호스트 sub-agent(Claude Code의 Task tool 같은 sub-agent 기능)가 자기 LLM으로 인터뷰를 수행하며, 본 도구는 데이터/프롬프트 helper만 노출한다.
+본 모드는 server-side LLM을 호출하지 않는다. 호스트 sub-agent(Claude Code의 Task tool 같은 sub-agent 기능)가 자기 LLM으로 인터뷰를 수행하며 본 도구는 데이터/프롬프트 helper만 노출한다.
 
 도구 흐름은 아래와 같다.
 

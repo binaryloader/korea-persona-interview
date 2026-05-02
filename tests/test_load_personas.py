@@ -750,7 +750,7 @@ def test_load_and_sample_큰_dataset_필터_적용_O_n(
 
     회귀 보장 포인트: ``ds.filter``를 사용하므로 ``__getitem__``이 row마다 호출되지
     않는다(O(n) 1회 순회). 본 테스트는 결과 정상성만 단언하고 호출 횟수까지는
-    추적하지 않지만, 1000행 호출이 합리적 시간 안에 끝나는지 확인한다.
+    추적하지 않지만 1000행 호출이 합리적 시간 안에 끝나는지 확인한다.
     """
 
     fake_load_dataset(_make_large_rows(1000))
@@ -828,6 +828,6 @@ def test_make_row_predicate_field_key_resolve_1회() -> None:
     for _ in range(100):
         predicate(row)
 
-    # predicate 본문에서는 row.get만 사용하고, field_map.get은 진입 시 5회만
+    # predicate 본문에서는 row.get만 사용하고 field_map.get은 진입 시 5회만
     # 호출된다(age/gender/region/subregion/occupation 키).
     assert counting_field_map.get_calls == 5

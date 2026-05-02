@@ -45,7 +45,7 @@ def test_ServerNotReachableError_메시지_본문() -> None:
 def test_ServerTimeoutError_의도_타임아웃_언급() -> None:
     """2번: ``120초`` 또는 동시성 점검 안내. v1에서는 server_not_reachable로 통합 처리.
 
-    별도 키가 아니라 server_not_reachable 메시지의 변형으로 표시되며, 본 테스트는
+    별도 키가 아니라 server_not_reachable 메시지의 변형으로 표시되며 본 테스트는
     timeout 발생 시 ServerNotReachableError로 변환되는지만 확인한다.
     """
 
