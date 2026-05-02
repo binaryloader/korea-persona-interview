@@ -528,6 +528,90 @@ def test_load_and_sample_캐시_filter_다르면_재계산(
 
 
 # ---------------------------------------------------------------------------
+# persona_ids 직접 지정(라운드 G2)
+# ---------------------------------------------------------------------------
+
+
+def test_load_and_sample_persona_ids_입력_순서_보존(
+    fake_load_dataset, fake_persona_rows: list
+) -> None:
+    """``persona_ids`` 지정 시 입력 ID 순서대로 ``PersonaMeta`` 리스트를 반환한다."""
+
+    result = load_and_sample(
+        filter_str=None,
+        n=0,  # persona_ids가 우선이므로 무시된다
+        seed=0,
+        field_map=_FIELD_MAP,
+        gender_aliases=_ALIASES,
+        province_aliases=_PROVINCE_ALIASES,
+        dataset_name="fake/dataset",
+        split="train",
+        persona_ids=("p-0003", "p-0001"),
+    )
+    assert [p.persona_id for p in result] == ["p-0003", "p-0001"]
+
+
+def test_load_and_sample_persona_ids_누락_ConfigError(
+    fake_load_dataset, fake_persona_rows: list
+) -> None:
+    """입력 ID 중 데이터셋에 없는 항목이 있으면 ``ConfigError`` 누수 안내."""
+
+    with pytest.raises(ConfigError, match="누락"):
+        load_and_sample(
+            filter_str=None,
+            n=0,
+            seed=0,
+            field_map=_FIELD_MAP,
+            gender_aliases=_ALIASES,
+            province_aliases=_PROVINCE_ALIASES,
+            dataset_name="fake/dataset",
+            split="train",
+            persona_ids=("p-0001", "does-not-exist"),
+        )
+
+
+def test_load_and_sample_persona_ids_filter_교집합(
+    fake_load_dataset, fake_persona_rows: list
+) -> None:
+    """``persona_ids``와 ``filter_str``를 함께 지정하면 필터 통과 + ID 매칭 교집합."""
+
+    # p-0003은 region=경기라 region:서울 필터를 통과하지 못한다 → ConfigError.
+    with pytest.raises(ConfigError, match="누락"):
+        load_and_sample(
+            filter_str="region:서울특별시",
+            n=0,
+            seed=0,
+            field_map=_FIELD_MAP,
+            gender_aliases=_ALIASES,
+            province_aliases=_PROVINCE_ALIASES,
+            dataset_name="fake/dataset",
+            split="train",
+            persona_ids=("p-0001", "p-0003"),
+        )
+
+
+def test_load_and_sample_persona_ids_단일_ID_정상(
+    fake_load_dataset, fake_persona_rows: list
+) -> None:
+    """단일 ID 지정 시 1명 정확히 반환한다."""
+
+    result = load_and_sample(
+        filter_str=None,
+        n=0,
+        seed=0,
+        field_map=_FIELD_MAP,
+        gender_aliases=_ALIASES,
+        province_aliases=_PROVINCE_ALIASES,
+        dataset_name="fake/dataset",
+        split="train",
+        persona_ids=("p-0002",),
+    )
+    assert len(result) == 1
+    assert result[0].persona_id == "p-0002"
+    assert result[0].region == "서울"
+
+
+# ---------------------------------------------------------------------------
 # inspect_columns(GATE-2 휴먼 검증 헬퍼)
 # ---------------------------------------------------------------------------
 

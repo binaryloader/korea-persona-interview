@@ -386,6 +386,17 @@ async def _run_healthcheck(config: AppConfig) -> list:
     help="필터 DSL(예: age:25-39,region:서울,gender:F).",
 )
 @click.option(
+    "--persona-id",
+    "persona_ids",
+    multiple=True,
+    default=(),
+    help=(
+        "명시 페르소나 uuid 직접 지정(여러 번 지정 가능). 지정 시 --limit과 "
+        "--seed는 무시되며 입력 ID 순서로 출력한다. --filter와 함께 지정하면 "
+        "필터 통과 + ID 매칭의 교집합만 채택한다."
+    ),
+)
+@click.option(
     "--limit",
     default=20,
     type=click.IntRange(min=1),
@@ -403,6 +414,7 @@ async def _run_healthcheck(config: AppConfig) -> list:
 def list_personas(
     ctx: click.Context,
     filter_spec: Optional[str],
+    persona_ids: tuple,
     limit: int,
     seed: int,
 ) -> None:
@@ -453,13 +465,14 @@ def list_personas(
     try:
         personas = load_and_sample(
             filter_str=filter_spec,
-            n=limit,
+            n=len(persona_ids) if persona_ids else limit,
             seed=seed,
             field_map=config.dataset.field_map,
             gender_aliases=config.dataset.gender_aliases,
             province_aliases=config.dataset.province_aliases,
             dataset_name=config.dataset.name,
             split=config.dataset.split,
+            persona_ids=tuple(persona_ids) if persona_ids else None,
         )
     except FilterMatchedZeroError as exc:
         if json_mode:
@@ -550,6 +563,18 @@ def list_personas(
     "filter_spec",
     default=None,
     help="필터 DSL(예: age:25-39,region:서울).",
+)
+@click.option(
+    "--persona-id",
+    "persona_ids",
+    multiple=True,
+    default=(),
+    help=(
+        "명시 페르소나 uuid 직접 지정(여러 번 지정 가능). 같은 페르소나에 대해 "
+        "다른 product/questions로 비교 인터뷰를 돌릴 때 사용한다. 지정 시 --n과 "
+        "--seed는 무시되며 입력 ID 개수만큼 인터뷰가 실행된다. --filter와 함께 "
+        "지정하면 필터 통과 + ID 매칭의 교집합만 채택한다."
+    ),
 )
 @click.option(
     "--n",
@@ -646,6 +671,7 @@ def interview(
     product: str,
     questions: tuple,
     filter_spec: Optional[str],
+    persona_ids: tuple,
     n: int,
     seed: int,
     concurrency: int,
@@ -750,7 +776,14 @@ def interview(
         )
 
     # dry-run은 1명만 진행하며 JSON 저장하지 않는다(PRD §4.3, UI §2.3.2).
-    target_n = 1 if dry_run else n
+    # ``--persona-id`` 지정 시 ``n``/``seed``를 무시하고 입력 ID 순서대로 사용한다.
+    # dry-run + persona-id는 첫 ID만 사용한다(1명 미리 보기 의미를 유지).
+    target_persona_ids: tuple = ()
+    if persona_ids:
+        target_persona_ids = tuple(persona_ids[:1]) if dry_run else tuple(persona_ids)
+        target_n = len(target_persona_ids)
+    else:
+        target_n = 1 if dry_run else n
 
     try:
         personas = load_and_sample(
@@ -762,6 +795,7 @@ def interview(
             province_aliases=config.dataset.province_aliases,
             dataset_name=config.dataset.name,
             split=config.dataset.split,
+            persona_ids=target_persona_ids or None,
         )
     except FilterMatchedZeroError as exc:
         if json_mode:

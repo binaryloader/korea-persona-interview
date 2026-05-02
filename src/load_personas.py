@@ -465,13 +465,15 @@ def load_and_sample(
     province_aliases: dict,
     dataset_name: str,
     split: str,
+    persona_ids: Optional[tuple] = None,
 ) -> list:
     """필터 DSL 적용 후 시드 샘플링으로 ``PersonaMeta`` 리스트를 반환한다.
 
-    같은 ``(filter_str, n, seed, field_map, dataset_name, split)`` 조합으로 다시
-    호출하면 in-memory 캐시 hit으로 즉시 반환한다. ``list-personas``/``interview``/
-    ``dry-run``에서 같은 표본을 반복 조회하는 흐름의 중복 비용을 제거한다.
-    캐시는 프로세스 단위라 다른 프로세스에서는 재사용되지 않는다.
+    같은 ``(filter_str, n, seed, field_map, dataset_name, split, persona_ids)``
+    조합으로 다시 호출하면 in-memory 캐시 hit으로 즉시 반환한다.
+    ``list-personas``/``interview``/``dry-run``에서 같은 표본을 반복 조회하는
+    흐름의 중복 비용을 제거한다. 캐시는 프로세스 단위라 다른 프로세스에서는
+    재사용되지 않는다.
 
     Args:
         filter_str: 필터 DSL 문자열. None이면 전체에서 샘플링.
@@ -482,15 +484,37 @@ def load_and_sample(
         province_aliases: yaml의 ``dataset.province_aliases`` dict.
         dataset_name: 데이터셋 식별자(예: ``nvidia/Nemotron-Personas-Korea``).
         split: 데이터셋 split(예: ``train``).
+        persona_ids: 명시 페르소나 uuid 튜플. 지정 시 ``filter_str``/``seed``는
+            정렬 안정성에만 영향을 주고 표본은 본 인자가 우선한다. 데이터셋
+            row의 ``uuid`` 컬럼과 매칭한다. 일부 ID가 데이터셋에 없으면 누락된
+            ID 목록을 ``ConfigError`` 메시지에 담아 raise한다. ``filter_str``과
+            함께 지정되면 ID 매칭 후 추가로 필터를 통과한 row만 남긴다(교집합).
 
     Returns:
-        길이 n의 ``PersonaMeta`` 리스트. 시드 동일 시 동일 표본 보장.
+        ``persona_ids`` 미지정 시 길이 n의 ``PersonaMeta`` 리스트(시드 동일 시
+        동일 표본 보장). ``persona_ids`` 지정 시 입력 ID 순서와 동일한 길이의
+        리스트.
 
     Raises:
-        ConfigError: 필터 DSL 파싱 실패 또는 n <= 0.
+        ConfigError: 필터 DSL 파싱 실패, n <= 0, 또는 ``persona_ids``의 일부
+            ID가 데이터셋에 없는 경우.
         DatasetUnavailableError: 데이터셋 로드 실패.
         FilterMatchedZeroError: 필터 결과가 n보다 적음.
     """
+
+    if persona_ids:
+        # ``persona_ids``가 지정된 경로는 시드 샘플링과 무관하게 명시 ID로 행을
+        # 추출한다. 본 분기는 사용자가 ``--persona-id``로 같은 페르소나 표본에
+        # 대해 다른 product/questions로 비교 인터뷰를 돌릴 때 사용한다.
+        return _load_by_persona_ids(
+            persona_ids=persona_ids,
+            filter_str=filter_str,
+            field_map=field_map,
+            gender_aliases=gender_aliases,
+            province_aliases=province_aliases,
+            dataset_name=dataset_name,
+            split=split,
+        )
 
     cache_key = _build_cache_key(
         filter_str=filter_str,
@@ -643,6 +667,92 @@ def _select_random_subset(ds, *, n: int, seed: int):
     )
     shuffled = ds.shuffle(seed=seed)
     return shuffled.select(range(n))
+
+
+def _load_by_persona_ids(
+    *,
+    persona_ids: tuple,
+    filter_str: Optional[str],
+    field_map: dict,
+    gender_aliases: dict,
+    province_aliases: dict,
+    dataset_name: str,
+    split: str,
+) -> list:
+    """명시 ``persona_ids`` 매칭으로 ``PersonaMeta`` 리스트를 반환한다.
+
+    ``filter_str``이 함께 지정되면 ID 매칭 후 필터를 추가로 적용한다(교집합).
+    누락된 ID가 있으면 ``ConfigError``로 차단해 사용자가 정확히 어떤 ID가
+    데이터셋에 없는지 즉시 알 수 있게 한다.
+
+    캐시는 사용하지 않는다. ID 직접 지정 경로는 빈도가 낮고, 같은 프로세스
+    안에서도 ID 부분 집합을 바꿔 가며 호출되는 사례가 흔해 캐시 hit 효과가
+    낮기 때문이다.
+    """
+
+    spec = parse_filter(filter_str, gender_aliases, province_aliases)
+
+    cfg_for_load = DatasetConfig(
+        name=dataset_name,
+        split=split,
+        field_map=dict(field_map),
+        gender_aliases=dict(gender_aliases),
+        province_aliases=dict(province_aliases),
+    )
+
+    logger.info(
+        "데이터셋 로드 시작(persona_ids 분기)",
+        extra={"dataset": dataset_name, "split": split, "ids_count": len(persona_ids)},
+    )
+    ds = _load_dataset_inner(cfg_for_load, streaming=False)
+
+    requested_ids = tuple(str(pid) for pid in persona_ids if str(pid).strip())
+    if not requested_ids:
+        raise ConfigError("persona_ids가 비어 있다. 1개 이상 지정해 주세요")
+    requested_set = set(requested_ids)
+
+    # ID 매칭 + (있다면) 필터를 같은 한 번의 ``filter`` 호출로 평가한다.
+    predicate = _make_row_predicate(spec, field_map)
+
+    def _match(row: dict) -> bool:
+        if str(row.get("uuid", "")) not in requested_set:
+            return False
+        return predicate(row)
+
+    try:
+        filtered = ds.filter(_match)
+    except (KeyError, IndexError, ValueError, RuntimeError) as exc:
+        raise DatasetUnavailableError(
+            f"데이터셋 row 순회 또는 select 실패: {exc}"
+        ) from exc
+    except Exception as exc:  # noqa: BLE001 - datasets 신규 버전 예외 안전망
+        raise DatasetUnavailableError(
+            f"데이터셋 row 순회 또는 select 실패(예상치 못한 예외 흡수): {exc}"
+        ) from exc
+
+    # 인덱스를 ID 키로 변환해 입력 순서대로 정렬한다.
+    by_id: dict = {}
+    for row in filtered:
+        pid = str(row.get("uuid", ""))
+        if pid in requested_set and pid not in by_id:
+            by_id[pid] = row
+
+    missing = [pid for pid in requested_ids if pid not in by_id]
+    if missing:
+        sample = ", ".join(missing[:5])
+        more = f" 외 {len(missing) - 5}건" if len(missing) > 5 else ""
+        raise ConfigError(
+            f"--persona-id로 지정된 일부 ID가 데이터셋에 없거나 필터를 통과하지 못했습니다: "
+            f"{sample}{more}. 총 {len(missing)}건 누락"
+        )
+
+    ordered_rows = [by_id[pid] for pid in requested_ids]
+    personas = [_build_persona_meta(row, field_map) for row in ordered_rows]
+    logger.info(
+        "persona_ids 분기 매칭 완료",
+        extra={"matched": len(personas), "requested": len(requested_ids)},
+    )
+    return personas
 
 
 def _filter_and_sample(ds, *, spec: FilterSpec, field_map: dict, n: int, seed: int):

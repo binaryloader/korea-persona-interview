@@ -66,6 +66,15 @@ _LIST_PERSONAS_SCHEMA: dict = {
                 "필터 DSL(예: 'age:25-39,region:서울특별시,gender:F'). 미지정 시 전체에서 샘플링."
             ),
         },
+        "persona_ids": {
+            "type": "array",
+            "items": {"type": "string"},
+            "default": [],
+            "description": (
+                "명시 페르소나 uuid 리스트. 지정 시 limit/seed는 무시되며 입력 "
+                "ID 순서대로 반환한다."
+            ),
+        },
         "limit": {
             "type": "integer",
             "minimum": 1,
@@ -98,6 +107,15 @@ _INTERVIEW_SCHEMA: dict = {
         "filter": {
             "type": "string",
             "description": "필터 DSL(선택).",
+        },
+        "persona_ids": {
+            "type": "array",
+            "items": {"type": "string"},
+            "default": [],
+            "description": (
+                "명시 페르소나 uuid 리스트. 지정 시 n/seed는 무시되며 입력 ID "
+                "순서대로 인터뷰가 실행된다."
+            ),
         },
         "n": {
             "type": "integer",
@@ -309,8 +327,10 @@ async def _handle_list_personas(arguments: dict) -> dict:
     filter_spec: Optional[str] = arguments.get("filter")
     limit = int(arguments.get("limit", 20))
     seed = int(arguments.get("seed", 42))
+    persona_ids_raw = arguments.get("persona_ids") or []
+    persona_ids_tuple = tuple(str(pid) for pid in persona_ids_raw if str(pid).strip())
 
-    if limit < 1:
+    if limit < 1 and not persona_ids_tuple:
         return _error_payload(
             "invalid_argument",
             f"limit은 1 이상이어야 합니다. 입력값: {limit}",
@@ -336,13 +356,14 @@ async def _handle_list_personas(arguments: dict) -> dict:
     try:
         personas = load_and_sample(
             filter_str=filter_spec,
-            n=limit,
+            n=len(persona_ids_tuple) if persona_ids_tuple else limit,
             seed=seed,
             field_map=config.dataset.field_map,
             gender_aliases=config.dataset.gender_aliases,
             province_aliases=config.dataset.province_aliases,
             dataset_name=config.dataset.name,
             split=config.dataset.split,
+            persona_ids=persona_ids_tuple or None,
         )
     except FilterMatchedZeroError as exc:
         return _error_payload("filter_matched_zero", str(exc), exit_code=2)
@@ -384,6 +405,8 @@ async def _handle_interview(arguments: dict) -> dict:
         )
 
     filter_spec: Optional[str] = arguments.get("filter")
+    persona_ids_raw = arguments.get("persona_ids") or []
+    persona_ids_tuple = tuple(str(pid) for pid in persona_ids_raw if str(pid).strip())
     n = int(arguments.get("n", 10))
     seed = int(arguments.get("seed", 42))
     concurrency = int(arguments.get("concurrency", 5))
@@ -438,13 +461,14 @@ async def _handle_interview(arguments: dict) -> dict:
     try:
         personas = load_and_sample(
             filter_str=filter_spec,
-            n=n,
+            n=len(persona_ids_tuple) if persona_ids_tuple else n,
             seed=seed,
             field_map=config.dataset.field_map,
             gender_aliases=config.dataset.gender_aliases,
             province_aliases=config.dataset.province_aliases,
             dataset_name=config.dataset.name,
             split=config.dataset.split,
+            persona_ids=persona_ids_tuple or None,
         )
     except FilterMatchedZeroError as exc:
         return _error_payload("filter_matched_zero", str(exc), exit_code=2)
