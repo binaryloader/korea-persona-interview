@@ -1,0 +1,489 @@
+"""``main.py`` click CLI 단위/통합 테스트.
+
+- 4개 서브커맨드 ``--help`` 정상
+- 종료 코드 매핑(0/1/2/3/130)
+- 한국어 에러 메시지 포함 검증
+- ``healthcheck``, ``list-personas``, ``interview``, ``report`` E2E
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+from click.testing import CliRunner
+
+import main as main_module
+from main import MESSAGES, cli
+from src.models import SCHEMA_VERSION
+
+
+# ---------------------------------------------------------------------------
+# --help 출력
+# ---------------------------------------------------------------------------
+
+
+def test_cli_root_help() -> None:
+    runner = CliRunner()
+    result = runner.invoke(cli, ["--help"])
+    assert result.exit_code == 0
+    assert "korea-persona-interview" in result.output
+
+
+@pytest.mark.parametrize(
+    "subcommand",
+    ["healthcheck", "list-personas", "interview", "report"],
+)
+def test_cli_subcommand_help(subcommand: str) -> None:
+    runner = CliRunner()
+    result = runner.invoke(cli, [subcommand, "--help"])
+    assert result.exit_code == 0
+
+
+# ---------------------------------------------------------------------------
+# healthcheck 명령
+# ---------------------------------------------------------------------------
+
+
+def test_healthcheck_정상_exit_0(httpx_mock, tmp_path: Path) -> None:
+    httpx_mock.add_response(
+        method="GET",
+        url="http://localhost:8080/v1/models",
+        json={"data": [{"id": "test-model"}]},
+        status_code=200,
+    )
+
+    runner = CliRunner()
+    # output_dir(logs)을 tmp_path로 격리
+    result = runner.invoke(
+        cli,
+        ["--no-color", "healthcheck"],
+        env={"KPI_OUTPUT_DIR": str(tmp_path)},
+    )
+    assert result.exit_code == 0
+    assert "[OK]" in result.output
+
+
+def test_healthcheck_서버_다운_exit_1(httpx_mock, tmp_path: Path) -> None:
+    import httpx
+
+    httpx_mock.add_exception(
+        httpx.ConnectError("connection refused"),
+        url="http://localhost:8080/v1/models",
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["--no-color", "healthcheck"],
+        env={"KPI_OUTPUT_DIR": str(tmp_path)},
+    )
+    assert result.exit_code == 1
+    # 한국어 안내 메시지 포함
+    assert "MLX 서버가 응답하지 않습니다" in result.output
+
+
+# ---------------------------------------------------------------------------
+# list-personas 명령
+# ---------------------------------------------------------------------------
+
+
+def test_list_personas_정상_exit_0(
+    fake_load_dataset, tmp_path: Path
+) -> None:
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["--no-color", "list-personas", "--limit", "2", "--seed", "42"],
+        env={"KPI_OUTPUT_DIR": str(tmp_path)},
+    )
+    assert result.exit_code == 0
+    # 헤더 행 출력
+    assert "persona_id" in result.output
+
+
+def test_list_personas_필터_0건_exit_2(
+    fake_load_dataset, tmp_path: Path
+) -> None:
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "--no-color",
+            "list-personas",
+            "--filter",
+            "age:90-99",  # 데이터셋 fixture에 90대 없음
+            "--limit",
+            "1",
+        ],
+        env={"KPI_OUTPUT_DIR": str(tmp_path)},
+    )
+    assert result.exit_code == 2
+    assert "필터" in result.output
+
+
+def test_list_personas_잘못된_필터_DSL_exit_1(
+    fake_load_dataset, tmp_path: Path
+) -> None:
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["--no-color", "list-personas", "--filter", "wrong:value"],
+        env={"KPI_OUTPUT_DIR": str(tmp_path)},
+    )
+    assert result.exit_code == 1
+
+
+# ---------------------------------------------------------------------------
+# interview 명령
+# ---------------------------------------------------------------------------
+
+
+def test_interview_표본_부족_exit_2(
+    fake_load_dataset, tmp_path: Path
+) -> None:
+    """가짜 데이터셋은 5명. n=100 요청하면 표본 부족(exit 2)."""
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "--no-color",
+            "interview",
+            "--product",
+            "반찬",
+            "--questions",
+            "Q1",
+            "--n",
+            "100",
+        ],
+        env={"KPI_OUTPUT_DIR": str(tmp_path)},
+    )
+    assert result.exit_code == 2
+    # 필터 결과 안내
+    assert "필터" in result.output or "요청" in result.output
+
+
+def test_interview_questions_없음_UsageError(
+    fake_load_dataset, tmp_path: Path
+) -> None:
+    """``--questions`` 미지정 시 click의 UsageError(exit 2)로 차단된다."""
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["--no-color", "interview", "--product", "반찬"],
+        env={"KPI_OUTPUT_DIR": str(tmp_path)},
+    )
+    # click의 missing option은 exit 2로 처리된다
+    assert result.exit_code == 2
+
+
+def test_interview_헬스체크_실패_exit_1(
+    httpx_mock, fake_load_dataset, tmp_path: Path
+) -> None:
+    """배치 시작 직전 헬스체크 5xx → ServerNotReachableError → exit 1."""
+
+    httpx_mock.add_response(
+        method="GET",
+        url="http://localhost:8080/v1/models",
+        status_code=503,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "--no-color",
+            "interview",
+            "--product",
+            "반찬",
+            "--questions",
+            "Q1",
+            "--n",
+            "1",
+        ],
+        env={"KPI_OUTPUT_DIR": str(tmp_path)},
+    )
+    assert result.exit_code == 1
+    assert "MLX 서버가 응답하지 않습니다" in result.output
+
+
+# ---------------------------------------------------------------------------
+# report 명령
+# ---------------------------------------------------------------------------
+
+
+def _write_full_payload(path: Path, records: list) -> None:
+    import dataclasses
+
+    payload = {
+        "meta": {
+            "interview_id": "iv-1",
+            "slug": "korea-persona-interview",
+            "schema_version": SCHEMA_VERSION,
+            "product": "반찬",
+            "questions": ["Q1"],
+            "follow_up_questions": [],
+            "model": "test-model",
+            "seed": 42,
+            "started_at": "t1",
+            "finished_at": "t2",
+            "config_snapshot": {},
+        },
+        "records": [dataclasses.asdict(r) for r in records],
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+
+def test_report_입력_파일_없음_exit_2(tmp_path: Path) -> None:
+    """click이 ``exists=True``로 파일 미존재 시 UsageError(exit 2)를 발생시킨다."""
+
+    runner = CliRunner()
+    missing = tmp_path / "missing.json"
+    result = runner.invoke(
+        cli,
+        ["--no-color", "report", str(missing)],
+        env={"KPI_OUTPUT_DIR": str(tmp_path)},
+    )
+    # exists=True로 click이 차단하면 exit 2(UsageError) 발생
+    assert result.exit_code == 2
+
+
+def test_report_정상_record_0건_exit_2(
+    httpx_mock, tmp_path: Path
+) -> None:
+    """모두 failed인 JSON에 대해 report → EmptyValidRecordsError → exit 2."""
+
+    from src.models import Flags, InterviewRecord, PersonaMeta
+
+    persona = PersonaMeta(
+        persona_id="x",
+        name=None,
+        gender="여자",
+        age=27,
+        region="서울",
+        subregion="서울-X",
+        occupation="x",
+        marital="x",
+        education="x",
+        raw={},
+    )
+    record = InterviewRecord(
+        persona_id="x",
+        persona_meta=persona,
+        started_at="t1",
+        finished_at="t2",
+        status="failed",
+        messages=[],
+        raw_responses=[],
+        structured_summary=None,
+        flags=Flags(),
+        error={"type": "x", "message": "y"},
+    )
+
+    json_path = tmp_path / "interview_x_t.json"
+    _write_full_payload(json_path, records=[record])
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["--no-color", "report", str(json_path)],
+        env={"KPI_OUTPUT_DIR": str(tmp_path)},
+    )
+    assert result.exit_code == 2
+    assert "정상 record가 없습니다" in result.output
+
+
+def test_report_입력_JSON_스키마_불일치_exit_1(tmp_path: Path) -> None:
+    """``records`` 키 누락 → ConfigError → exit 1."""
+
+    json_path = tmp_path / "interview_x_t.json"
+    json_path.write_text(json.dumps({"foo": "bar"}), encoding="utf-8")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["--no-color", "report", str(json_path)],
+        env={"KPI_OUTPUT_DIR": str(tmp_path)},
+    )
+    assert result.exit_code == 1
+    assert "올바른 인터뷰 JSON 형식이 아닙니다" in result.output
+
+
+# ---------------------------------------------------------------------------
+# 한국어 메시지 사전 노출
+# ---------------------------------------------------------------------------
+
+
+def test_messages_사전_핵심_키_존재() -> None:
+    """main.MESSAGES에 UI §3의 핵심 메시지 키가 모두 존재한다."""
+
+    required = {
+        "server_not_reachable",
+        "config_error",
+        "dataset_unavailable",
+        "filter_zero",
+        "filter_too_few",
+        "input_file_not_found",
+        "input_file_schema",
+        "empty_valid_records",
+        "user_interrupted",
+        "partial_failure",
+    }
+    assert required.issubset(set(MESSAGES.keys()))
+
+
+# ---------------------------------------------------------------------------
+# interview 정상 경로 E2E
+# ---------------------------------------------------------------------------
+
+
+def test_interview_정상_3명_completed_exit_0(
+    httpx_mock,
+    fake_load_dataset,
+    tmp_path: Path,
+) -> None:
+    """3명 인터뷰가 모두 정상 완료되어 exit 0과 결과 파일을 만든다."""
+
+    httpx_mock.add_response(
+        method="GET",
+        url="http://localhost:8080/v1/models",
+        json={"data": [{"id": "test-model"}]},
+        status_code=200,
+    )
+    # 3명 × (질문 1 + 요약 1) = 6번
+    for _ in range(3):
+        httpx_mock.add_response(
+            method="POST",
+            url="http://localhost:8080/v1/chat/completions",
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "가격이 합리적이라 한번 시도해 볼 만한 것 같아요. 좋은 옵션입니다.",
+                        }
+                    }
+                ]
+            },
+            status_code=200,
+        )
+        httpx_mock.add_response(
+            method="POST",
+            url="http://localhost:8080/v1/chat/completions",
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "intent": "positive",
+                                    "willingness_to_pay": 30000,
+                                    "willingness_to_pay_currency": "KRW",
+                                    "rejection_reasons": [],
+                                    "one_line": "긍정",
+                                },
+                                ensure_ascii=False,
+                            ),
+                        }
+                    }
+                ]
+            },
+            status_code=200,
+        )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "--no-color",
+            "interview",
+            "--product",
+            "반찬 정기배송",
+            "--questions",
+            "Q1",
+            "--n",
+            "3",
+            "--output",
+            str(tmp_path),
+        ],
+        env={"KPI_OUTPUT_DIR": str(tmp_path)},
+    )
+    assert result.exit_code == 0, result.output
+    assert "다음 단계" in result.output
+    # 결과 파일 생성 확인
+    files = list(tmp_path.glob("interview_*.json"))
+    assert files
+
+
+def test_report_정상_E2E_exit_0(httpx_mock, tmp_path: Path) -> None:
+    """정상 record 3명에 대해 report 명령이 마크다운 파일을 만든다."""
+
+    from src.models import Flags, InterviewRecord, PersonaMeta, StructuredSummary
+
+    persona = PersonaMeta(
+        persona_id="x",
+        name=None,
+        gender="여자",
+        age=27,
+        region="서울",
+        subregion="서울-X",
+        occupation="x",
+        marital="x",
+        education="x",
+        raw={},
+    )
+    summary = StructuredSummary(
+        intent="positive",
+        willingness_to_pay=30000,
+        willingness_to_pay_currency="KRW",
+        rejection_reasons=[],
+        one_line="x",
+    )
+    records = [
+        InterviewRecord(
+            persona_id=f"p{i}",
+            persona_meta=persona,
+            started_at="t",
+            finished_at="t",
+            status="completed",
+            messages=[],
+            raw_responses=[],
+            structured_summary=summary,
+            flags=Flags(),
+            error=None,
+        )
+        for i in range(3)
+    ]
+
+    json_path = tmp_path / "interview_korea-persona-interview_20260502_120000.json"
+    _write_full_payload(json_path, records=records)
+
+    # 정성 인사이트 LLM 응답
+    insight_text = json.dumps(
+        {
+            "common_reactions": ["반응 1"],
+            "insights": [f"i{i}" for i in range(6)],
+            "cohort_differences": "차이",
+        },
+        ensure_ascii=False,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="http://localhost:8080/v1/chat/completions",
+        json={"choices": [{"message": {"role": "assistant", "content": insight_text}}]},
+        status_code=200,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["--no-color", "report", str(json_path)],
+        env={"KPI_OUTPUT_DIR": str(tmp_path)},
+    )
+    assert result.exit_code == 0, result.output
+    md_files = list(tmp_path.glob("report_*.md"))
+    assert md_files
