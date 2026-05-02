@@ -99,7 +99,7 @@
 - 토글 옵션(`--persona-fields professional,sports,arts,travel,culinary,family` 형식의 다중 선택): 직업인/스포츠/예술/여행/미식/가족 페르소나 자유 서술 필드를 선택적으로 추가
 - 토글 기본값은 기본 묶음만 주입한다. 토큰 사용량과 페르소나 일관성의 균형 관점에서 가장 안정적인 조합이다
 - 시스템 프롬프트 [지침] 섹션에는 family_type 정보를 그대로 반영하고 거주 형태를 추측하지 않도록 한 줄을 명시한다. 25세 1인 가구 페르소나가 ``1인 가구가 아니라서 필요성을 못 느끼겠네요``로 응답하는 회귀 사례를 막기 위함이다
-- 시스템 프롬프트 본문은 `prompts/system_prompt.txt` 외부 파일에 보관한다(라운드 B4). 사용자는 본 파일을 편집하거나 `interview.system_prompt_path` 설정으로 다른 파일을 가리켜 도메인 맞춤 톤/지침을 적용할 수 있다. 템플릿에는 `{persona_json}`과 `{product}` 두 placeholder가 반드시 포함되어야 하며, 누락 또는 파일 부재 시 ConfigError로 차단된다(에러 메시지에 경로와 조치 안내 포함)
+- 시스템 프롬프트 본문은 `prompts/system_prompt.txt` 외부 파일에 보관한다(라운드 B4). 사용자는 본 파일을 편집하거나 `common.persona.system_prompt_path` 설정으로 다른 파일을 가리켜 도메인 맞춤 톤/지침을 적용할 수 있다. 템플릿에는 `{persona_json}`과 `{product}` 두 placeholder가 반드시 포함되어야 하며, 누락 또는 파일 부재 시 ConfigError로 차단된다(에러 메시지에 경로와 조치 안내 포함)
 
 데이터셋의 실제 컬럼명은 추측하지 않는다. 구현 단계 첫 게이트(§5.10)에서 `ds['train'].column_names` 출력을 확인한 후 위 묶음과 매핑한다. 매핑 결과를 `config.yaml`의 `dataset.field_map` 섹션에 기록해 어디서든 같은 매핑을 사용한다.
 
@@ -232,7 +232,7 @@ JSON 스키마 결정 근거는 아래와 같다.
 
 도구가 처리해야 할 실패 모드와 대응은 아래와 같다.
 
-- 페르소나 깨짐 감지: 응답 텍스트의 영어 단어 비율이 30%를 초과하거나, 페르소나의 연령/성별/지역/거주 형태(`family_type`)와 명백히 모순되는 자기소개가 발견되면 `flags.persona_drift: true`와 `status: "drift"`로 기록한다. v1.1.0부터 연령/성별/지역 축은 거주 형태 축과 동일한 정밀도로 격상되었다. 같은 문장(`.`/`!`/`?` boundary) 안에서 1인칭 주어(`저는`/`나는`/`제가`/`내가`/`난`)와 단언/계사가 함께 등장할 때만 trigger한다. 부정문(`아니`/`아닌`/`아닙`)이 같은 문장에 있으면 정합한 답변으로 보고 제외하고, 3인칭 일반화 표현(`다른 사람들은`/`보통 사람`/`남들`/`타인`)이 같은 문장에 있어도 제외한다. 거주 형태 축은 1인칭 주어 + 거주 동사 정밀 정규식만 매칭하며 `혼자 사시는 분들에겐` 같은 3인칭, `혼자서 끼니를 해결` 같은 행동 표현, 응답에 우연히 들어온 product 키워드(`1인 가구용`)는 trigger에서 제외한다. 영어 비율 분모에서 페르소나 직업명에 등장하는 영문 토큰(`IT 컨설턴트`, `UX 디자이너`)은 옵션(`interview.occupation_english_whitelist: true`, 기본 ON)에 따라 제외한다. v1.1.0에 도입된 `interview.llm_drift_review: true`(기본 OFF) 옵션은 휴리스틱이 drift 의심으로 판정한 record에 한해 1-token LLM 호출로 재판정한다. ok 판정이면 drift 플래그를 해제해 false positive를 줄이며, drift 판정이거나 호출 실패면 보수적으로 drift 라벨을 유지한다(TDD §8.2 참조)
+- 페르소나 깨짐 감지: 응답 텍스트의 영어 단어 비율이 30%를 초과하거나, 페르소나의 연령/성별/지역/거주 형태(`family_type`)와 명백히 모순되는 자기소개가 발견되면 `flags.persona_drift: true`와 `status: "drift"`로 기록한다. v1.1.0부터 연령/성별/지역 축은 거주 형태 축과 동일한 정밀도로 격상되었다. 같은 문장(`.`/`!`/`?` boundary) 안에서 1인칭 주어(`저는`/`나는`/`제가`/`내가`/`난`)와 단언/계사가 함께 등장할 때만 trigger한다. 부정문(`아니`/`아닌`/`아닙`)이 같은 문장에 있으면 정합한 답변으로 보고 제외하고, 3인칭 일반화 표현(`다른 사람들은`/`보통 사람`/`남들`/`타인`)이 같은 문장에 있어도 제외한다. 거주 형태 축은 1인칭 주어 + 거주 동사 정밀 정규식만 매칭하며 `혼자 사시는 분들에겐` 같은 3인칭, `혼자서 끼니를 해결` 같은 행동 표현, 응답에 우연히 들어온 product 키워드(`1인 가구용`)는 trigger에서 제외한다. 영어 비율 분모에서 페르소나 직업명에 등장하는 영문 토큰(`IT 컨설턴트`, `UX 디자이너`)은 옵션(`heuristics.occupation_english_whitelist: true`, 기본 ON)에 따라 제외한다. v1.1.0에 도입된 `heuristics.llm_drift_review: true`(기본 OFF) 옵션은 휴리스틱이 drift 의심으로 판정한 record에 한해 1-token LLM 호출로 재판정한다. ok 판정이면 drift 플래그를 해제해 false positive를 줄이며, drift 판정이거나 호출 실패면 보수적으로 drift 라벨을 유지한다(TDD §8.2 참조)
 - 짧은 답변: 답변 길이가 20자 미만이면 자동 follow-up 1회 시도 후에도 짧으면 그대로 record에 기록한다. 자동 follow-up 사용 여부는 `flags.auto_follow_up_used`에 기록한다
 - 모델 거부: 응답에 거부 키워드(예: "답변할 수 없습니다", "I cannot", "I'm sorry, but")가 포함되면 `flags.refusal_detected: true`와 `status: "refused"`로 기록한다. retry는 시도하지 않는다(같은 거부가 반복될 가능성이 높다)
 - 토큰 루프 가드: 동일 토큰/구절이 max_tokens 한도에 가까워질 때까지 반복되는 응답을 감지하면 해당 record를 `status: "failed"`로 기록한다. OpenAI gpt-4o-mini에서는 거의 발생하지 않지만 회귀 안전망으로 둔다
@@ -437,7 +437,7 @@ CLI는 4개 서브커맨드를 제공한다. 매크로 명령(예: `run-all`)은
 ### 10.9. provider별 응답 품질 차이
 
 - 위험: ADR-003 채택으로 OpenAI/Anthropic/로컬 LLM 진입점이 활성화되었고 ADR-005에서 MCP orchestrator 모드가 추가되었다. 페르소나 일관성과 drift 비율은 `gpt-4o-mini` 기준으로만 검증된 상태다. 다른 provider 또는 모델, 호스트 sub-agent의 LLM(MCP orchestrator)으로 전환했을 때 페르소나 추종력이 달라질 수 있다. MCP orchestrator 모드에서는 휴리스틱이 자동 적용되지 않으므로 호스트가 helper 도구(`detect_persona_drift`, `should_auto_follow_up`)를 명시 호출하지 않으면 drift/follow-up 정책이 누락될 수 있다는 위험이 추가된다
-- 완화: README "Choosing a model" 섹션에 검증 기준을 명시하고, 새 provider 도입 시 작은 표본(10-20명)으로 drift 비율을 먼저 측정하도록 안내한다. MCP orchestrator 사용자에게는 README "Integration with External Agents" 섹션의 의사코드와 `interview_record_schema` 도구로 helper 호출 흐름을 명시 안내한다. v1.2.0 백로그에 provider별 검증 보고서 작업을 등록한다
+- 완화: README "Choosing a model" 섹션에 검증 기준을 명시하고, 새 provider 도입 시 작은 표본(10-20명)으로 drift 비율을 먼저 측정하도록 안내한다. MCP orchestrator 사용자에게는 README "Integration with External Agents" 섹션의 의사코드와 `interview_record_schema` 도구로 helper 호출 흐름을 명시 안내한다. provider별 검증 보고서 작업은 rolling backlog(`docs/backlog/`)에서 추적한다
 
 데이터셋 실제 컬럼명 확정은 dev-planner가 TDD 작성 전에 `datasets.load_dataset(..., streaming=True)`로 1샘플만 로드해 컬럼 키와 값 표기를 직접 확인한 뒤 TDD에 매핑값(예: `gender_field: sex`, `region_field: residence_region`)까지 박는 방식으로 처리한다. 게이트 2(§5.10)는 구현 단계 휴먼 검증으로 그대로 유지하며, 두 단계가 중복되어도 비용이 거의 없으므로 안전망으로 둘 다 운영한다.
 

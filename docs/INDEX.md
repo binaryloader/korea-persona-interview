@@ -13,7 +13,7 @@
 - [adr/2026-05-02-orchestrator-mode-and-sampling-removal.md](adr/2026-05-02-orchestrator-mode-and-sampling-removal.md) - MCP orchestrator 모드 신설과 sampling 모드 제거. ADR-004의 sampling 부분 supersede. server default 결정은 유효
 - [ui/korea-persona-interview.md](ui/korea-persona-interview.md) - CLI 사용자 흐름과 콘솔 출력 명세, 한국어 에러 메시지 사전, 리포트 마크다운 섹션 트리
 - [tasks/korea-persona-interview.md](tasks/korea-persona-interview.md) - 작업 표(T1-T11 + GATE-1/2), 의존성 그래프, 마일스톤
-- [backlog/v1.2.0.md](backlog/v1.2.0.md) - v1.2.0으로 미룬 백로그 항목과 동기
+- [backlog/v1.3.0.md](backlog/v1.3.0.md) - v1.2.0 출시 시점에 v1.3.0으로 미룬 백로그 항목과 동기
 
 본 도구의 코드 진입점, 설정, 보조 자산은 아래 위치를 참고한다.
 
@@ -55,22 +55,22 @@
 - `--model`은 healthcheck/interview/report 세 명령 모두에서 일회성 모델 ID 덮어쓰기를 지원한다(우선순위 `--model > config.yaml > 기본값`)
 - 동시성은 기본 4, 한계 1-10(11 이상/0 이하 차단)이다. v1.x OpenAI 백엔드 기준이며 v1.0의 1-3 상한은 로컬 MLX 메모리 가드라 무관하다
 - 토큰 윈도우는 32000(system + 최근 N턴 보존, 가장 오래된 user/assistant 페어부터 truncate)이다
-- 자동 follow-up 상한은 1회(`interview.auto_follow_up_max`)다. 본 값을 0으로 두면 비활성화된다
+- 자동 follow-up 상한은 1회(`heuristics.auto_follow_up_max`)다. 본 값을 0으로 두면 비활성화된다
 
 ### 3.3. 휴리스틱과 임계값(라운드 B 외부화 + 라운드 G 정밀화 결과)
 
-- 짧은 답변 트리거는 `interview.short_answer_threshold`(기본 20자, 공백 제거)다
-- 영어 비율 임계값은 `interview.english_ratio_threshold`(기본 0.30)다
-- 모호 키워드는 `interview.ambiguous_keywords` 리스트로 외부화한다(기본 6종)
-- 거부 키워드는 `interview.refusal_keywords` 리스트로 외부화한다(기본 7종)
-- 자동 follow-up 발화는 `interview.auto_follow_up_text`(기본 `조금만 더 자세히 말씀해 주실 수 있을까요?`)다
-- 코호트 마스킹 임계값은 `report.cohort_min_cell`(기본 3)이다
-- 거절 사유 상위 N 기본은 `report.top_n_default`(기본 10)다
-- 가격 히스토그램 구간은 `report.histogram_bins`(기본 10)다
-- 텍스트 막대 폭은 `report.bar_width`(기본 30)다
+- 짧은 답변 트리거는 `heuristics.short_answer_threshold`(기본 20자, 공백 제거)다
+- 영어 비율 임계값은 `heuristics.english_ratio_threshold`(기본 0.30)다
+- 모호 키워드는 `heuristics.ambiguous_keywords` 리스트로 외부화한다(기본 6종)
+- 거부 키워드는 `heuristics.refusal_keywords` 리스트로 외부화한다(기본 7종)
+- 자동 follow-up 발화는 `heuristics.auto_follow_up_text`(기본 `조금만 더 자세히 말씀해 주실 수 있을까요?`)다
+- 코호트 마스킹 임계값은 `common.report.cohort_min_cell`(기본 3)이다
+- 거절 사유 상위 N 기본은 `common.report.top_n_default`(기본 10)다
+- 가격 히스토그램 구간은 `common.report.histogram_bins`(기본 10)다
+- 텍스트 막대 폭은 `common.report.bar_width`(기본 30)다
 - 페르소나 깨짐 4축(연령/성별/지역/거주 형태) 모두 같은 문장 단위 1인칭 + 단언/계사 정밀 정규식 + 부정문 가드 + 3인칭 일반화 제외로 통일된다(라운드 G 정밀화)
-- 직업명 영문 화이트리스트 옵션은 `interview.occupation_english_whitelist`(기본 ON)다. 페르소나 직업명에 등장하는 영문 토큰을 영어 비율 분모에서 제외한다
-- LLM-as-judge drift 옵션은 `interview.llm_drift_review`(기본 OFF)다. 휴리스틱 trigger record에 한해 1-token LLM 호출로 재판정한다
+- 직업명 영문 화이트리스트 옵션은 `heuristics.occupation_english_whitelist`(기본 ON)다. 페르소나 직업명에 등장하는 영문 토큰을 영어 비율 분모에서 제외한다
+- LLM-as-judge drift 옵션은 `heuristics.llm_drift_review`(기본 OFF)다. 휴리스틱 trigger record에 한해 1-token LLM 호출로 재판정한다
 
 ### 3.4. 진입점 매트릭스(v1.2.0, ADR-005)
 
@@ -99,7 +99,6 @@
 
 - OpenAI 응답: `usage.prompt_tokens_details.cached_tokens`를 `TokenUsage.cached_tokens`로 매핑한다
 - Anthropic 응답: `usage.input_tokens`/`output_tokens`/`cache_read_input_tokens` + `cache_creation_input_tokens`를 `TokenUsage` 같은 모양으로 매핑한다(creation + read 합산이 cached_tokens)
-- MCP sampling 응답: usage 미반환이라 0으로 채운다
 - 배치 종료 시 모든 record의 `RawResponse.usage`를 `BatchResultEnvelope.usage`로 합산한다
 - 콘솔 출력, 결과 JSON `meta_extra.usage`, 리포트 헤더 표 세 곳에 prompt/completion/cached 카운트를 동일하게 박는다
 - USD 비용 추정은 v1.0.0 시점에 제거됐다. 단가 표 갱신 부담과 추정치-실제 청구 차이를 사용자가 직접 감내해야 한다는 점이 도구 신뢰성을 해친다는 판단이다. 토큰 사용량을 보고 사용자가 자신의 provider 청구서와 대조하는 흐름으로 이관한다

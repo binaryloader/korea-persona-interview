@@ -12,12 +12,12 @@ The tool ships four CLI subcommands (`healthcheck`, `list-personas`, `interview`
 - Three inference targets: OpenAI Chat Completions API, Anthropic Messages API, and any OpenAI-compatible local server (mlx_lm.server, vLLM, llama.cpp)
 - `--provider openai|anthropic`, `--base-url URL`, `--model MODEL_ID` CLI flags for one-off backend overrides
 - `--persona-id` to pin a specific persona (or list of personas) by uuid for A/B comparisons; `--resume PATH` to re-run only the failed records of a previous batch and merge them with the existing completed/refused/drift entries
-- `--insight-model` (and `report.insight_model` yaml key) to run the per-question interview on a small model and the qualitative-insight call on a larger one
+- `--insight-model` (and `common.report.insight_model` yaml key) to run the per-question interview on a small model and the qualitative-insight call on a larger one
 - OpenAI streaming response support (`llm.streaming: true`, opt-in default off) for faster time-to-first-token
 - Anthropic prompt caching via `cache_control: ephemeral` markers on the system prompt (`llm.anthropic_cache_control: true`, default on); `cache_creation_input_tokens` and `cache_read_input_tokens` both feed into the same `cached_tokens` counter
 - `llm.extra_chat_kwargs` free-form dict forwarded into the OpenAI request body for backend-specific extensions (e.g. `chat_template_kwargs.enable_thinking` on mlx_lm.server / vLLM Qwen3)
-- LLM-as-judge drift refinement (`interview.llm_drift_review: true`, opt-in default off) that revisits heuristic drift detections with a single 1-token verdict call to clear false positives
-- `acceptable_price_signal` (`cheap`/`fair`/`expensive`/`null`) on every structured summary so price sentiment lands on every record even when the persona never names a number; `report.estimate_wtp_from_signal` opts into a recommendation prompt that uses the signal distribution alongside explicit numbers
+- LLM-as-judge drift refinement (`heuristics.llm_drift_review: true`, opt-in default off) that revisits heuristic drift detections with a single 1-token verdict call to clear false positives
+- `acceptable_price_signal` (`cheap`/`fair`/`expensive`/`null`) on every structured summary so price sentiment lands on every record even when the persona never names a number; `common.report.estimate_wtp_from_signal` opts into a recommendation prompt that uses the signal distribution alongside explicit numbers
 - MCP entry point (`python -m src.mcp_server`) that exposes interview-pipeline tools to Claude Code, Cursor, and Codex. The `mcp.mode` toggle picks between two inference paths: `server` (default) calls OpenAI/Anthropic directly server-side using the same `LlmConfig` the CLI uses, and `orchestrator` exposes data and prompt helpers that the host agent's sub-agent uses to run interviews with its own LLM (no server-side API key required)
 - Automatic markdown report after every interview run (toggle off with `--no-report` for JSON-only pipelines)
 - `--json` root mode that emits a single JSON document on stdout for shell scripts and external agents; every JSON envelope (CLI and MCP) carries an explicit `ok: true|false` field for one-key branching
@@ -301,7 +301,7 @@ These apply to every subcommand and must be placed before the subcommand name.
 | `--provider {openai,anthropic}` | from `llm.provider` | LLM provider |
 | `--base-url URL` | from `llm.base_url` | LLM server base URL |
 | `--model MODEL_ID` | from `llm.model` | One-shot model override for the qualitative-insight call |
-| `--insight-model MODEL_ID` | from `report.insight_model` or `--model` | Use a different model for the qualitative-insight call only. Useful when interviews run on a small model and you want a larger model for the synthesis step |
+| `--insight-model MODEL_ID` | from `common.report.insight_model` or `--model` | Use a different model for the qualitative-insight call only. Useful when interviews run on a small model and you want a larger model for the synthesis step |
 
 ### Filter DSL
 
@@ -392,18 +392,19 @@ Notable yaml keys.
 - `llm.context_budget` - 32000 token budget for multi-turn history (oldest user/assistant pairs are dropped first, system prompt is preserved)
 - `batch.concurrency` - 1-10 allowed (default 4). Anything outside this range is rejected to keep OpenAI rate-limit pressure predictable
 - `batch.partial_failure_threshold` - completion ratio under which the batch is flagged partial-failure (default 0.5, higher is stricter)
-- `dataset.field_map`, `dataset.gender_aliases`, `dataset.province_aliases` - column and value aliases. Update the YAML if NVIDIA changes the dataset schema, no code change needed
-- `interview.short_answer_threshold` - 20 character trigger for the auto follow-up
-- `interview.english_ratio_threshold` - 0.30 trigger for persona drift detection
-- `interview.ambiguous_keywords` - tokens that trigger an auto follow-up when present in a response (default `글쎄요`, `잘 모르겠습니다`, etc.)
-- `interview.refusal_keywords` - tokens that mark a response as refused (default `답변할 수 없습니다`, `I cannot`, `As an AI`, etc.)
-- `interview.auto_follow_up_text` - the user message sent when the auto follow-up fires. Edit it to fit your domain tone
-- `interview.auto_follow_up_max` - per-persona cap on auto follow-ups (default 1, set to 0 to disable)
-- `interview.system_prompt_path` - path to the system prompt template (default `prompts/system_prompt.txt`). The template must include the `{persona_json}` and `{product}` placeholders
-- `report.cohort_min_cell` - cohort cell sample-size mask threshold (default 3, raise to 5 for more conservative reporting)
-- `report.histogram_bins` - price histogram bin count (default 10)
-- `report.bar_width` - text bar chart width (default 30, lower for narrow terminals)
-- `mcp.mode` - MCP entry point inference path. `server` (default) calls OpenAI/Anthropic server-side using the same `LlmConfig` the CLI uses. `orchestrator` exposes data and prompt helpers and lets the host agent's sub-agent do the LLM work; no server-side API key required. No automatic fallback. See ADR-005 for the rationale (sampling mode was removed in v1.2.0)
+- `common.dataset.field_map`, `common.dataset.gender_aliases`, `common.dataset.province_aliases` - column and value aliases. Update the YAML if NVIDIA changes the dataset schema, no code change needed
+- `common.persona.fields` - persona-field toggle list (default `["summary"]`); add `professional`, `sports`, `arts`, `travel`, `culinary`, or `family` to inject the matching free-form column
+- `common.persona.system_prompt_path` - path to the system prompt template (default `prompts/system_prompt.txt`). The template must include the `{persona_json}` and `{product}` placeholders
+- `common.report.cohort_min_cell` - cohort cell sample-size mask threshold (default 3, raise to 5 for more conservative reporting)
+- `common.report.histogram_bins` - price histogram bin count (default 10)
+- `common.report.bar_width` - text bar chart width (default 30, lower for narrow terminals)
+- `heuristics.short_answer_threshold` - 20 character trigger for the auto follow-up
+- `heuristics.english_ratio_threshold` - 0.30 trigger for persona drift detection
+- `heuristics.ambiguous_keywords` - tokens that trigger an auto follow-up when present in a response (default `글쎄요`, `잘 모르겠습니다`, etc.)
+- `heuristics.refusal_keywords` - tokens that mark a response as refused (default `답변할 수 없습니다`, `I cannot`, `As an AI`, etc.)
+- `heuristics.auto_follow_up_text` - the user message sent when the auto follow-up fires. Edit it to fit your domain tone
+- `heuristics.auto_follow_up_max` - per-persona cap on auto follow-ups (default 1, set to 0 to disable)
+- `mcp.mode` - MCP entry point inference path. `server` (default) calls OpenAI/Anthropic server-side using the same `LlmConfig` the CLI uses. `orchestrator` exposes data and prompt helpers and lets the host agent's sub-agent do the LLM work; no server-side API key required. No automatic fallback. See ADR-005 for the rationale
 
 Knobs added in v1.1.
 
@@ -412,10 +413,10 @@ Knobs added in v1.1.
 | `llm.streaming` | `false` | Opt into OpenAI Server-Sent Events for faster time-to-first-token. The chunked stream is reassembled into a single `ChatResponse` and the final `usage` block is mapped via `stream_options.include_usage`. CLI + `provider=openai` only |
 | `llm.anthropic_cache_control` | `true` | Mark the system prompt with `cache_control: ephemeral` so Anthropic prompt caching applies. Set to `false` if you target an older Messages API revision that rejects the marker. CLI + `provider=anthropic` only |
 | `llm.extra_chat_kwargs` | `{}` | Free-form dict merged into the OpenAI Chat Completions request body. Reserved keys (`model`, `messages`, `max_tokens`, `temperature`) are skipped. Common use: `chat_template_kwargs.enable_thinking: false` to disable Qwen3 thinking on mlx_lm.server / vLLM. CLI + `provider=openai` only |
-| `interview.occupation_english_whitelist` | `true` | Exclude English tokens that appear in the persona's occupation (`IT 컨설턴트`, `UX 디자이너`) from the English-ratio drift denominator |
-| `interview.llm_drift_review` | `false` | Send heuristic drift detections to a single 1-token LLM verdict call. An `ok` clears the drift flag, `drift` keeps it. Adds one extra LLM call per drift candidate |
-| `report.insight_model` | `null` | Model id used only for the qualitative-insight call. When unset, the per-question interview model is reused. CLI `--insight-model` overrides this for a single run |
-| `report.estimate_wtp_from_signal` | `false` | Add a recommendation block that combines `acceptable_price_signal` distribution with the explicit number distribution when willingness-to-pay numbers are sparse |
+| `heuristics.occupation_english_whitelist` | `true` | Exclude English tokens that appear in the persona's occupation (`IT 컨설턴트`, `UX 디자이너`) from the English-ratio drift denominator |
+| `heuristics.llm_drift_review` | `false` | Send heuristic drift detections to a single 1-token LLM verdict call. An `ok` clears the drift flag, `drift` keeps it. Adds one extra LLM call per drift candidate |
+| `common.report.insight_model` | `null` | Model id used only for the qualitative-insight call. When unset, the per-question interview model is reused. CLI `--insight-model` overrides this for a single run |
+| `common.report.estimate_wtp_from_signal` | `false` | Add a recommendation block that combines `acceptable_price_signal` distribution with the explicit number distribution when willingness-to-pay numbers are sparse |
 
 The full annotated yaml lives in [config.yaml](config.yaml).
 
@@ -429,7 +430,7 @@ The full annotated yaml lives in [config.yaml](config.yaml).
 - `claude-sonnet-4-5` / `claude-opus-4-5` (Anthropic) - higher quality
 - Local LLMs via `mlx_lm.server`, `vLLM`, or `llama.cpp` work as long as they expose the OpenAI Chat Completions API surface. Korean fluency depends heavily on the underlying weights; validate persona drift on a small sample first
 
-Persona-drift behavior has been validated end-to-end with `gpt-4o-mini`. Other models may need tuned thresholds (`interview.english_ratio_threshold`, `interview.short_answer_threshold`) for similar quality.
+Persona-drift behavior has been validated end-to-end with `gpt-4o-mini`. Other models may need tuned thresholds (`heuristics.english_ratio_threshold`, `heuristics.short_answer_threshold`) for similar quality.
 
 ## Customization
 
@@ -437,24 +438,24 @@ Most behavior changes do not require touching code. The three knobs below cover 
 
 ### System prompt
 
-The system prompt is read from `prompts/system_prompt.txt`. Edit the file to change tone, persona instructions, or output formatting. The file must contain the `{persona_json}` and `{product}` placeholders or the tool refuses to start with a `ConfigError`. To use a different file, point `interview.system_prompt_path` in `config.yaml` at the new path (absolute or repo-relative).
+The system prompt is read from `prompts/system_prompt.txt`. Edit the file to change tone, persona instructions, or output formatting. The file must contain the `{persona_json}` and `{product}` placeholders or the tool refuses to start with a `ConfigError`. To use a different file, point `common.persona.system_prompt_path` in `config.yaml` at the new path (absolute or repo-relative).
 
 The template is loaded lazily and cached per-process by mtime, so editing the file between runs picks up the change without a restart of the MCP server.
 
 ### Heuristic thresholds
 
-The drift detector and the auto follow-up trigger are tuned via `config.yaml` `interview.*`. Common adjustments.
+The drift detector and the auto follow-up trigger are tuned via `config.yaml` `heuristics.*`. Common adjustments.
 
 - Loosen the auto follow-up: lower `short_answer_threshold` to 10 or set `auto_follow_up_max: 0` to disable entirely
 - Tighten drift detection on technical domains: raise `english_ratio_threshold` to 0.5 if many personas have English-heavy occupations
-- Custom domain refusal: append your domain-specific refusal phrases to `interview.refusal_keywords`
-- Custom ambiguous-answer phrases: add or replace tokens in `interview.ambiguous_keywords`
+- Custom domain refusal: append your domain-specific refusal phrases to `heuristics.refusal_keywords`
+- Custom ambiguous-answer phrases: add or replace tokens in `heuristics.ambiguous_keywords`
 
 ### Report output
 
-- Conservative cohort comparison: raise `report.cohort_min_cell` to 5 or 7 for tighter masking on small batches
-- Narrow terminal: lower `report.bar_width` to 20-25
-- Different histogram resolution: tune `report.histogram_bins`
+- Conservative cohort comparison: raise `common.report.cohort_min_cell` to 5 or 7 for tighter masking on small batches
+- Narrow terminal: lower `common.report.bar_width` to 20-25
+- Different histogram resolution: tune `common.report.histogram_bins`
 
 ## Integration with External Agents
 
@@ -632,7 +633,7 @@ korea-persona-interview/
 │   ├── llm_client.py          # Async OpenAI Chat Completions client (httpx)
 │   ├── load_personas.py       # Dataset loader, filter DSL, seeded sampler, persona-pool cache
 │   ├── logging_setup.py       # JSON Lines logger, request_id, masking
-│   ├── mcp_server.py          # stdio MCP server exposing the four tools
+│   ├── mcp_server.py          # stdio MCP server entry point; tool set depends on mcp.mode
 │   ├── models.py              # Domain dataclasses and exceptions
 │   └── report.py              # Quantitative aggregation, qualitative insight via LLM
 ├── tests/
@@ -648,7 +649,7 @@ korea-persona-interview/
 │   ├── adr/                   # Architecture decision records
 │   ├── ui/                    # CLI flow, console output, message dictionary
 │   ├── tasks/                 # Task breakdown
-│   └── backlog/               # v1.2.0 backlog
+│   └── backlog/               # rolling backlog (next minor)
 └── outputs/                   # Generated JSON/markdown/logs (.gitignored)
     └── logs/
 ```
@@ -677,7 +678,7 @@ Manual smoke tests that exercise a real LLM API call live under `tests/manual/` 
 
 ### Lint and format
 
-A lint/format toolchain is intentionally not pinned in v1.x. The codebase reads cleanly with default formatting rules; if you want to add `ruff` or `black` locally, run them in your editor only and skip committing config files. A formal pre-commit setup is on the v1.2.0 backlog (see [docs/backlog/v1.2.0.md](docs/backlog/v1.2.0.md)).
+A lint/format toolchain is intentionally not pinned in v1.x. The codebase reads cleanly with default formatting rules; if you want to add `ruff` or `black` locally, run them in your editor only and skip committing config files. A formal pre-commit setup is tracked in the rolling backlog (see [docs/backlog/v1.3.0.md](docs/backlog/v1.3.0.md)).
 
 ### Commit messages
 
@@ -698,13 +699,13 @@ Legal and ethical review of the output is the user's responsibility. The tool do
 Specific limitations to note for v1.1.
 
 - Streaming responses (`llm.streaming: true`) cover the OpenAI provider only. The Anthropic provider does not stream (MCP orchestrator mode does not use this setting because the host agent owns the LLM call)
-- LLM-as-judge drift refinement (`interview.llm_drift_review: true`) is opt-in because it adds a small extra LLM call per drift candidate. The default heuristic-only path keeps the cost predictable
+- LLM-as-judge drift refinement (`heuristics.llm_drift_review: true`) is opt-in because it adds a small extra LLM call per drift candidate. The default heuristic-only path keeps the cost predictable
 - Schema bumped from v1 to v2 in v1.1.0 with the new `acceptable_price_signal` field. v1 result JSONs still load on v1.1.0+ (the loader fills `acceptable_price_signal=null`), but v1.1.0+ result JSONs cannot be read by older v1.0.x consumers
 - The `--persona-id` flag re-fetches the dataset to filter by uuid, so the persona-pool cache does not help on that path. Repeated calls with the same id list will still re-read the parquet files
 
 ## Roadmap
 
-A short list of v1.2.0 candidates, full details in [docs/backlog/v1.2.0.md](docs/backlog/v1.2.0.md).
+A short list of v1.3.0 candidates, full details in [docs/backlog/v1.3.0.md](docs/backlog/v1.3.0.md).
 
 - FastAPI REST API on top of the same application layer
 - OpenAI Batch API path for offline runs
@@ -733,7 +734,7 @@ The OpenAI Chat Completions API does not require attribution. The default model 
 
 Pull requests are welcome. Before opening one.
 
-- Run `pytest tests/ -v` and confirm all 571 tests pass
+- Run `pytest tests/ -v` and confirm all 568 tests pass
 - Use Conventional Commits
 - For substantive changes, open an issue first to discuss the approach
 

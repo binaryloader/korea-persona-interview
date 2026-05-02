@@ -250,17 +250,17 @@ click CLI 엔트리다. 비동기 진입점은 `asyncio.run(main_async())` 패�
 
 #### 2.10. src/mcp_server.py
 
-MCP(Model Context Protocol) 서버 진입점이다. 라운드 C1에서 추가했고 v1.1.1에서 ADR-004 mode toggle을 도입했다. 외부 에이전트(Claude Code, Cursor, Codex 등)가 본 도구를 stdio 기반 도구로 등록해 자연어로 호출할 수 있게 한다.
+MCP(Model Context Protocol) 서버 진입점이다. v1.2.0에서 ADR-005 모드 토글이 적용되어 두 가지 진입점(MCP server, MCP orchestrator)을 지원한다. 외부 에이전트(Claude Code, Cursor, Codex 등)가 본 도구를 stdio 기반 도구로 등록해 자연어로 호출할 수 있게 한다.
 
 - 공식 `mcp` Python SDK(1.27.0) 위에 stdio JSON-RPC 서버를 띄운다. 직접 JSON-RPC 구현 대신 표준 호환성과 SDK lifecycle 처리에 의존하기 위함이다(dependency.md §1, leftpad 회피)
-- 4개 도구를 노출한다. 도구명은 MCP 관례인 snake_case다. 도구 이름은 `healthcheck`, `list_personas`, `interview`, `report`다. `list-personas` CLI와 표기가 다른 것은 도구 호출 명세가 식별자이기 때문이다
-- 추론 경로는 `config.yaml`의 `mcp.mode`로 명시 선택한다. `dispatch_tool` 함수가 mode와 도구 이름 튜플로 핸들러를 분기하며 자동 fallback은 두지 않는다(ADR-005)
+- 도구 셋은 모드별로 다르며 정본은 `src/mcp_handlers/__init__.py`의 `TOOLS_BY_MODE`다. 도구명은 MCP 관례인 snake_case로 통일한다. `list-personas` CLI와 표기가 다른 것은 도구 호출 명세가 식별자이기 때문이다
+- 추론 경로는 `config.yaml`의 `mcp.mode`로 명시 선택한다. `HANDLERS` dict가 `(mode, tool_name)` 튜플 키로 핸들러를 분기하며 자동 fallback은 두지 않는다(ADR-005)
   - `mode == "server"`(기본): `build_cli_backend(config.llm)`로 `OpenAIBackend`나 `AnthropicBackend`를 만든다. server-side에 `OPENAI_API_KEY` 또는 `ANTHROPIC_API_KEY`가 필요하다
-  - `mode == "sampling"`: 활성 MCP 세션을 `McpSamplingBackend`에 감싼다. 세션 부재 시 ConfigError + CLI fallback 안내(`python main.py interview ...` 또는 `mcp.mode: "server"` 전환 안내)로 차단된다
-- 각 도구는 application 계층(`run_batch`, `generate_report`, `LLMClient`)을 그대로 재사용한다. 도구 응답은 `{"ok": true, "backend": "...", ...}` 또는 `{"ok": false, "backend": "...", "error": {"code", "message", "exit_code"}}` 두 형태 중 하나로 통일하며, 한국어를 보존한 JSON 텍스트로 `TextContent`에 담는다. `backend` 라벨은 정상/에러 응답 모두에 일관 박힌다(`mcp_server` 또는 `mcp_sampling`). 단 `load_config` 자체가 실패해 모드 결정 전에 차단되면 `backend` 필드는 빠진다
+  - `mode == "orchestrator"`: server-side LLM을 호출하지 않는다. 호스트 sub-agent가 자기 LLM으로 인터뷰를 수행하고, 본 도구는 데이터/프롬프트 helper만 노출한다. server-side 키가 불필요하다
+- 각 도구는 application 계층(`run_batch`, `generate_report`, `LLMClient`)을 그대로 재사용한다. 도구 응답은 `{"ok": true, "backend": "...", ...}` 또는 `{"ok": false, "backend": "...", "error": {"code", "message", "exit_code"}}` 두 형태 중 하나로 통일하며, 한국어를 보존한 JSON 텍스트로 `TextContent`에 담는다. `backend` 라벨은 정상/에러 응답 모두에 일관 박힌다(`mcp_server` 또는 `mcp_orchestrator`). 단 `load_config` 자체가 실패해 모드 결정 전에 차단되면 `backend` 필드는 빠진다
 - MCP는 비대화식이라 tqdm/ANSI 컬러/[OK] 라벨은 출력하지 않는다. 진행률 표시는 `progress_disable=True`로 끈다. 로그는 stderr/`outputs/logs/run_*.jsonl`에 그대로 흘려 stdio JSON-RPC 채널을 오염시키지 않는다(logging.md §3)
 - `mcp` SDK가 부재한 환경(예: lock 미동기화)에서도 본 모듈 import 자체가 깨지지 않도록 `mcp` import는 `main()` 진입 시점의 `_serve_stdio()` 안에서 lazy하게 수행한다. import 실패 시 stderr로 친절한 한국어 안내를 내고 exit 1로 종료한다(error-handling.md §1)
-- 진입점은 `python -m src.mcp_server`(모듈 단위 실행)와 라운드 C4의 console script `kpi-mcp-server` 두 가지를 둔다
+- 진입점은 `python -m src.mcp_server`(모듈 단위 실행)와 console script `kpi-mcp-server` 두 가지를 둔다
 
 ### 3. 클래스/함수 시그니처
 
@@ -620,27 +620,27 @@ PRD §7.2에서 v1 Should로 상향된 두 가드레일이다.
 - 트리거 1은 답변 길이가 20자 미만일 때다
 - 트리거 2는 모호 키워드 매칭이다. 정확 매칭이 아닌 부분 문자열 매칭으로 한다
   - 키워드 리스트는 `글쎄요`, `잘 모르겠습니다`, `잘 모르겠어요`, `딱히`, `별로 생각 안 해봤`, `모르겠`이다
-  - 키워드 리스트는 config.yaml로 외부화한다(`interview.ambiguous_keywords`)
+  - 키워드 리스트는 config.yaml로 외부화한다(`heuristics.ambiguous_keywords`)
 - 동작은 매칭 시 `조금만 더 자세히 말씀해 주실 수 있을까요?`를 1회 추가하는 것이다. 상한은 1회로 같은 질문 인덱스에서만 적용한다
 - 기록은 `flags.auto_follow_up_used=True`로 남기고 `raw_responses[i]`에 추가 응답을 별도 record로 append한다(`question_index`는 같고 `retry_count`가 증가)
 
 #### 8.2. 페르소나 깨짐 감지
 
-- 영어 비율은 응답에 등장하는 단어를 한글+영문 단어 단위로 세고 영문 단어 수를 분자에 둔다. 0.30 초과를 임계로 본다. v1.1.0부터 `interview.occupation_english_whitelist`(기본 ON) 옵션으로 페르소나 직업명에 등장하는 영문 토큰을 분모에서 제외해 false positive를 줄인다. 직업명이 `IT 컨설턴트`인 페르소나가 응답에 `IT`를 자연스럽게 사용해도 drift로 판정되지 않게 한다
+- 영어 비율은 응답에 등장하는 단어를 한글+영문 단어 단위로 세고 영문 단어 수를 분자에 둔다. 0.30 초과를 임계로 본다. v1.1.0부터 `heuristics.occupation_english_whitelist`(기본 ON) 옵션으로 페르소나 직업명에 등장하는 영문 토큰을 분모에서 제외해 false positive를 줄인다. 직업명이 `IT 컨설턴트`인 페르소나가 응답에 `IT`를 자연스럽게 사용해도 drift로 판정되지 않게 한다
 - 정면 모순 휴리스틱은 연령대, 성별, 지역, 거주 형태 네 축으로 적용한다. v1.1.0부터 네 축 모두 같은 정밀도(같은 문장 단위 1인칭 + 단언/계사 정밀 정규식, 부정문 가드, 3인칭 일반화 제외)로 통일되었다
   - 연령대 축은 페르소나가 70대(70 이상 80 미만)인데 응답에 `저는 20대`, `저는 학생인데`, `미성년자` 등이 등장하는 케이스를 본다. 연령 구간은 10대, 20대, 30대, 40대, 50대, 60대 이상의 6개로 산출한다. 자기 구간이 아닌 구간을 1인칭 주어와 함께 같은 문장에서 단언하면 매칭한다
   - 성별 축은 페르소나가 `여자`인데 응답에 `저는 남자`/`아저씨`를 단언하거나, `남자`인데 `저는 여자`/`아줌마`를 단언하는 케이스를 본다. 1인칭 주어와 함께 같은 문장 안에서 단언할 때만 매칭한다
   - 지역 축은 페르소나가 `서울`인데 응답에 `저는 부산 사람`/`부산에 살고`/`부산에서 자랐` 등을 단언하는 케이스를 본다. 17개 시도 중 자기 시도가 아닌 시도를 1인칭 주어와 함께 거주지로 단언하면 매칭한다. 자기 시도가 같은 문장에 함께 등장하면 `저는 서울 출신이지만 부산에도` 같은 false positive를 막기 위해 매칭에서 제외한다
   - 거주 형태 축은 페르소나의 `family_type`이 단독 거주(`1인 가구`/`혼자 거주`)인데 응답에 가족과 동거를 단언하면 매칭한다. 반대로 가족 동거(`배우자와 거주`/`부모와 거주` 등)인데 응답에 단독 거주를 단언하면 매칭한다. 25세 1인 가구 페르소나가 `1인 가구가 아니라서 필요성을 못 느끼겠네요`로 응답하는 회귀 사례를 잡는 핵심 가드다. `혼자 사시는 분들`(3인칭), `혼자서 끼니를 해결`(행동 표현), `1인 가구용 반찬 서비스`(product 키워드 누설)는 trigger에서 제외한다
   - 모든 축에서 부정문(`아니`/`아닌`/`아닙`)이 같은 문장에 있으면 정합한 답변으로 보고 매칭에서 제외한다. 3인칭 일반화 표현(`다른 사람들은`/`보통 사람`/`남들`/`타인`)이 같은 문장에 있어도 본인 단언이 아닐 가능성이 크므로 보수적으로 제외한다
-- v1.1.0에서 LLM-as-judge 옵션을 도입했다. `interview.llm_drift_review: true`(기본 OFF)로 활성화하면 휴리스틱이 drift 의심으로 판정한 record에 한해 1-token LLM 호출로 재판정한다. judge가 `ok`로 답하면 drift 플래그를 해제한다. 호출 실패는 보수적으로 drift 라벨을 유지한다. record당 1번의 추가 LLM 호출이 들어가므로 비용/지연 트레이드오프를 고려해 옵트인으로 둔다
+- v1.1.0에서 LLM-as-judge 옵션을 도입했다. `heuristics.llm_drift_review: true`(기본 OFF)로 활성화하면 휴리스틱이 drift 의심으로 판정한 record에 한해 1-token LLM 호출로 재판정한다. judge가 `ok`로 답하면 drift 플래그를 해제한다. 호출 실패는 보수적으로 drift 라벨을 유지한다. record당 1번의 추가 LLM 호출이 들어가므로 비용/지연 트레이드오프를 고려해 옵트인으로 둔다
 - 결과는 `status="drift"`와 `flags.persona_drift=True`로 기록한다. 정량 집계에서 자동 제외하며 `--include-drift` 플래그로 선택적 포함이 가능하다
 
 #### 8.3. 모델 거부 감지
 
 - 키워드 리스트(부분 문자열 매칭)는 `답변할 수 없습니다`, `답변하기 어렵`, `I cannot`, `I'm sorry, but`, `As an AI`, `저는 인공지능`, `AI 모델`이다
 - 매칭 시 `status="refused"`와 `flags.refusal_detected=True`로 기록한다. 재시도하지 않는다(같은 거부 반복 가능성)
-- 키워드 리스트는 config.yaml의 `interview.refusal_keywords`로 외부화한다
+- 키워드 리스트는 config.yaml의 `heuristics.refusal_keywords`로 외부화한다
 
 ### 9. 동시성 모델
 
@@ -670,7 +670,7 @@ CLI는 인터뷰 종료 시 콘솔에 `토큰 사용량: prompt N / completion N
 
 `load_and_sample`는 `(filter_str, n, seed, field_map, gender_aliases, province_aliases, dataset_name, split)` 튜플을 키로 in-memory 캐시(`_PERSONA_POOL_CACHE`)에 결과 `PersonaMeta` 리스트를 저장한다. 같은 spec으로 두 번째 호출하면 데이터셋 로드/필터/샘플링을 건너뛰고 캐시 hit으로 즉시 반환한다.
 
-CLI 단일 프로세스 흐름에서 `list-personas`(미리 보기) → `interview`(같은 시드/필터로 본 실행) → `interview --dry-run`(같은 시드/필터로 1명 시연) 순으로 동일 spec이 반복되는 패턴을 단축한다. 프로세스 종료 시 캐시는 함께 사라지고, 디스크 캐시는 v1.2.0 백로그다(다른 프로세스 간 재사용).
+CLI 단일 프로세스 흐름에서 `list-personas`(미리 보기) → `interview`(같은 시드/필터로 본 실행) → `interview --dry-run`(같은 시드/필터로 1명 시연) 순으로 동일 spec이 반복되는 패턴을 단축한다. 프로세스 종료 시 캐시는 함께 사라지고, 디스크 캐시(다른 프로세스 간 재사용)는 rolling backlog에서 추적한다.
 
 캐시 무효화 API는 `clear_persona_pool_cache()`로 노출한다. 테스트 격리(`conftest._isolate_env`)가 매 테스트마다 호출해 누수를 막는다.
 

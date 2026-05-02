@@ -36,7 +36,7 @@ Edit `.env` and set `OPENAI_API_KEY=sk-...`. The project root `.env` file is aut
 pytest tests/ -v
 ```
 
-The current regression covers 569 tests across rounds A through G plus the v1.1.1 mcp.mode toggle and the v1.2.0 orchestrator mode (config, filter DSL, persona loader, LLM client, interview session, persona drift, batch runner, report quant, MCP dispatch in both MCP server and MCP orchestrator modes, MCP orchestrator-only tools, common helper tools, error messages, logging, CLI integration, --persona-id, --resume, streaming, LLM-as-judge drift, structured-summary v2 backward compatibility, and the McpConfig whitelist). All 569 tests must pass before opening a pull request.
+The current regression covers 568 tests across rounds A through G plus the v1.1.1 mcp.mode toggle and the v1.2.0 orchestrator mode (config, filter DSL, persona loader, LLM client, interview session, persona drift, batch runner, report quant, MCP dispatch in both MCP server and MCP orchestrator modes, MCP orchestrator-only tools, common helper tools, error messages, logging, CLI integration, --persona-id, --resume, streaming, LLM-as-judge drift, structured-summary v2 backward compatibility, and the McpConfig whitelist). All 568 tests must pass before opening a pull request.
 
 Manual smoke tests that exercise a real OpenAI API call live under `tests/manual/` and are excluded from the default run.
 
@@ -46,8 +46,8 @@ The full directory tree is documented in the README under `Project Structure`. Q
 
 - `main.py` - click CLI entry point
 - `src/` - application code (config loader, LLM client, persona loader, interview engine, batch runner, report, MCP server)
-- `tests/` - 569-test regression
-- `docs/` - PRD, TDD, ADR, UI, tasks, v1.2.0 backlog
+- `tests/` - 568-test regression
+- `docs/` - PRD, TDD, ADR, UI, tasks, rolling backlog
 - `prompts/system_prompt.txt` - editable system prompt template
 - `config.yaml` - annotated default config
 
@@ -77,7 +77,7 @@ For substantive design changes, read [docs/INDEX.md](docs/INDEX.md) first. It ca
 
 Before opening a pull request, run through the list below.
 
-- All 569 regression tests pass (`pytest tests/ -v`)
+- All 568 regression tests pass (`pytest tests/ -v`)
 - Lint and format are not pinned in v1.x (see `Lint` note below). Editor-side `ruff` or `black` is fine, but do not commit lint config files
 - Documentation is updated for any user-visible change
   - User-facing CLI or output change: update README and the relevant `docs/prd/` or `docs/tdd/` section
@@ -87,14 +87,14 @@ Before opening a pull request, run through the list below.
 
 ### Lint
 
-A formal lint and format toolchain is intentionally not pinned in v1.x. The codebase reads cleanly with default formatting rules. A `ruff` and pre-commit setup is on the v1.2.0 backlog (see [docs/backlog/v1.2.0.md](docs/backlog/v1.2.0.md)). Until then, run any formatter you like locally and discard the config diff before committing.
+A formal lint and format toolchain is intentionally not pinned in v1.x. The codebase reads cleanly with default formatting rules. A `ruff` and pre-commit setup is tracked in the rolling backlog (see [docs/backlog/v1.3.0.md](docs/backlog/v1.3.0.md)). Until then, run any formatter you like locally and discard the config diff before committing.
 
 ## Reporting bugs and proposing features
 
 Open an issue at https://github.com/binaryloader/korea-persona-interview/issues. There is no fixed template yet. A useful issue includes the following.
 
 - For bugs: command line that reproduces the problem, expected vs. actual output, Python version, OS, and the relevant `outputs/logs/run_*.jsonl` excerpt with API keys redacted
-- For features: the user goal, the smallest change that would unblock the goal, and a pointer to any related v1.2.0 backlog item
+- For features: the user goal, the smallest change that would unblock the goal, and a pointer to any related backlog item under `docs/backlog/`
 
 For substantive feature work (anything that touches `src/interview.py`, `src/batch.py`, `src/report.py`, or the MCP tool surface), open an issue first so we can agree on the approach before code is written.
 
