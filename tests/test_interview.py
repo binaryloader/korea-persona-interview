@@ -574,6 +574,98 @@ def test_detect_persona_drift_가족동거_혼자서_행동표현_False_정합()
     assert detect_persona_drift(text, persona) is False
 
 
+def test_detect_persona_drift_연령_부정문_단언_False_정합() -> None:
+    """``저는 20대가 아니라 30대입니다`` 부정문 단언은 drift False다.
+
+    라운드 G10 정밀화 회귀: 부정문 가드는 family_type 외에도 연령/성별/지역
+    축에 동등하게 적용된다.
+    """
+
+    text = "저는 20대가 아니라 30대입니다. 가격 부담은 좀 있어요."
+    persona = _persona(age=35)
+    assert detect_persona_drift(text, persona) is False
+
+
+def test_detect_persona_drift_연령_3인칭_언급_False() -> None:
+    """``20대 친구는`` 같은 3인칭 언급은 drift False다."""
+
+    text = "다른 사람들은 20대일 수도 있는데, 저는 30대라 좀 다른 관점입니다."
+    persona = _persona(age=35)
+    assert detect_persona_drift(text, persona) is False
+
+
+def test_detect_persona_drift_성별_부정문_단언_False_정합() -> None:
+    """여자 페르소나의 ``남자가 아니라`` 부정 단언은 drift False다."""
+
+    text = "저는 남자가 아니라서 그런 액션 게임에는 관심이 적어요."
+    persona = _persona(gender="여자")
+    assert detect_persona_drift(text, persona) is False
+
+
+def test_detect_persona_drift_성별_단순_언급_False() -> None:
+    """1인칭 주어 없이 ``남자``라는 단어가 등장만 해도 drift는 False."""
+
+    text = "남자가 좋아할 만한 디자인이라 친구에게 추천해 줄 수 있을 것 같아요."
+    persona = _persona(gender="여자")
+    assert detect_persona_drift(text, persona) is False
+
+
+def test_detect_persona_drift_지역_부정문_단언_False_정합() -> None:
+    """``부산 사람이 아니라``는 부정 단언은 drift False다."""
+
+    text = "저는 부산 사람이 아니라서 거기 사정은 잘 모릅니다."
+    persona = _persona(region="서울")
+    assert detect_persona_drift(text, persona) is False
+
+
+def test_detect_persona_drift_지역_3인칭_언급_False() -> None:
+    """``부산 친구``류 3인칭 언급은 drift False다."""
+
+    text = "다른 사람들은 부산에 살기도 하지만 저는 서울 사람이라서 잘 모릅니다."
+    persona = _persona(region="서울")
+    assert detect_persona_drift(text, persona) is False
+
+
+def test_detect_persona_drift_지역_3인칭_관광_언급_False() -> None:
+    """``부산 다녀왔다``류 잠깐 거론은 1인칭 거주 단언이 아니라 drift False다.
+
+    G10 이전 30자 윈도우 휴리스틱은 ``저는 부산`` + ``살``로 매칭해 false
+    positive를 일으켰다. 정밀화 후에는 거주 단언 동사 list에 매칭되어야 한다.
+    """
+
+    text = "저는 부산에 한 번 다녀왔어요. 거기 음식이 좋았어요."
+    persona = _persona(region="서울")
+    assert detect_persona_drift(text, persona) is False
+
+
+def test_detect_persona_drift_연령_정확한_단언_True() -> None:
+    """1인칭 + 다른 연령 버킷 단언은 G10 후에도 drift True를 유지한다."""
+
+    text = "저는 30대라서 가격이 좀 부담이긴 해요."
+    persona = _persona(age=70)
+    assert detect_persona_drift(text, persona) is True
+
+
+def test_detect_persona_drift_성별_정확한_단언_True() -> None:
+    """1인칭 + 반대 성별 + 단언 어미는 G10 후에도 drift True를 유지한다."""
+
+    text = "저는 여자라서 화장품에 더 신경을 씁니다."
+    persona = _persona(gender="남자")
+    assert detect_persona_drift(text, persona) is True
+
+
+def test_detect_persona_drift_지역_정확한_단언_True() -> None:
+    """1인칭 + 다른 시도 + 거주 동사는 G10 후에도 drift True를 유지한다.
+
+    자기 시도(서울)가 같은 문장에 들어가면 보수적으로 매칭에서 제외하므로
+    다른 시도만 등장하는 문장이어야 한다.
+    """
+
+    text = "저는 부산에 살고 있어서 가까운 동네 식당을 자주 이용해요."
+    persona = _persona(region="서울")
+    assert detect_persona_drift(text, persona) is True
+
+
 def test_detect_persona_drift_가족동거_product_키워드_누설_False_정합() -> None:
     """가족 동거 페르소나가 product 키워드 ``1인 가구용``을 응답에 포함해도 drift False다.
 

@@ -723,6 +723,90 @@ def _has_cohabit_assertion(text: str) -> bool:
     return False
 
 
+# 1인칭 주어 토큰. 같은 문장에 본 패턴이 매칭되어야 ``저는 OO``류 자기 단언으로
+# 본다. 라운드 G10에서 연령/성별/지역 축에도 적용했다.
+_FIRST_PERSON_SUBJECT_RE = re.compile(r"(?:저는|나는|제가|내가|난)")
+
+
+# 3인칭 일반화 표현. ``다른 사람들``/``일반적으로``/``남들``류가 같은 문장에
+# 들어오면 본인 단언이 아닌 generic 서술일 가능성이 크다. 모든 축에서 보수적
+# 으로 trigger에서 제외한다.
+_GENERIC_THIRD_PERSON_RE = re.compile(
+    r"(?:다른\s*사람|일반적으로|보통\s*사람|남들|타인)"
+)
+
+
+def _has_age_bucket_assertion(sentence: str, bucket_label: str) -> bool:
+    """문장 안에서 ``저는 {bucket_label}`` 형태 자기 단언이 발견되면 True.
+
+    1인칭 주어가 같은 문장에 있어야 하며, 부정문(``20대가 아니라``)은 정합으로
+    보고 trigger에서 제외한다.
+    """
+
+    if bucket_label not in sentence:
+        return False
+    if not _FIRST_PERSON_SUBJECT_RE.search(sentence):
+        return False
+    # 부정문 가드: 같은 문장에 ``아니``류가 들어 있으면 정합으로 본다.
+    if re.search(r"아니|아닌|아닙", sentence):
+        return False
+    return True
+
+
+def _has_gender_assertion(sentence: str, opposing_tokens: tuple) -> bool:
+    """문장 안에 1인칭 + 반대 성별 토큰 + 단언/계사가 발견되면 True."""
+
+    if not _FIRST_PERSON_SUBJECT_RE.search(sentence):
+        return False
+    # 부정문 가드.
+    if re.search(r"아니|아닌|아닙", sentence):
+        return False
+    for token in opposing_tokens:
+        if token not in sentence:
+            continue
+        # 계사/단언 어미가 같은 문장에 동반되어야 매칭한다.
+        if re.search(
+            rf"{re.escape(token)}\s*(?:라|이라|예요|에요|입니다|이에요|이라서|"
+            r"라서|이고|입니다만|로서|로요|이니|이니까)",
+            sentence,
+        ):
+            return True
+        # 짧은 단언(``저는 남자``).
+        if re.search(
+            rf"(?:저는|나는|제가|내가|난)\s*{re.escape(token)}(?!\w)",
+            sentence,
+        ):
+            return True
+    return False
+
+
+def _has_region_assertion(sentence: str, own_region: str, others: tuple) -> bool:
+    """문장 안에서 자기 시도가 아닌 다른 시도를 거주지로 1인칭 단언하면 True.
+
+    같은 문장에 자기 시도가 함께 등장하면 ``저는 서울 출신이지만 부산에도``류
+    false positive를 막기 위해 매칭에서 제외한다.
+    """
+
+    if not _FIRST_PERSON_SUBJECT_RE.search(sentence):
+        return False
+    if own_region and own_region in sentence:
+        return False
+    # 부정문 가드: 같은 문장에 ``아니``/``아닌``/``아닙``이 들어 있으면 정합으로
+    # 본다. 예: ``저는 부산 사람이 아니라서 거기 사정은 잘 모릅니다``.
+    if re.search(r"아니|아닌|아닙", sentence):
+        return False
+    for province in others:
+        if province not in sentence:
+            continue
+        if re.search(
+            rf"{re.escape(province)}\s*(?:사람|에\s*살|에서\s*살|에서\s*자랐|"
+            r"에서\s*태어|출신|에서\s*나고|에서\s*근무|에\s*거주)",
+            sentence,
+        ):
+            return True
+    return False
+
+
 def detect_persona_drift(
     response: str,
     persona: PersonaMeta,
@@ -783,43 +867,49 @@ def detect_persona_drift(
     if solo_living and _has_cohabit_assertion(response):
         return True
 
-    # 연령/성별/지역 축은 기존 self-intro 30자 윈도우를 유지한다.
-    self_intros = [m.group(1) for m in _SELF_INTRO_PATTERN.finditer(response)]
-    if not self_intros:
+    # 라운드 G10: 연령/성별/지역 축도 거주 형태 축과 같은 정밀도로 같은 문장
+    # 단위 검사로 갈아 끼웠다. 1인칭 주어, 부정문 가드, 3인칭 제외를 함께
+    # 적용해 false positive를 줄인다.
+    sentences = _split_sentences(response)
+    if not sentences:
         return False
 
-    for ctx in self_intros:
-        text = ctx.strip()
-        # 연령대 모순. ``20대``, ``30대`` 등은 self-intro 컨텍스트에서만 본다.
+    if own_gender == "여자":
+        opposing_gender_tokens: tuple = ("남자", "남성", "아저씨")
+    elif own_gender == "남자":
+        opposing_gender_tokens = ("여자", "여성", "아줌마")
+    else:
+        opposing_gender_tokens = ()
+
+    for sentence in sentences:
+        # 3인칭 일반화 표현이 같은 문장에 있으면 본 문장은 다른 사람 단언일
+        # 가능성이 크다(예: ``다른 사람들은 30대일 수도 있어요``). 모든 축에서
+        # 보수적으로 trigger에서 제외한다.
+        if _GENERIC_THIRD_PERSON_RE.search(sentence):
+            continue
+
+        # 연령대 모순.
         for bucket in other_buckets:
-            # ``60대 이상``은 공백을 포함하므로 그대로 검사하고, 나머지는 ``대``
-            # 까지 정확히 매칭한다.
-            if bucket in text:
+            if bucket == "60대 이상":
+                if "60대" in sentence and "이상" in sentence:
+                    if _has_age_bucket_assertion(sentence, "60대"):
+                        return True
+            else:
+                if bucket in sentence and _has_age_bucket_assertion(sentence, bucket):
+                    return True
+        if persona.age >= 30 and _FIRST_PERSON_SUBJECT_RE.search(sentence):
+            if "학생이" in sentence or "미성년" in sentence:
                 return True
-        # 학생/미성년자 같은 명백한 연령 모순 키워드(70대 페르소나가 ``학생``,
-        # ``미성년`` 단언 시 매칭).
-        if persona.age >= 30 and ("학생" in text or "미성년" in text):
-            return True
 
         # 성별 모순.
-        if own_gender == "여자":
-            if "남자" in text or "아저씨" in text:
-                return True
-        elif own_gender == "남자":
-            if "여자" in text or "아줌마" in text:
-                return True
+        if opposing_gender_tokens and _has_gender_assertion(
+            sentence, opposing_gender_tokens
+        ):
+            return True
 
-        # 지역 모순. ``저는 부산 사람`` 형태.
-        # 자기 시도가 동일 컨텍스트에 있으면 ``저는 서울 출신이지만 부산에도``
-        # 같은 false positive를 막기 위해 매칭에서 제외한다.
-        if own_region not in text:
-            for province in other_provinces:
-                # 다른 시도명이 self-intro 컨텍스트에 등장 + ``사람``/``살``/
-                # ``에서`` 같은 거주 단언 키워드 동반.
-                if province in text and any(
-                    k in text for k in ("사람", "살고", "에서 자랐", "살아")
-                ):
-                    return True
+        # 지역 모순.
+        if _has_region_assertion(sentence, own_region, other_provinces):
+            return True
 
     return False
 
