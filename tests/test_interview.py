@@ -472,6 +472,71 @@ def test_detect_persona_drift_family_type_None이면_검사_건너뜀() -> None:
     assert detect_persona_drift(text, persona) is False
 
 
+def test_detect_persona_drift_가족동거_3인칭_혼자_사시는_분들_False_정합() -> None:
+    """가족 동거 페르소나가 ``혼자 사시는 분들에겐``으로 3인칭 표현을 써도 drift False다.
+
+    실제 인터뷰 사례 회귀(record 3, 구나라 어머니와 동거): 응답에 ``혼자 사시는
+    분들에겐 좋은 서비스``라는 3인칭 일반화가 들어와도 본인이 단독 거주임을
+    단언하는 1인칭 동사가 아니므로 drift 트리거 대상이 아니다.
+    """
+
+    text = "또, 개인적으로 요리에 조금 관심이 있어서 저 스스로 반찬을 만들거나 준비하는 걸 더 선호하기도 하고요. 혼자 사시는 분들에겐 좋은 서비스일 것 같아요!"
+    persona = _persona(age=28, gender="여자", family_type="어머니와 동거")
+    assert detect_persona_drift(text, persona) is False
+
+
+def test_detect_persona_drift_가족동거_혼자서_행동표현_False_정합() -> None:
+    """가족 동거 페르소나가 ``혼자서 끼니를 해결``로 행동 표현을 써도 drift False다.
+
+    실제 인터뷰 사례 회귀(record 4, 박승환 부모와 동거): ``혼자서`` 다음에 거주
+    동사가 아닌 행동 동사(``끼니를 해결``)가 오면 거주 형태 단언이 아니므로
+    drift 트리거 대상이 아니다.
+    """
+
+    text = "그리고 가끔은 혼자서 간단히 끼니를 해결할 수 있기 때문에 필요성을 느끼지 못할 것 같네요."
+    persona = _persona(age=37, gender="남자", family_type="부모와 동거")
+    assert detect_persona_drift(text, persona) is False
+
+
+def test_detect_persona_drift_가족동거_product_키워드_누설_False_정합() -> None:
+    """가족 동거 페르소나가 product 키워드 ``1인 가구용``을 응답에 포함해도 drift False다.
+
+    실제 인터뷰 사례 회귀(record 3/4, 첫 응답): ``저는 어머니와 함께 살고 있어서
+    1인 가구용 반찬 정기배송 서비스는 필요하지 않을 것 같아요`` 처럼 자기소개
+    뒤에 product 키워드가 따라와도, ``1인 가구``를 본인 거주 형태로 단언하는
+    1인칭 단언 동사(``라``/``입``/``예요``)가 없으면 drift 트리거 대상이 아니다.
+    """
+
+    text = "저는 어머니와 함께 살고 있어서 1인 가구용 반찬 정기배송 서비스는 필요하지 않을 것 같아요. 하지만 혼자 사시는 분들한테는 정말 유용할 것 같아요!"
+    persona = _persona(age=28, gender="여자", family_type="어머니와 동거")
+    assert detect_persona_drift(text, persona) is False
+
+
+def test_detect_persona_drift_가족동거_혼자_사는_분들_3인칭_False_정합() -> None:
+    """가족 동거 페르소나가 ``혼자 사는 분들에게``로 3인칭 일반화를 써도 drift False다.
+
+    record 4 r1 사례 회귀: ``주 2회 배송이면 혼자 사는 분들에게 충분히 도움이
+    될 것 같고요`` 처럼 ``혼자 사는`` 뒤에 ``분들``/``사람들`` 같은 3인칭 명사가
+    오면 본인 거주 형태 단언이 아니다.
+    """
+
+    text = "주 2회 배송이면 혼자 사는 분들에게 충분히 도움이 될 것 같고, 가격도 부담스럽지 않은 수준인 것 같아요."
+    persona = _persona(age=37, gender="남자", family_type="부모와 동거")
+    assert detect_persona_drift(text, persona) is False
+
+
+def test_detect_persona_drift_단독거주_3인칭_가족과_사시는_분들_False_정합() -> None:
+    """단독 거주 페르소나가 ``가족과 사시는 분들``로 3인칭 표현을 써도 drift False다.
+
+    대칭 회귀 가드: cohabit 정규식이 1인칭 주어를 강제하므로 3인칭 일반화는
+    매칭되지 않는다.
+    """
+
+    text = "가족과 사시는 분들에게는 별로 도움이 안 될 것 같아요."
+    persona = _persona(age=25, family_type="1인 가구")
+    assert detect_persona_drift(text, persona) is False
+
+
 def test_detect_persona_drift_지역_자기_시도_동시_등장_False() -> None:
     """자기 단언 컨텍스트에 자기 시도와 다른 시도가 동시에 등장하면 false positive를 내지 않는다.
 

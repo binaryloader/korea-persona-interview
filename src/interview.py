@@ -89,11 +89,21 @@ _KOREAN_PROVINCES: tuple = (
 )
 
 
-# 자기소개 문맥 정규식. ``저는`` 류 자기 단언 표현 뒤에 따라오는 토큰을 검사한다.
-# 연령대/성별/지역 모순 휴리스틱에 공통 사용한다.
+# 자기 단언 주어 토큰. 연령대/성별/지역 모순 휴리스틱(거주 형태가 아닌 축)에서
+# ``저는 OO``류 짧은 단언을 잡을 때 사용한다. 거주 형태 축은 별도의 정밀
+# 정규식(_SOLO_ASSERTION_RE / _COHABIT_ASSERTION_RE)을 사용하므로 본 패턴을
+# 거주 모순에 그대로 재사용하지 않는다(false positive 방지).
+#
+# 윈도우는 같은 문장(``.``/``!``/``?`` boundary) 안에서만 본다. 이전 구현은
+# 30자 윈도우가 너무 넓어 ``저는 부모님과 같이 살고 있어서 1인 가구용 반찬``
+# 류 응답에서 product 키워드 ``1인 가구``를 단독 거주 긍정 단언으로 오인했다.
 _SELF_INTRO_PATTERN = re.compile(
     r"(?:저는|나는|제가|내가)\s*([^\.\?!\n,]{0,30})"
 )
+
+
+# 문장 boundary. ``.``/``!``/``?``과 그 뒤 공백을 분리자로 본다.
+_SENTENCE_SPLIT_RE = re.compile(r"[\.!?]\s*")
 
 
 # family_type 가족 동거 표현. 데이터셋에 등장하는 표기를 망라한다.
@@ -118,60 +128,86 @@ _FAMILY_COHABITATION_TOKENS: tuple = (
 #
 # 매칭 분류는 아래와 같다.
 #
-# - solo_assertion: 단독 거주 긍정 단언("저는 혼자 사", "1인 가구라서").
+# - solo_assertion: 단독 거주 긍정 단언("저는 혼자 사", "저는 1인 가구라").
 #   가족 동거 페르소나가 본 단언을 보이면 drift True
 # - cohabit_assertion: 가족 동거 긍정 단언("저는 가족과 살아", "남편과 살아").
 #   단독 거주 페르소나가 본 단언을 보이면 drift True
 # - 부정 단언("1인 가구가 아니", "혼자 살지 않")은 두 페르소나 모두에게
 #   정합 또는 무관이라 drift 트리거에서 제외한다
+#
+# 정밀화 회귀 사례(false positive 방지)는 아래와 같다.
+#
+# - 가족 동거 페르소나가 ``혼자 사시는 분들에겐 좋은 서비스`` 같이 3인칭으로
+#   1인 가구를 언급해도 자기 단언이 아니므로 drift 미발동
+# - 가족 동거 페르소나가 ``혼자서 끼니를 해결할 수 있기 때문에`` 같이 행동
+#   표현(``혼자서`` + 비-거주 동사)을 써도 거주 형태 단언이 아니므로 drift
+#   미발동
+# - 가족 동거 페르소나가 ``저는 부모님과 같이 살고 있어서 1인 가구용 반찬
+#   서비스는`` 같이 응답에 product 키워드(``1인 가구용``)가 등장해도, 본인이
+#   단독 거주임을 단언하는 1인칭 동사가 없으므로 drift 미발동
 
-# 단독 거주 긍정 단언 토큰. 가족 동거 페르소나가 이를 단언하면 drift다.
-# ``혼자 사``는 ``혼자 사는``/``혼자 살아``/``혼자 사니까`` 등 다양한 활용형
-# prefix를 잡는다.
-_SOLO_ASSERTION_TOKENS: tuple = (
-    "혼자 사",
-    "혼자 살",
-    "혼자 거주",
-    "1인 가구",
-    "혼자 지내",
-    "독거",
+
+# 단독 거주 긍정 단언 정규식. 본 패턴이 한 문장 안에서 매칭되면 응답자가 본인을
+# 단독 거주(1인 가구)라고 단언하는 것으로 본다. 가족 동거 페르소나에서 본
+# 매칭이 발견되면 drift다.
+#
+# 분기는 두 가지다.
+#
+# 1. ``저는/나는/제가/내가/난`` 류 1인칭 주어 + ``혼자/홀로`` + 거주 동사
+#    (살/사는/사시/사니/살고/살아/지내/거주/지냄). ``혼자 사시는 분들`` 같은
+#    3인칭(``분/사람/이들``)은 ``혼자\s*살``과 인접한 ``분|사람|이들`` 매칭으로
+#    별도 가드한다
+# 2. ``저는/제가/나는/내가/난`` 류 1인칭 주어 + ``1인 가구/일인 가구/독거``
+#    + 단언 동사/계사(``라|이|입|이라|예요|에요|입니다|라서|이라서``)
+_SOLO_ASSERTION_RE = re.compile(
+    r"(?:저는|나는|제가|내가|난)\s*"
+    r"(?:"
+    r"(?:혼자|홀로)\s*(?:살고|살아|살며|살아요|살아서|살아도|살았|사니|사니까|"
+    r"살|사는|사시|살게|살지|지내|지내고|지내며|거주)"
+    r"|"
+    r"(?:1인\s*가구|일인\s*가구|독거)\s*(?:라|이|입|이라|예요|에요|입니다|라서|이라서|이니|이니까)"
+    r")"
 )
 
 
-# 가족 동거 긍정 단언 토큰. 단독 거주 페르소나가 이를 단언하면 drift다.
-# ``배우자``/``자녀``/``남편``/``아내`` 등은 가족 동거를 직접 시사하지만 부정문
-# 안에서는 정합 답변이라 별도 검사 단계에서 부정문 가드를 통과시킨다.
-_COHABIT_ASSERTION_TOKENS: tuple = (
-    "가족과 살",
-    "가족이랑 살",
-    "가족과 함께 살",
-    "가족이랑 같이 살",
-    "가족과 같이 살",
-    "부모님과 살",
-    "부모님이랑 살",
-    "부모와 살",
-    "어머니와 살",
-    "아버지와 살",
-    "남편과 살",
-    "아내와 살",
-    "배우자와 살",
-    "자녀와 살",
-    "아이들과 살",
-    "아이들이랑 살",
-    "식구가 많",
+# 단독 거주 부정 단언 정규식. 본 패턴이 매칭되면 응답자가 단독 거주를 부정하는
+# 것이므로 가족 동거 페르소나와 정합한 답변이라 drift 트리거에서 제외한다.
+# 예: ``저는 1인 가구가 아니라서``, ``혼자 살지 않아서``.
+_SOLO_NEGATION_RE = re.compile(
+    r"(?:저는|나는|제가|내가|난|저희는)?\s*"
+    r"(?:"
+    r"(?:혼자|홀로)\s*(?:살지\s*않|살고\s*있지\s*않|사는\s*것\s*아니|"
+    r"살게\s*된\s*건\s*아니)"
+    r"|"
+    r"(?:1인\s*가구|일인\s*가구|독거)\s*(?:가\s*아니|이\s*아니|는\s*아니|은\s*아니)"
+    r")"
 )
 
 
-# 부정 단언 패턴. 본 패턴이 단독 거주 긍정 단언 토큰 직후에 등장하면 부정문
-# (예: ``1인 가구가 아니``)으로 판정해 drift 트리거에서 제외한다. ``아니``는
-# ``아니라``/``아닌``/``아니에요``/``아닙니다`` 같은 활용형 prefix이다.
-_NEGATION_TAILS: tuple = (
-    "가 아니",
-    "은 아니",
-    "이 아니",
-    "지 않",
-    "지 못",
-    "지는 않",
+# 가족 동거 긍정 단언 정규식. 본 패턴이 매칭되면 응답자가 본인을 가족과 함께
+# 거주한다고 단언하는 것이다. 단독 거주 페르소나에서 매칭되면 drift다.
+#
+# 1인칭 주어 + (가족 토큰)와/이랑 + (같이/함께)? + 거주 동사 형태로 좁힌다.
+# 가족 토큰은 가족/부모(님)/배우자/남편/아내/아이/아이들/어머니/아버지/엄마/
+# 아빠/조부모/형제/자매/친척까지 포함한다.
+_COHABIT_ASSERTION_RE = re.compile(
+    r"(?:저는|나는|제가|내가|난|저희는|우리는)\s*"
+    r"(?:가족|부모님?|배우자|남편|아내|아이|아이들|어머니|아버지|엄마|아빠|"
+    r"조부모|형제|자매|친척)(?:과|와|이랑|랑|하고)?\s*"
+    r"(?:같이|함께|동거|모시고)?\s*"
+    r"(?:살고|살아|살며|살아요|살아서|살아도|살았|사니|사니까|살|사는|사시|살게|"
+    r"살지|지내|지내고|지내며|거주|있어요|있어서|있고|있다)"
+)
+
+
+# 가족 동거 부정 단언 정규식. ``저는 가족과 살지 않아``류. 단독 거주 페르소나에서
+# 발견되면 정합이라 drift 트리거에서 제외한다.
+_COHABIT_NEGATION_RE = re.compile(
+    r"(?:저는|나는|제가|내가|난|저희는|우리는)\s*"
+    r"(?:가족|부모님?|배우자|남편|아내|아이|아이들|어머니|아버지|엄마|아빠|"
+    r"조부모|형제|자매|친척)(?:과|와|이랑|랑|하고)?\s*"
+    r"(?:같이|함께)?\s*"
+    r"(?:살지\s*않|살고\s*있지\s*않|사는\s*것\s*아니|있지\s*않)"
 )
 
 
@@ -463,26 +499,49 @@ def _is_cohabiting(family_type: Optional[str]) -> bool:
     return any(token in family_type for token in _FAMILY_COHABITATION_TOKENS)
 
 
-def _is_negated_assertion(text: str, token: str) -> bool:
-    """``token`` 매칭 위치가 부정문 컨텍스트 안인지 판정한다.
+def _split_sentences(text: str) -> list:
+    """문장 boundary로 텍스트를 자른다.
 
-    예시는 아래와 같다.
-
-    - ``1인 가구가 아니라서`` → ``1인 가구`` 매칭 + 직후 ``가 아니`` → True(부정)
-    - ``혼자 살지 않아요`` → ``혼자 살`` 매칭 + 직후 ``지 않`` → True(부정)
-    - ``저는 혼자 살아요`` → ``혼자 살`` 매칭 직후 ``아요`` → False(긍정 단언)
-
-    부정 단언으로 판정되면 호출자는 drift 트리거에서 본 토큰을 제외한다.
+    ``.``/``!``/``?``과 그 뒤 공백을 분리자로 본다. 빈 토막은 제거한다.
+    거주 형태 단언 검사는 같은 문장 안에서만 매칭해야 다음 문장 토큰이 자기
+    단언 컨텍스트로 누설되는 false positive를 막을 수 있다.
     """
 
-    pos = text.find(token)
-    if pos < 0:
-        return False
-    # 토큰 직후 8자 이내에 부정 패턴이 따라오면 부정문으로 본다. 공백/조사
-    # 한두 글자 정도가 끼는 경우(``1인 가구가 아니``, ``1인 가구는 아니``)를
-    # 모두 잡는 보수값이다.
-    tail = text[pos + len(token) : pos + len(token) + 10]
-    return any(neg in tail for neg in _NEGATION_TAILS)
+    if not text:
+        return []
+    return [s for s in _SENTENCE_SPLIT_RE.split(text) if s.strip()]
+
+
+def _has_solo_living_assertion(text: str) -> bool:
+    """본문에 단독 거주 1인칭 긍정 단언이 한 문장이라도 들어 있는지 판정한다.
+
+    부정 단언(``혼자 살지 않``, ``1인 가구가 아니``)이 같은 문장에 있으면
+    그 문장은 정합으로 보고 매칭에서 제외한다. 단독 거주 페르소나가 본 단언을
+    하면 정합이지만, 가족 동거 페르소나가 본 단언을 하면 drift다.
+    """
+
+    for sentence in _split_sentences(text):
+        if _SOLO_NEGATION_RE.search(sentence):
+            continue
+        if _SOLO_ASSERTION_RE.search(sentence):
+            return True
+    return False
+
+
+def _has_cohabit_assertion(text: str) -> bool:
+    """본문에 가족 동거 1인칭 긍정 단언이 한 문장이라도 들어 있는지 판정한다.
+
+    부정 단언(``가족과 살지 않``)이 같은 문장에 있으면 정합으로 보고 매칭에서
+    제외한다. 가족 동거 페르소나가 본 단언을 하면 정합이지만, 단독 거주
+    페르소나가 본 단언을 하면 drift다.
+    """
+
+    for sentence in _split_sentences(text):
+        if _COHABIT_NEGATION_RE.search(sentence):
+            continue
+        if _COHABIT_ASSERTION_RE.search(sentence):
+            return True
+    return False
 
 
 def detect_persona_drift(response: str, persona: PersonaMeta) -> bool:
@@ -499,10 +558,14 @@ def detect_persona_drift(response: str, persona: PersonaMeta) -> bool:
       대상에서 제외한다(예: 가족 동거 페르소나가 ``1인 가구가 아니라서``라고
       답하는 경우 drift False)
 
-    가짜 양성을 줄이기 위해 ``저는``/``나는``/``제가``/``내가`` 같은 자기 단언
-    표현 뒤에 따라오는 30자 이내 토큰만 검사한다. 지역 모순은 자기 시도와 다른
-    시도가 같은 컨텍스트에 동시 등장하면 매칭에서 제외해 ``저는 서울 출신이지만
-    부산에도 자주 갑니다`` 류 false positive를 줄인다.
+    가짜 양성을 줄이기 위해 두 단계로 좁힌다.
+
+    - 연령/성별/지역 축은 ``저는``/``나는``/``제가``/``내가`` 자기 단언 컨텍스트
+      30자 윈도우만 검사한다(기존 휴리스틱 유지)
+    - 거주 형태 축은 같은 문장(``.``/``!``/``?`` boundary) 안에서 1인칭 주어와
+      거주 동사가 함께 등장하는 정밀 정규식만 매칭한다. ``혼자 사시는 분들``
+      같은 3인칭 표현, ``혼자서 끼니를 해결`` 같은 행동 표현, 응답에 우연히
+      등장한 product 키워드(``1인 가구용``)는 trigger에서 제외된다
     """
 
     if not response:
@@ -510,11 +573,6 @@ def detect_persona_drift(response: str, persona: PersonaMeta) -> bool:
 
     if _english_ratio(response) > 0.30:
         return True
-
-    # 자기 단언 컨텍스트 추출.
-    self_intros = [m.group(1) for m in _SELF_INTRO_PATTERN.finditer(response)]
-    if not self_intros:
-        return False
 
     own_bucket = _age_bucket(persona.age)
     other_buckets = tuple(b for b in _all_age_buckets() if b != own_bucket)
@@ -526,6 +584,19 @@ def detect_persona_drift(response: str, persona: PersonaMeta) -> bool:
 
     solo_living = _is_solo_living(persona.family_type)
     cohabiting = _is_cohabiting(persona.family_type)
+
+    # 거주 형태 축은 self-intro 컨텍스트와 무관하게 같은 문장 단위 정밀 정규식
+    # 으로 검사한다. self-intro 윈도우 30자 안에 product 키워드가 우연히 들어와
+    # 단독 거주 단언으로 오인되는 false positive(record 3/4 사례)를 차단한다.
+    if cohabiting and _has_solo_living_assertion(response):
+        return True
+    if solo_living and _has_cohabit_assertion(response):
+        return True
+
+    # 연령/성별/지역 축은 기존 self-intro 30자 윈도우를 유지한다.
+    self_intros = [m.group(1) for m in _SELF_INTRO_PATTERN.finditer(response)]
+    if not self_intros:
+        return False
 
     for ctx in self_intros:
         text = ctx.strip()
@@ -558,17 +629,6 @@ def detect_persona_drift(response: str, persona: PersonaMeta) -> bool:
                 if province in text and any(
                     k in text for k in ("사람", "살고", "에서 자랐", "살아")
                 ):
-                    return True
-
-        # 거주 형태 모순(family_type 정보가 있을 때만 검사).
-        # 부정문은 trigger에서 제외해 정합 답변에 false positive를 내지 않는다.
-        if cohabiting:
-            for token in _SOLO_ASSERTION_TOKENS:
-                if token in text and not _is_negated_assertion(text, token):
-                    return True
-        if solo_living:
-            for token in _COHABIT_ASSERTION_TOKENS:
-                if token in text and not _is_negated_assertion(text, token):
                     return True
 
     return False
