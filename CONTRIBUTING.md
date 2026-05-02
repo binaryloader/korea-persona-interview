@@ -36,7 +36,7 @@ Edit `.env` and set `OPENAI_API_KEY=sk-...`. The project root `.env` file is aut
 pytest tests/ -v
 ```
 
-The current regression covers 571 tests across rounds A through G plus the v1.1.1 mcp.mode toggle (config, filter DSL, persona loader, LLM client, interview session, persona drift, batch runner, report quant, MCP dispatch in both server and sampling modes, error messages, logging, CLI integration, --persona-id, --resume, streaming, LLM-as-judge drift, structured-summary v2 backward compatibility, and the McpConfig whitelist). All 571 tests must pass before opening a pull request.
+The current regression covers 569 tests across rounds A through G plus the v1.1.1 mcp.mode toggle and the v1.2.0 orchestrator mode (config, filter DSL, persona loader, LLM client, interview session, persona drift, batch runner, report quant, MCP dispatch in both MCP server and MCP orchestrator modes, MCP orchestrator-only tools, common helper tools, error messages, logging, CLI integration, --persona-id, --resume, streaming, LLM-as-judge drift, structured-summary v2 backward compatibility, and the McpConfig whitelist). All 569 tests must pass before opening a pull request.
 
 Manual smoke tests that exercise a real OpenAI API call live under `tests/manual/` and are excluded from the default run.
 
@@ -46,7 +46,7 @@ The full directory tree is documented in the README under `Project Structure`. Q
 
 - `main.py` - click CLI entry point
 - `src/` - application code (config loader, LLM client, persona loader, interview engine, batch runner, report, MCP server)
-- `tests/` - 571-test regression
+- `tests/` - 569-test regression
 - `docs/` - PRD, TDD, ADR, UI, tasks, v1.2.0 backlog
 - `prompts/system_prompt.txt` - editable system prompt template
 - `config.yaml` - annotated default config
@@ -77,7 +77,7 @@ For substantive design changes, read [docs/INDEX.md](docs/INDEX.md) first. It ca
 
 Before opening a pull request, run through the list below.
 
-- All 571 regression tests pass (`pytest tests/ -v`)
+- All 569 regression tests pass (`pytest tests/ -v`)
 - Lint and format are not pinned in v1.x (see `Lint` note below). Editor-side `ruff` or `black` is fine, but do not commit lint config files
 - Documentation is updated for any user-visible change
   - User-facing CLI or output change: update README and the relevant `docs/prd/` or `docs/tdd/` section

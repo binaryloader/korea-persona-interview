@@ -6,11 +6,12 @@ Only the latest minor release line receives security fixes. The current supporte
 
 | Version | Supported |
 | --- | --- |
-| 1.1.x | Yes |
-| 1.0.x | 30-day EOL grace window for security-only fixes |
+| 1.2.x | Yes |
+| 1.1.x | 30-day EOL grace window for security-only fixes (until 2026-06-01) |
+| 1.0.x | No (superseded by 1.1.x and 1.2.x) |
 | < 1.0.0 | No (no prior public release) |
 
-When v1.2.0 ships, the supported line will move to v1.2.x and v1.1.x will go into a 30-day EOL grace window for security-only fixes.
+v1.2.0 shipped on 2026-05-02. v1.1.x is now in a 30-day EOL grace window for security-only fixes; new feature work targets v1.2.x.
 
 ## Reporting a vulnerability
 
@@ -49,8 +50,8 @@ The points below are the load-bearing security properties of this project. Any d
 
 - API keys are read from the environment (`OPENAI_API_KEY`, `KPI_OPENAI_API_KEY`) or a project-root `.env` file only. The tool never writes the key to logs, result JSON, or the markdown report. The structured logger masks anything matching the key shape before emitting
 - The `.env` parser uses `setdefault` semantics so a key already set in the shell is never overridden. `.env` is gitignored. A project-root `.env` is the recommended single source for API keys; storing the key inside an agent's mcp.json `env` block still works but is discouraged because mcp.json is plaintext and more likely to leak through git, dotfile sync, or screenshots
-- The `--product` text and persona metadata used for each interview are sent to whichever LLM backend you configure (OpenAI Chat Completions API, Anthropic Messages API, an OpenAI-compatible local server, or the MCP host agent's LLM). The exact destination is determined by `provider`, `base_url`, and `mcp.mode`. This is documented in the README `Limitations and Disclaimer` section and ADR-002 / ADR-003 / ADR-004. Do not put unreleased intellectual property, trade secrets, or personally identifiable information into `--product`
-- No external telemetry. The only outbound calls are to the configured LLM backend and (on first run) the Hugging Face Hub for the dataset download. The MCP `sampling` mode performs no direct outbound LLM call from this process; the host agent issues the call instead
+- The `--product` text and persona metadata used for each interview are sent to whichever LLM backend you configure. For CLI and MCP server mode the destination is one of the OpenAI Chat Completions API, the Anthropic Messages API, or an OpenAI-compatible local server. For MCP orchestrator mode the destination is whichever LLM the host agent's sub-agent calls. The exact destination is determined by `provider`, `base_url`, and `mcp.mode`. This is documented in the README `Limitations and Disclaimer` section and ADR-002 / ADR-003 / ADR-005. Do not put unreleased intellectual property, trade secrets, or personally identifiable information into `--product`
+- No external telemetry. The only outbound calls are to the configured LLM backend and (on first run) the Hugging Face Hub for the dataset download. The MCP orchestrator mode performs no direct outbound LLM call from this process; the host agent's sub-agent issues the call instead
 - All result JSON files and markdown reports are written to the local `outputs/` directory, which is gitignored. The MCP server returns paths to these local files, not their contents over the network
 
 ## Dependency hygiene
