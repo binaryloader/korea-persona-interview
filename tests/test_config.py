@@ -280,7 +280,7 @@ def _llm_config_kwargs(**override) -> dict:
         "max_tokens": 500,
         "temperature": 0.5,
         "timeout": 60.0,
-        "context_budget": 8000,
+        "context_budget": 32000,
         "retry_max_attempts": 3,
         "retry_backoff_seconds": (1.0, 2.0, 4.0),
         "api_key": "test-key",
@@ -289,7 +289,7 @@ def _llm_config_kwargs(**override) -> dict:
     return base
 
 
-@pytest.mark.parametrize("max_tokens", [0, -1, 8001, 100000])
+@pytest.mark.parametrize("max_tokens", [0, -1, 16001, 100000])
 def test_LlmConfig_max_tokens_범위외_ConfigError(max_tokens: int) -> None:
     with pytest.raises(ConfigError):
         LlmConfig(**_llm_config_kwargs(max_tokens=max_tokens))
@@ -307,14 +307,14 @@ def test_LlmConfig_timeout_범위외_ConfigError(timeout) -> None:
         LlmConfig(**_llm_config_kwargs(timeout=timeout))
 
 
-@pytest.mark.parametrize("budget", [0, 999, 32001, 100000])
+@pytest.mark.parametrize("budget", [0, 999, 128001, 1000000])
 def test_LlmConfig_context_budget_범위외_ConfigError(budget: int) -> None:
     with pytest.raises(ConfigError):
         LlmConfig(**_llm_config_kwargs(context_budget=budget))
 
 
 def test_LlmConfig_허용_범위_생성_성공() -> None:
-    """경계값(1, 8000, 5, 600, 1000, 32000)이 모두 통과한다."""
+    """경계값(1, 16000, 5, 600, 1000, 128000)이 모두 통과한다."""
 
     LlmConfig(
         **_llm_config_kwargs(
@@ -326,10 +326,10 @@ def test_LlmConfig_허용_범위_생성_성공() -> None:
     )
     LlmConfig(
         **_llm_config_kwargs(
-            max_tokens=8000,
+            max_tokens=16000,
             retry_max_attempts=5,
             timeout=600,
-            context_budget=32000,
+            context_budget=128000,
         )
     )
 

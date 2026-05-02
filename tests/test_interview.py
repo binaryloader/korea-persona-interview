@@ -392,16 +392,20 @@ def test_detect_persona_drift_영어_단어_비율_단어단위_True() -> None:
     assert detect_persona_drift(text, _persona()) is True
 
 
-def test_detect_persona_drift_단독거주_1인_가구_부정_True() -> None:
-    """family_type=혼자 거주 페르소나가 ``저는 1인 가구가 아니``를 단언하면 drift다."""
+def test_detect_persona_drift_가족동거_1인_가구_부정_False_정합() -> None:
+    """가족 동거 페르소나의 ``1인 가구가 아니`` 부정 단언은 정합이라 drift False다.
+
+    record 1-4 사례 회귀 방지 테스트. 가족 동거 페르소나가 본인이 1인 가구가
+    아님을 명시하는 답변은 페르소나와 정합하므로 drift 트리거 대상이 아니다.
+    """
 
     text = "성수동에서 살고 있는데, 딱히 저는 1인 가구가 아니라서 필요성을 못 느끼겠네요."
-    persona = _persona(age=25, gender="남자", region="서울", family_type="혼자 거주")
-    assert detect_persona_drift(text, persona) is True
+    persona = _persona(age=34, gender="남자", region="서울", family_type="배우자와 거주")
+    assert detect_persona_drift(text, persona) is False
 
 
-def test_detect_persona_drift_단독거주_1인_가구_표기_True() -> None:
-    """family_type=1인 가구 표기 페르소나도 동일하게 drift를 잡는다."""
+def test_detect_persona_drift_단독거주_가족과_살아_긍정_True() -> None:
+    """family_type=1인 가구 페르소나가 ``저는 가족과 함께 살아``를 긍정 단언하면 drift다."""
 
     text = "저는 가족과 함께 살아서 그런 서비스가 필요 없어요."
     persona = _persona(age=25, family_type="1인 가구")
@@ -424,6 +428,14 @@ def test_detect_persona_drift_가족동거_1인_가구_단언_True() -> None:
     assert detect_persona_drift(text, persona) is True
 
 
+def test_detect_persona_drift_가족동거_혼자_살지_않_부정_False_정합() -> None:
+    """가족 동거 페르소나의 ``혼자 살지 않`` 부정 단언도 정합이라 drift False다."""
+
+    text = "저는 혼자 살지 않아서 큰 단위로 장을 봅니다."
+    persona = _persona(age=34, gender="남자", family_type="배우자와 거주")
+    assert detect_persona_drift(text, persona) is False
+
+
 def test_detect_persona_drift_단독거주_정합_답변_False() -> None:
     """family_type=혼자 거주 페르소나의 정합 답변(예: ``저는 1인 가구라``)은 drift가 아니다."""
 
@@ -432,8 +444,20 @@ def test_detect_persona_drift_단독거주_정합_답변_False() -> None:
     assert detect_persona_drift(text, persona) is False
 
 
+def test_detect_persona_drift_단독거주_가족과_살아_부정_False_정합() -> None:
+    """단독 거주 페르소나의 ``가족과 살지 않`` 부정 단언은 정합이라 drift False다."""
+
+    text = "저는 가족과 살지 않아서 식재료 보관이 늘 문제예요."
+    persona = _persona(age=25, family_type="1인 가구")
+    assert detect_persona_drift(text, persona) is False
+
+
 def test_detect_persona_drift_가족동거_정합_답변_False() -> None:
-    """family_type=배우자와 거주 페르소나의 정합 답변(``저는 가족과 함께``)은 drift가 아니다."""
+    """family_type=배우자와 거주 페르소나의 정합 답변(``저는 가족과 함께``)은 drift가 아니다.
+
+    가족 동거 페르소나의 ``가족과 함께 살아`` 긍정 단언은 정합이라 drift 트리거
+    대상이 아니다(가족 동거 → solo_assertion만 검사함).
+    """
 
     text = "저는 가족과 함께 살아서 한 번에 큰 단위로 장을 봐요."
     persona = _persona(age=34, gender="남자", family_type="배우자와 거주")
@@ -656,7 +680,7 @@ def test_build_summary_messages_system_제외_사용자_헬퍼() -> None:
 def _add_chat_response(httpx_mock, content: str) -> None:
     httpx_mock.add_response(
         method="POST",
-        url="http://localhost:8080/v1/chat/completions",
+        url="https://api.openai.com/v1/chat/completions",
         json={"choices": [{"message": {"role": "assistant", "content": content}}]},
         status_code=200,
     )
@@ -868,7 +892,7 @@ async def test_run_interview_LLM_실패_status_failed(
     for _ in range(3):
         httpx_mock.add_response(
             method="POST",
-            url="http://localhost:8080/v1/chat/completions",
+            url="https://api.openai.com/v1/chat/completions",
             status_code=500,
         )
 

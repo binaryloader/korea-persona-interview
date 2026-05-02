@@ -13,8 +13,8 @@
 ``should_auto_follow_up``, ``detect_persona_drift``, ``detect_refusal``)는 모듈
 함수로 분리해 단위 테스트 용이성을 확보한다(TDD §16).
 
-application 계층이며, infrastructure(``MlxLLMClient``)와 domain(``PersonaMeta``,
-``InterviewRecord`` 등)을 조합한다(architecture.md §1, §2).
+application 계층이며, infrastructure(``MlxLLMClient``, OpenAI 호환 클라이언트)와
+domain(``PersonaMeta``, ``InterviewRecord`` 등)을 조합한다(architecture.md §1, §2).
 """
 
 from __future__ import annotations
@@ -33,7 +33,6 @@ from .logging_setup import mask_name, mask_product
 from .models import (
     ChatResponse,
     ConfigError,
-    EmptyResponseError,
     Flags,
     InterviewRecord,
     MessageEntry,
@@ -113,34 +112,66 @@ _FAMILY_COHABITATION_TOKENS: tuple = (
 )
 
 
-# family_type=단독 거주 페르소나가 응답에서 부정/대치할 때 매칭할 토큰.
-# ``저는|나는|제가|내가`` 컨텍스트에서만 검사하여 false positive를 줄인다.
-_SOLO_NEGATION_TOKENS: tuple = (
-    "1인 가구가 아니",
-    "혼자 사는 게 아니",
-    "혼자 살지 않",
-    "가족이랑 같이",
-    "가족과 같이",
-    "가족과 함께",
-    "식구가 많",
-    "아이들",
-    "자녀",
-    "남편",
-    "아내",
-    "배우자",
-)
+# 거주 형태 모순 감지는 단언 방향(긍정/부정)을 분리해 처리한다. 동일 토큰이
+# 부정문에 들어오면 실제로 페르소나와 정합한 답변일 수 있다(예: 가족 동거
+# 페르소나가 ``1인 가구가 아니라서``라고 답하는 경우 → drift False).
+#
+# 매칭 분류는 아래와 같다.
+#
+# - solo_assertion: 단독 거주 긍정 단언("저는 혼자 사", "1인 가구라서").
+#   가족 동거 페르소나가 본 단언을 보이면 drift True
+# - cohabit_assertion: 가족 동거 긍정 단언("저는 가족과 살아", "남편과 살아").
+#   단독 거주 페르소나가 본 단언을 보이면 drift True
+# - 부정 단언("1인 가구가 아니", "혼자 살지 않")은 두 페르소나 모두에게
+#   정합 또는 무관이라 drift 트리거에서 제외한다
 
-
-# family_type=가족 동거 페르소나가 응답에서 부정/대치할 때 매칭할 토큰.
-# ``혼자 사``는 ``혼자 사는``/``혼자 살고``/``혼자 살아``/``혼자 사니까`` 등
-# 다양한 활용형을 한 번에 잡기 위한 prefix 토큰이다.
-_COHABIT_NEGATION_TOKENS: tuple = (
+# 단독 거주 긍정 단언 토큰. 가족 동거 페르소나가 이를 단언하면 drift다.
+# ``혼자 사``는 ``혼자 사는``/``혼자 살아``/``혼자 사니까`` 등 다양한 활용형
+# prefix를 잡는다.
+_SOLO_ASSERTION_TOKENS: tuple = (
     "혼자 사",
     "혼자 살",
     "혼자 거주",
     "1인 가구",
     "혼자 지내",
     "독거",
+)
+
+
+# 가족 동거 긍정 단언 토큰. 단독 거주 페르소나가 이를 단언하면 drift다.
+# ``배우자``/``자녀``/``남편``/``아내`` 등은 가족 동거를 직접 시사하지만 부정문
+# 안에서는 정합 답변이라 별도 검사 단계에서 부정문 가드를 통과시킨다.
+_COHABIT_ASSERTION_TOKENS: tuple = (
+    "가족과 살",
+    "가족이랑 살",
+    "가족과 함께 살",
+    "가족이랑 같이 살",
+    "가족과 같이 살",
+    "부모님과 살",
+    "부모님이랑 살",
+    "부모와 살",
+    "어머니와 살",
+    "아버지와 살",
+    "남편과 살",
+    "아내와 살",
+    "배우자와 살",
+    "자녀와 살",
+    "아이들과 살",
+    "아이들이랑 살",
+    "식구가 많",
+)
+
+
+# 부정 단언 패턴. 본 패턴이 단독 거주 긍정 단언 토큰 직후에 등장하면 부정문
+# (예: ``1인 가구가 아니``)으로 판정해 drift 트리거에서 제외한다. ``아니``는
+# ``아니라``/``아닌``/``아니에요``/``아닙니다`` 같은 활용형 prefix이다.
+_NEGATION_TAILS: tuple = (
+    "가 아니",
+    "은 아니",
+    "이 아니",
+    "지 않",
+    "지 못",
+    "지는 않",
 )
 
 
@@ -432,6 +463,28 @@ def _is_cohabiting(family_type: Optional[str]) -> bool:
     return any(token in family_type for token in _FAMILY_COHABITATION_TOKENS)
 
 
+def _is_negated_assertion(text: str, token: str) -> bool:
+    """``token`` 매칭 위치가 부정문 컨텍스트 안인지 판정한다.
+
+    예시는 아래와 같다.
+
+    - ``1인 가구가 아니라서`` → ``1인 가구`` 매칭 + 직후 ``가 아니`` → True(부정)
+    - ``혼자 살지 않아요`` → ``혼자 살`` 매칭 + 직후 ``지 않`` → True(부정)
+    - ``저는 혼자 살아요`` → ``혼자 살`` 매칭 직후 ``아요`` → False(긍정 단언)
+
+    부정 단언으로 판정되면 호출자는 drift 트리거에서 본 토큰을 제외한다.
+    """
+
+    pos = text.find(token)
+    if pos < 0:
+        return False
+    # 토큰 직후 8자 이내에 부정 패턴이 따라오면 부정문으로 본다. 공백/조사
+    # 한두 글자 정도가 끼는 경우(``1인 가구가 아니``, ``1인 가구는 아니``)를
+    # 모두 잡는 보수값이다.
+    tail = text[pos + len(token) : pos + len(token) + 10]
+    return any(neg in tail for neg in _NEGATION_TAILS)
+
+
 def detect_persona_drift(response: str, persona: PersonaMeta) -> bool:
     """페르소나 정면 모순 또는 영어 비율 30% 초과 여부를 판정한다(TDD §8.2).
 
@@ -441,8 +494,10 @@ def detect_persona_drift(response: str, persona: PersonaMeta) -> bool:
     - 연령대 모순: ``저는 20대``처럼 자기 연령 버킷이 아닌 버킷을 단언
     - 성별 모순: 여자 페르소나가 ``저는 남자``를 단언, 또는 그 반대
     - 지역 모순: 자기 시도가 아닌 다른 시도를 거주지로 단언
-    - 거주 형태 모순: family_type이 단독 거주인데 ``1인 가구가 아니``/``가족과
-      함께``를 단언하거나, 가족 동거인데 ``혼자 산다``/``1인 가구``를 단언
+    - 거주 형태 모순: family_type이 단독 거주인데 가족 동거 긍정 단언, 또는
+      가족 동거인데 단독 거주 긍정 단언. 부정 단언은 정합한 답변이라 trigger
+      대상에서 제외한다(예: 가족 동거 페르소나가 ``1인 가구가 아니라서``라고
+      답하는 경우 drift False)
 
     가짜 양성을 줄이기 위해 ``저는``/``나는``/``제가``/``내가`` 같은 자기 단언
     표현 뒤에 따라오는 30자 이내 토큰만 검사한다. 지역 모순은 자기 시도와 다른
@@ -506,10 +561,15 @@ def detect_persona_drift(response: str, persona: PersonaMeta) -> bool:
                     return True
 
         # 거주 형태 모순(family_type 정보가 있을 때만 검사).
-        if solo_living and any(token in text for token in _SOLO_NEGATION_TOKENS):
-            return True
-        if cohabiting and any(token in text for token in _COHABIT_NEGATION_TOKENS):
-            return True
+        # 부정문은 trigger에서 제외해 정합 답변에 false positive를 내지 않는다.
+        if cohabiting:
+            for token in _SOLO_ASSERTION_TOKENS:
+                if token in text and not _is_negated_assertion(text, token):
+                    return True
+        if solo_living:
+            for token in _COHABIT_ASSERTION_TOKENS:
+                if token in text and not _is_negated_assertion(text, token):
+                    return True
 
     return False
 
@@ -777,7 +837,11 @@ class InterviewSession:
                     flags = dataclasses.replace(flags, truncated=True)
 
                 messages.append(MessageEntry(role="user", content=question))
-                response_text, latency_ms, retry_count = await self._call_llm(messages)
+                (
+                    response_text,
+                    latency_ms,
+                    retry_count,
+                ) = await self._call_llm(messages)
                 messages.append(
                     MessageEntry(role="assistant", content=response_text)
                 )
@@ -842,7 +906,11 @@ class InterviewSession:
                     messages.append(
                         MessageEntry(role="user", content=AUTO_FOLLOW_UP_PROMPT)
                     )
-                    fu_text, fu_latency_ms, fu_retry = await self._call_llm(messages)
+                    (
+                        fu_text,
+                        fu_latency_ms,
+                        fu_retry,
+                    ) = await self._call_llm(messages)
                     messages.append(MessageEntry(role="assistant", content=fu_text))
                     # 같은 question_index, retry_count는 1 증가로 표기한다.
                     raw_responses.append(
@@ -891,14 +959,6 @@ class InterviewSession:
                     "reason": str(exc),
                 },
             )
-        except EmptyResponseError as exc:
-            # 단일 호출 단위 EmptyResponse는 llm_client에서 retry가 흡수해야
-            # 한다. 흡수 실패가 EmptyResponseError로 외부로 나오면 failed 처리.
-            status = "failed"
-            error_payload = {
-                "type": "empty_response",
-                "message": str(exc),
-            }
 
         # 구조화 요약은 status가 ``completed``/``drift``/``refused``일 때 시도한다.
         # ``failed``(LLM 호출 자체 실패)는 본 인터뷰에 답이 없는 상태라 생략한다.
@@ -961,9 +1021,12 @@ class InterviewSession:
         )
 
     async def _call_llm(self, messages: list) -> tuple:
-        """``MlxLLMClient.chat``을 호출하고 (text, latency_ms, retry_count)를 반환한다.
+        """``MlxLLMClient.chat``을 호출하고 응답 메타를 반환한다.
 
         OpenAI 호환 dict 형식으로 변환하여 보낸다.
+
+        Returns:
+            ``(text, latency_ms, retry_count)``.
         """
 
         api_messages = [

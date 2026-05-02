@@ -2,7 +2,7 @@
 
 테스트 격리 원칙은 아래와 같다.
 
-- LLM 호출은 ``pytest-httpx``로 100% 모킹한다(실제 MLX 서버 의존 없음)
+- LLM 호출은 ``pytest-httpx``로 100% 모킹한다(실제 OpenAI API 호출 없음)
 - 데이터셋은 ``monkeypatch``로 ``datasets.load_dataset``을 가짜 함수로 교체한다
 - 환경변수는 ``monkeypatch``로 격리하고 테스트 종료 시 원복된다
 - 임시 디렉토리는 ``tmp_path``를 사용한다
@@ -34,12 +34,18 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 @pytest.fixture(autouse=True)
 def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """KPI_* 환경변수를 모두 제거하여 테스트 간 누수를 막는다."""
+    """``KPI_*``와 ``OPENAI_API_KEY`` 환경변수를 제거해 테스트 간 누수를 막는다.
+
+    OpenAI 키가 사용자 셸에 set되어 있으면 의도치 않게 외부 호출이 발생할
+    위험이 있으므로 테스트 fixture가 명시적으로 키를 박는 경우에만 동작하게
+    한다.
+    """
 
     for key in list(os.environ):
         if key.startswith("KPI_"):
             monkeypatch.delenv(key, raising=False)
     monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
 
 # ---------------------------------------------------------------------------
@@ -234,15 +240,15 @@ def make_app_config():
 
     def _build(
         *,
-        base_url: str = "http://localhost:8080/v1",
+        base_url: str = "https://api.openai.com/v1",
         model: str = "test-model",
         max_tokens: int = 100,
         temperature: float = 0.5,
         timeout: float = 5.0,
-        context_budget: int = 8000,
+        context_budget: int = 32000,
         retry_max_attempts: int = 3,
         retry_backoff_seconds: tuple = (0.0, 0.0, 0.0),
-        enable_thinking: bool = False,
+        api_key: str = "test-key",
         concurrency: int = 2,
         persona_fields: tuple = ("summary",),
         output_dir: Path = Path("outputs/"),
@@ -265,7 +271,7 @@ def make_app_config():
             context_budget=context_budget,
             retry_max_attempts=retry_max_attempts,
             retry_backoff_seconds=retry_backoff_seconds,
-            enable_thinking=enable_thinking,
+            api_key=api_key,
         )
         batch = BatchConfig(
             concurrency=concurrency,

@@ -67,15 +67,16 @@ class LlmConfig:
 
     def __post_init__(self) -> None:
         # 상한값은 본 도구의 v1 운영 가정에 맞춘 보수적 상한이다.
-        # max_tokens 1-8000: 단일 응답이 8000 토큰을 넘는 경우는 reasoning 토큰
-        # 폭증의 신호라 차단한다. retry_max_attempts 1-5: 5회 초과 재시도는
-        # 사용자 대기를 길게 만든다(120s timeout x 5 = 10분).
+        # max_tokens 1-16000: gpt-4o-mini의 출력 토큰 상한(약 16k)을 수용한다.
+        # MLX 시절 reasoning 토큰 폭증 가드(8k)는 OpenAI 백엔드에서 의미가 없다.
+        # retry_max_attempts 1-5: 5회 초과 재시도는 사용자 대기를 길게 만든다
+        # (120s timeout x 5 = 10분).
         # timeout 1-600초: 600초(10분)를 넘는 단일 호출은 v1 SLO 밖이다.
-        # context_budget 1000-32000: 1000 미만은 system 프롬프트 수용 불가,
-        # 32000은 OpenAI gpt-4o 계열 입력 컨텍스트 한계 가정.
-        if not (1 <= self.max_tokens <= 8000):
+        # context_budget 1000-128000: gpt-4o-mini 입력 컨텍스트(128k)를 수용한다.
+        # 1000 미만은 system 프롬프트 수용 불가.
+        if not (1 <= self.max_tokens <= 16000):
             raise ConfigError(
-                f"llm.max_tokens는 1-8000 범위만 허용한다. 입력값: {self.max_tokens}"
+                f"llm.max_tokens는 1-16000 범위만 허용한다. 입력값: {self.max_tokens}"
             )
         if not (1 <= self.retry_max_attempts <= 5):
             raise ConfigError(
@@ -86,9 +87,9 @@ class LlmConfig:
             raise ConfigError(
                 f"llm.timeout(초)은 1-600 범위만 허용한다. 입력값: {self.timeout}"
             )
-        if not (1000 <= self.context_budget <= 32000):
+        if not (1000 <= self.context_budget <= 128000):
             raise ConfigError(
-                "llm.context_budget는 1000-32000 범위만 허용한다. "
+                "llm.context_budget는 1000-128000 범위만 허용한다. "
                 f"입력값: {self.context_budget}"
             )
 
@@ -161,7 +162,7 @@ def _default_dict() -> dict:
             "max_tokens": 500,
             "temperature": 0.8,
             "timeout": 120,
-            "context_budget": 8000,
+            "context_budget": 32000,
             "retry_max_attempts": 3,
             "retry_backoff_seconds": [1, 2, 4],
             # API 키는 환경변수에서만 받는다. yaml/CLI override는 허용하지 않아

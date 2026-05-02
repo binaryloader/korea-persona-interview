@@ -1,13 +1,14 @@
-"""``MlxLLMClient`` 단위/통합 테스트.
+"""``MlxLLMClient`` 단위/통합 테스트(OpenAI 백엔드).
 
-- ``healthcheck``: 200 정상, 5xx, 4xx, 빈 data, 연결 실패
-- ``chat``: chat_template_kwargs 포함, enable_thinking on/off에 따른 reasoning 처리
-- 재시도 백오프(5xx → retry, 4xx → 즉시 ConfigError)
+- ``healthcheck``: 200 정상, 5xx, 4xx, 401, 빈 data, 연결 실패
+- ``chat``: Authorization 헤더, model, messages 포함, 정상 응답 파싱
+- 재시도 백오프(5xx → retry, 429 → retry, 4xx → 즉시 ConfigError, 401 → 즉시 ConfigError)
 - 빈 content → ``EmptyResponseError`` 거쳐 retry
-- localhost 외 base_url에서 chat 차단
+- API 키 누락 → ``ConfigError``로 즉시 차단(외부 호출 발생 안 함)
 - ``async with`` 미진입 시 RuntimeError
 
-LLM 호출은 100% ``pytest-httpx``로 모킹한다.
+LLM 호출은 100% ``pytest-httpx``로 모킹한다. v1.x부터 백엔드는 OpenAI Chat
+Completions API다.
 """
 
 from __future__ import annotations
@@ -26,10 +27,13 @@ from src.models import (
 )
 
 
+_API_BASE = "https://api.openai.com/v1"
+
+
 def _make_llm_config(
     *,
-    base_url: str = "http://localhost:8080/v1",
-    enable_thinking: bool = False,
+    base_url: str = _API_BASE,
+    api_key: str | None = "test-key",
     retry_max_attempts: int = 3,
 ) -> LlmConfig:
     return LlmConfig(
@@ -38,11 +42,11 @@ def _make_llm_config(
         max_tokens=128,
         temperature=0.5,
         timeout=5.0,
-        context_budget=8000,
+        context_budget=32000,
         retry_max_attempts=retry_max_attempts,
         # 백오프 0초로 두면 테스트가 빠르게 끝난다.
         retry_backoff_seconds=(0.0, 0.0, 0.0),
-        enable_thinking=enable_thinking,
+        api_key=api_key,
     )
 
 
@@ -55,22 +59,22 @@ def _make_llm_config(
 async def test_healthcheck_200_정상_모델리스트_반환(httpx_mock) -> None:
     httpx_mock.add_response(
         method="GET",
-        url="http://localhost:8080/v1/models",
-        json={"data": [{"id": "model-A"}, {"id": "model-B"}]},
+        url=f"{_API_BASE}/models",
+        json={"data": [{"id": "gpt-4o-mini"}, {"id": "gpt-4o"}]},
         status_code=200,
     )
 
     async with MlxLLMClient(_make_llm_config()) as client:
         models = await client.healthcheck()
 
-    assert models == ["model-A", "model-B"]
+    assert models == ["gpt-4o-mini", "gpt-4o"]
 
 
 @pytest.mark.asyncio
 async def test_healthcheck_data_비어있음_ServerNotReachableError(httpx_mock) -> None:
     httpx_mock.add_response(
         method="GET",
-        url="http://localhost:8080/v1/models",
+        url=f"{_API_BASE}/models",
         json={"data": []},
         status_code=200,
     )
@@ -84,7 +88,7 @@ async def test_healthcheck_data_비어있음_ServerNotReachableError(httpx_mock)
 async def test_healthcheck_5xx_ServerNotReachableError(httpx_mock) -> None:
     httpx_mock.add_response(
         method="GET",
-        url="http://localhost:8080/v1/models",
+        url=f"{_API_BASE}/models",
         status_code=503,
     )
 
@@ -94,10 +98,27 @@ async def test_healthcheck_5xx_ServerNotReachableError(httpx_mock) -> None:
 
 
 @pytest.mark.asyncio
+async def test_healthcheck_401_키_무효_ConfigError(httpx_mock) -> None:
+    """401 응답은 키 무효 안내 메시지로 즉시 ConfigError가 된다."""
+
+    httpx_mock.add_response(
+        method="GET",
+        url=f"{_API_BASE}/models",
+        status_code=401,
+        text="invalid api key",
+    )
+
+    async with MlxLLMClient(_make_llm_config()) as client:
+        with pytest.raises(ConfigError) as exc_info:
+            await client.healthcheck()
+    assert "API 키" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
 async def test_healthcheck_4xx_ConfigError(httpx_mock) -> None:
     httpx_mock.add_response(
         method="GET",
-        url="http://localhost:8080/v1/models",
+        url=f"{_API_BASE}/models",
         status_code=404,
         text="not found",
     )
@@ -111,7 +132,7 @@ async def test_healthcheck_4xx_ConfigError(httpx_mock) -> None:
 async def test_healthcheck_연결실패_ServerNotReachableError(httpx_mock) -> None:
     httpx_mock.add_exception(
         httpx.ConnectError("연결 거부"),
-        url="http://localhost:8080/v1/models",
+        url=f"{_API_BASE}/models",
     )
 
     async with MlxLLMClient(_make_llm_config()) as client:
@@ -119,8 +140,19 @@ async def test_healthcheck_연결실패_ServerNotReachableError(httpx_mock) -> N
             await client.healthcheck()
 
 
+@pytest.mark.asyncio
+async def test_healthcheck_API키_누락_ConfigError_외부호출_없음(httpx_mock) -> None:
+    """API 키 누락 시 외부 호출이 발생하지 않고 즉시 ConfigError가 raise된다."""
+
+    async with MlxLLMClient(_make_llm_config(api_key=None)) as client:
+        with pytest.raises(ConfigError) as exc_info:
+            await client.healthcheck()
+    assert "OPENAI_API_KEY" in str(exc_info.value)
+    assert len(httpx_mock.get_requests()) == 0
+
+
 # ---------------------------------------------------------------------------
-# chat: 정상 응답 + chat_template_kwargs
+# chat: 정상 응답 + 인증/요청 본문
 # ---------------------------------------------------------------------------
 
 
@@ -128,7 +160,7 @@ async def test_healthcheck_연결실패_ServerNotReachableError(httpx_mock) -> N
 async def test_chat_정상_응답_content_반환(httpx_mock) -> None:
     httpx_mock.add_response(
         method="POST",
-        url="http://localhost:8080/v1/chat/completions",
+        url=f"{_API_BASE}/chat/completions",
         json={
             "choices": [
                 {
@@ -150,17 +182,17 @@ async def test_chat_정상_응답_content_반환(httpx_mock) -> None:
 
 
 @pytest.mark.asyncio
-async def test_chat_request_body_chat_template_kwargs_포함(httpx_mock) -> None:
-    """body에 ``chat_template_kwargs.enable_thinking``이 항상 명시된다(GATE-1)."""
+async def test_chat_request_body_표준_OpenAI_형식(httpx_mock) -> None:
+    """body는 ``model``/``messages``/``max_tokens``/``temperature`` 4키만 포함한다."""
 
     httpx_mock.add_response(
         method="POST",
-        url="http://localhost:8080/v1/chat/completions",
+        url=f"{_API_BASE}/chat/completions",
         json={"choices": [{"message": {"role": "assistant", "content": "ok"}}]},
         status_code=200,
     )
 
-    async with MlxLLMClient(_make_llm_config(enable_thinking=False)) as client:
+    async with MlxLLMClient(_make_llm_config()) as client:
         await client.chat([{"role": "user", "content": "안녕"}])
 
     requests = httpx_mock.get_requests()
@@ -168,59 +200,38 @@ async def test_chat_request_body_chat_template_kwargs_포함(httpx_mock) -> None
     import json as _json
 
     body = _json.loads(requests[0].content)
-    assert body["chat_template_kwargs"] == {"enable_thinking": False}
     assert body["model"] == "test-model"
+    assert body["messages"] == [{"role": "user", "content": "안녕"}]
+    assert "chat_template_kwargs" not in body  # MLX 시절 필드 제거됨
 
 
 @pytest.mark.asyncio
-async def test_chat_enable_thinking_true_reasoning_보존(httpx_mock) -> None:
+async def test_chat_Authorization_Bearer_헤더_포함(httpx_mock) -> None:
+    """모든 호출에 ``Authorization: Bearer ${api_key}``가 첨부된다."""
+
     httpx_mock.add_response(
         method="POST",
-        url="http://localhost:8080/v1/chat/completions",
-        json={
-            "choices": [
-                {
-                    "message": {
-                        "role": "assistant",
-                        "content": "최종 답변",
-                        "reasoning": "let me think...",
-                    }
-                }
-            ]
-        },
+        url=f"{_API_BASE}/chat/completions",
+        json={"choices": [{"message": {"role": "assistant", "content": "ok"}}]},
         status_code=200,
     )
 
-    async with MlxLLMClient(_make_llm_config(enable_thinking=True)) as client:
-        response = await client.chat([{"role": "user", "content": "안녕"}])
+    async with MlxLLMClient(_make_llm_config(api_key="sk-deadbeef")) as client:
+        await client.chat([{"role": "user", "content": "안녕"}])
 
-    assert response.content == "최종 답변"
-    assert response.reasoning_trace == "let me think..."
+    requests = httpx_mock.get_requests()
+    assert requests[0].headers.get("Authorization") == "Bearer sk-deadbeef"
 
 
 @pytest.mark.asyncio
-async def test_chat_enable_thinking_false_reasoning_무시(httpx_mock) -> None:
-    httpx_mock.add_response(
-        method="POST",
-        url="http://localhost:8080/v1/chat/completions",
-        json={
-            "choices": [
-                {
-                    "message": {
-                        "role": "assistant",
-                        "content": "답",
-                        "reasoning": "내부 추론",
-                    }
-                }
-            ]
-        },
-        status_code=200,
-    )
+async def test_chat_API키_누락_ConfigError_외부호출_없음(httpx_mock) -> None:
+    """API 키 누락 시 chat은 외부 호출 없이 ConfigError를 raise한다(시크릿 누락 방어)."""
 
-    async with MlxLLMClient(_make_llm_config(enable_thinking=False)) as client:
-        response = await client.chat([{"role": "user", "content": "안녕"}])
+    async with MlxLLMClient(_make_llm_config(api_key=None)) as client:
+        with pytest.raises(ConfigError):
+            await client.chat([{"role": "user", "content": "사업 아이템 비밀"}])
 
-    assert response.reasoning_trace is None
+    assert len(httpx_mock.get_requests()) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -233,7 +244,7 @@ async def test_chat_5xx_3회_retry_후_RetryExhausted(httpx_mock) -> None:
     for _ in range(3):
         httpx_mock.add_response(
             method="POST",
-            url="http://localhost:8080/v1/chat/completions",
+            url=f"{_API_BASE}/chat/completions",
             status_code=500,
         )
 
@@ -245,10 +256,54 @@ async def test_chat_5xx_3회_retry_후_RetryExhausted(httpx_mock) -> None:
 
 
 @pytest.mark.asyncio
+async def test_chat_429_RateLimit_retry_대상(httpx_mock) -> None:
+    """OpenAI rate limit(429)은 5xx와 동일하게 재시도 대상이다."""
+
+    httpx_mock.add_response(
+        method="POST",
+        url=f"{_API_BASE}/chat/completions",
+        status_code=429,
+        text="rate limit exceeded",
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url=f"{_API_BASE}/chat/completions",
+        json={"choices": [{"message": {"role": "assistant", "content": "ok"}}]},
+        status_code=200,
+    )
+
+    async with MlxLLMClient(_make_llm_config(retry_max_attempts=2)) as client:
+        response = await client.chat([{"role": "user", "content": "x"}])
+
+    assert response.content == "ok"
+    assert response.retry_count == 1
+    assert len(httpx_mock.get_requests()) == 2
+
+
+@pytest.mark.asyncio
+async def test_chat_401_즉시_ConfigError_no_retry(httpx_mock) -> None:
+    """401(키 무효)은 retry해도 같은 결과라 즉시 실패시킨다."""
+
+    httpx_mock.add_response(
+        method="POST",
+        url=f"{_API_BASE}/chat/completions",
+        status_code=401,
+        text="invalid api key",
+    )
+
+    async with MlxLLMClient(_make_llm_config(retry_max_attempts=3)) as client:
+        with pytest.raises(ConfigError) as exc_info:
+            await client.chat([{"role": "user", "content": "x"}])
+
+    assert "API 키" in str(exc_info.value)
+    assert len(httpx_mock.get_requests()) == 1
+
+
+@pytest.mark.asyncio
 async def test_chat_4xx_즉시_ConfigError_no_retry(httpx_mock) -> None:
     httpx_mock.add_response(
         method="POST",
-        url="http://localhost:8080/v1/chat/completions",
+        url=f"{_API_BASE}/chat/completions",
         status_code=400,
         text="bad request",
     )
@@ -257,7 +312,7 @@ async def test_chat_4xx_즉시_ConfigError_no_retry(httpx_mock) -> None:
         with pytest.raises(ConfigError):
             await client.chat([{"role": "user", "content": "x"}])
 
-    # 4xx는 retry 대상 아님 → 1회만 호출
+    # 4xx(429 제외)는 retry 대상 아님 → 1회만 호출
     assert len(httpx_mock.get_requests()) == 1
 
 
@@ -267,13 +322,13 @@ async def test_chat_빈_content_EmptyResponseError_거쳐_retry(httpx_mock) -> N
 
     httpx_mock.add_response(
         method="POST",
-        url="http://localhost:8080/v1/chat/completions",
+        url=f"{_API_BASE}/chat/completions",
         json={"choices": [{"message": {"role": "assistant", "content": ""}}]},
         status_code=200,
     )
     httpx_mock.add_response(
         method="POST",
-        url="http://localhost:8080/v1/chat/completions",
+        url=f"{_API_BASE}/chat/completions",
         json={"choices": [{"message": {"role": "assistant", "content": "정상"}}]},
         status_code=200,
     )
@@ -291,7 +346,7 @@ async def test_chat_빈_content_모두_실패_RetryExhausted(httpx_mock) -> None
     for _ in range(3):
         httpx_mock.add_response(
             method="POST",
-            url="http://localhost:8080/v1/chat/completions",
+            url=f"{_API_BASE}/chat/completions",
             json={"choices": [{"message": {"role": "assistant", "content": ""}}]},
             status_code=200,
         )
@@ -306,7 +361,7 @@ async def test_chat_타임아웃_retry_후_RetryExhausted(httpx_mock) -> None:
     for _ in range(3):
         httpx_mock.add_exception(
             httpx.ReadTimeout("timeout"),
-            url="http://localhost:8080/v1/chat/completions",
+            url=f"{_API_BASE}/chat/completions",
         )
 
     async with MlxLLMClient(_make_llm_config(retry_max_attempts=3)) as client:
@@ -315,22 +370,38 @@ async def test_chat_타임아웃_retry_후_RetryExhausted(httpx_mock) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 보안: localhost 외 chat 차단
+# 응답 파싱: OpenAI 응답에는 reasoning 필드가 없다
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_chat_외부URL_ConfigError_차단(httpx_mock) -> None:
-    """base_url이 localhost가 아니면 chat은 즉시 ConfigError로 차단된다."""
+async def test_chat_응답에_reasoning_있어도_무시_None_반환(httpx_mock) -> None:
+    """OpenAI 응답에는 ``reasoning`` 필드가 없다. 호환 서버가 보내도 도메인
+    모델은 항상 None으로 채운다(직렬화 backward compat 유지).
+    """
 
-    cfg = _make_llm_config(base_url="https://api.example.com/v1")
+    httpx_mock.add_response(
+        method="POST",
+        url=f"{_API_BASE}/chat/completions",
+        json={
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "본문",
+                        "reasoning": "ignored",
+                    }
+                }
+            ]
+        },
+        status_code=200,
+    )
 
-    async with MlxLLMClient(cfg) as client:
-        with pytest.raises(ConfigError):
-            await client.chat([{"role": "user", "content": "사업 아이템 비밀"}])
+    async with MlxLLMClient(_make_llm_config()) as client:
+        response = await client.chat([{"role": "user", "content": "x"}])
 
-    # 차단되어 외부 호출이 한 번도 발생하지 않는다.
-    assert len(httpx_mock.get_requests()) == 0
+    assert response.content == "본문"
+    assert response.reasoning_trace is None
 
 
 # ---------------------------------------------------------------------------
