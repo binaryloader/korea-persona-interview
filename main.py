@@ -31,7 +31,7 @@ from src.cli_views import persona_to_json_dict as _persona_to_json_dict
 from src.cli_views import render_persona_table as _render_persona_table
 from src.config import AppConfig, load_config
 from src.console import MESSAGES, Console, resolve_color as _resolve_color
-from src.interview import InterviewSession
+from src.dry_run import run_dry_run as _run_dry_run
 from src.llm_backend import LLMBackend, build_cli_backend
 from src.load_personas import load_and_sample, parse_filter
 from src.logging_setup import bind_request_id, configure_logging
@@ -40,7 +40,6 @@ from src.models import (
     DatasetUnavailableError,
     EmptyValidRecordsError,
     FilterMatchedZeroError,
-    PersonaMeta,
     ServerNotReachableError,
 )
 from src.report import (
@@ -1086,89 +1085,6 @@ async def _run_batch_async(
             slug="korea-persona-interview",
             seed=seed,
         )
-
-
-async def _run_dry_run(
-    persona: PersonaMeta,
-    product: str,
-    questions: list,
-    follow_ups: list,
-    config: AppConfig,
-    console: Console,
-    json_mode: bool = False,
-) -> None:
-    """dry-run: 단일 페르소나 인터뷰를 콘솔에만 출력한다(UI §2.3.2).
-
-    ``json_mode``가 True면 사람용 메시지/시스템 프롬프트 덤프를 출력하지 않는다.
-    호출자가 헬스체크와 인터뷰만 수행한 뒤 페르소나 메타를 JSON으로 출력한다.
-    """
-
-    if not json_mode:
-        console.info("dry-run 모드: JSON 저장 없이 콘솔에만 출력합니다")
-
-    async with build_cli_backend(config.llm) as client:
-        # 헬스체크 자동 수행.
-        await client.healthcheck()
-
-        session = InterviewSession(
-            persona=persona,
-            product=product,
-            questions=questions,
-            follow_up_questions=follow_ups,
-            client=client,
-            config=config,
-        )
-        record = await session.run()
-
-    if json_mode:
-        # json 모드는 호출자에서 페르소나 메타와 결과 본체를 별도 페이로드로 출력한다.
-        return
-
-    # 시스템 프롬프트(record.messages[0])
-    if record.messages and record.messages[0].role == "system":
-        console.echo("--- 시스템 프롬프트 ---")
-        console.echo(record.messages[0].content)
-        console.echo("")
-
-    console.echo("--- 페르소나 메타 ---")
-    console.echo(f"persona_id: {persona.persona_id}")
-    console.echo(
-        f"이름: {persona.name or '-'}, 성별: {persona.gender}, 연령: {persona.age}, "
-        f"지역: {persona.region} {persona.subregion}, 직업: {persona.occupation}"
-    )
-    console.echo("")
-
-    for i, raw in enumerate(record.raw_responses):
-        if i < len(questions):
-            console.echo(f"--- 질문 {i + 1}: {questions[i]} ---")
-        else:
-            fu_idx = i - len(questions)
-            label = follow_ups[fu_idx] if fu_idx < len(follow_ups) else "follow-up"
-            console.echo(f"--- 사용자 정의 follow-up: {label} ---")
-        console.echo(f"응답: {raw.response}")
-        console.echo(f"지연: {raw.latency_ms}ms")
-        console.echo("")
-
-    console.echo("--- 구조화 요약 ---")
-    if record.structured_summary is not None:
-        s = record.structured_summary
-        console.echo(
-            json.dumps(
-                {
-                    "intent": s.intent,
-                    "willingness_to_pay": s.willingness_to_pay,
-                    "willingness_to_pay_currency": s.willingness_to_pay_currency,
-                    "rejection_reasons": s.rejection_reasons,
-                    "one_line": s.one_line,
-                },
-                ensure_ascii=False,
-                indent=2,
-            )
-        )
-    else:
-        console.echo("(구조화 요약 생성 실패 또는 응답 없음, structured_summary=null)")
-    console.echo("")
-    console.echo(f"status: {record.status}")
 
 
 # ---------------------------------------------------------------------------
