@@ -15,7 +15,7 @@ import re
 import pytest
 
 from main import MESSAGES
-from src.config import BatchConfig, LlmConfig, is_local_base_url
+from src.config import BatchConfig, LlmConfig
 from src.llm_client import MlxLLMClient
 from src.load_personas import _sample_indices, parse_filter
 from src.models import (
@@ -36,10 +36,12 @@ from src.models import (
 
 
 def test_ServerNotReachableError_메시지_본문() -> None:
-    """1번: ``MLX 서버가 응답하지 않습니다`` + ``mlx_lm.server`` 안내."""
+    """1번: ``OpenAI 서버에 연결할 수 없습니다`` + 모델 ID 영문 placeholder.
 
-    assert "MLX 서버가 응답하지 않습니다" in MESSAGES["server_not_reachable"]
-    assert "mlx_lm.server" in MESSAGES["server_not_reachable"]
+    v1.x 백엔드 전환 후 안내 본문은 OpenAI 관점으로 갱신되었다.
+    """
+
+    assert "OpenAI 서버에 연결할 수 없습니다" in MESSAGES["server_not_reachable"]
     # 모델 ID는 영문 placeholder로 보존
     assert "{model}" in MESSAGES["server_not_reachable"]
 
@@ -51,7 +53,7 @@ def test_ServerTimeoutError_의도_타임아웃_언급() -> None:
     timeout 발생 시 ServerNotReachableError로 변환되는지만 확인한다.
     """
 
-    exc = ServerNotReachableError("MLX 서버 응답 타임아웃")
+    exc = ServerNotReachableError("OpenAI 서버 응답 타임아웃")
     assert "타임아웃" in str(exc)
 
 
@@ -229,15 +231,19 @@ def test_메시지_종결_원칙_본문_단락_마침표() -> None:
 
 
 # ---------------------------------------------------------------------------
-# localhost 가드(security 메시지 동등 정합)
+# OpenAI API 키 누락 가드(security 메시지 동등 정합)
 # ---------------------------------------------------------------------------
 
 
-def test_localhost_가드_chat_차단_한국어_메시지() -> None:
-    """외부 URL chat 호출 시 한국어 ConfigError가 raise된다."""
+def test_API_KEY_누락_chat_차단_한국어_메시지() -> None:
+    """API 키 누락 상태로 chat 호출 시 한국어 ConfigError가 raise된다.
+
+    v1.x 백엔드 전환 후 외부 호출 가드는 키 누락 검사로 대체됐다. 사업 아이템
+    본문이 인증 없이 외부로 송신되는 것을 방지한다(security.md §1).
+    """
 
     cfg = LlmConfig(
-        base_url="https://api.example.com/v1",
+        base_url="https://api.openai.com/v1",
         model="m",
         max_tokens=10,
         temperature=0.5,
@@ -245,8 +251,8 @@ def test_localhost_가드_chat_차단_한국어_메시지() -> None:
         context_budget=8000,
         retry_max_attempts=1,
         retry_backoff_seconds=(0.0,),
+        api_key=None,
     )
-    assert is_local_base_url(cfg.base_url) is False
 
     import asyncio
 
@@ -259,8 +265,8 @@ def test_localhost_가드_chat_차단_한국어_메시지() -> None:
             return ""
 
     msg = asyncio.run(_check())
-    assert "localhost" in msg
-    assert "차단" in msg
+    assert "OPENAI_API_KEY" in msg
+    assert "API 키" in msg
 
 
 # ---------------------------------------------------------------------------

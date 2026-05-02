@@ -1083,13 +1083,14 @@ def _render_excluded_section(quant: QuantStats, *, include_drift: bool) -> str:
 def _render_footer(model_id: str) -> str:
     return (
         "본 리포트는 합성 페르소나 데이터(`nvidia/Nemotron-Personas-Korea`)와 "
-        "로컬 LLM 추론 결과를 결합하여 생성되었습니다. 합성 페르소나의 분포는 실제 "
-        "인구 통계 분포와 일치하지 않을 수 있고, 응답은 모델의 추론 결과이므로 실제 "
-        "한국인 응답자의 의견을 대체하지 않습니다. 본 도구는 실제 인터뷰 직전 단계의 "
-        "가설 검증과 질문지 점검 용도로 사용하시기 바랍니다.\n\n"
+        "OpenAI Chat Completions API 추론 결과를 결합하여 생성되었습니다. 합성 페르소나의 "
+        "분포는 실제 인구 통계 분포와 일치하지 않을 수 있고, 응답은 모델의 추론 결과이므로 "
+        "실제 한국인 응답자의 의견을 대체하지 않습니다. 본 도구는 실제 인터뷰 직전 단계의 "
+        "가설 검증과 질문지 점검 용도로 사용하시기 바랍니다. 사업 아이템 본문(`--product`)은 "
+        "인터뷰 호출 시 OpenAI 서버로 송신됩니다.\n\n"
         "- 데이터셋 출처: nvidia/Nemotron-Personas-Korea(https://huggingface.co/datasets/nvidia/Nemotron-Personas-Korea)\n"
         "- 데이터셋 라이선스: CC BY 4.0\n"
-        f"- 추론 모델: {model_id}(로컬 MLX 서버)\n"
+        f"- 추론 모델: {model_id}(OpenAI Chat Completions API)\n"
     )
 
 

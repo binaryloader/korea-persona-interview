@@ -636,7 +636,7 @@ async def test_generate_qualitative_insights_정상(httpx_mock, make_app_config)
     )
     httpx_mock.add_response(
         method="POST",
-        url="http://localhost:8080/v1/chat/completions",
+        url="https://api.openai.com/v1/chat/completions",
         json={"choices": [{"message": {"role": "assistant", "content": text}}]},
         status_code=200,
     )
@@ -661,7 +661,7 @@ async def test_generate_qualitative_insights_LLM_실패_fallback(
     for _ in range(3):
         httpx_mock.add_response(
             method="POST",
-            url="http://localhost:8080/v1/chat/completions",
+            url="https://api.openai.com/v1/chat/completions",
             status_code=500,
         )
 
@@ -744,7 +744,7 @@ async def test_generate_report_E2E_마크다운_저장(
     )
     httpx_mock.add_response(
         method="POST",
-        url="http://localhost:8080/v1/chat/completions",
+        url="https://api.openai.com/v1/chat/completions",
         json={"choices": [{"message": {"role": "assistant", "content": text}}]},
         status_code=200,
     )

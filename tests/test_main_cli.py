@@ -49,8 +49,8 @@ def test_cli_subcommand_help(subcommand: str) -> None:
 def test_healthcheck_정상_exit_0(httpx_mock, tmp_path: Path) -> None:
     httpx_mock.add_response(
         method="GET",
-        url="http://localhost:8080/v1/models",
-        json={"data": [{"id": "test-model"}]},
+        url="https://api.openai.com/v1/models",
+        json={"data": [{"id": "gpt-4o-mini"}]},
         status_code=200,
     )
 
@@ -59,7 +59,10 @@ def test_healthcheck_정상_exit_0(httpx_mock, tmp_path: Path) -> None:
     result = runner.invoke(
         cli,
         ["--no-color", "healthcheck"],
-        env={"KPI_OUTPUT_DIR": str(tmp_path)},
+        env={
+            "KPI_OUTPUT_DIR": str(tmp_path),
+            "OPENAI_API_KEY": "test-key",
+        },
     )
     assert result.exit_code == 0
     assert "[OK]" in result.output
@@ -70,18 +73,21 @@ def test_healthcheck_서버_다운_exit_1(httpx_mock, tmp_path: Path) -> None:
 
     httpx_mock.add_exception(
         httpx.ConnectError("connection refused"),
-        url="http://localhost:8080/v1/models",
+        url="https://api.openai.com/v1/models",
     )
 
     runner = CliRunner()
     result = runner.invoke(
         cli,
         ["--no-color", "healthcheck"],
-        env={"KPI_OUTPUT_DIR": str(tmp_path)},
+        env={
+            "KPI_OUTPUT_DIR": str(tmp_path),
+            "OPENAI_API_KEY": "test-key",
+        },
     )
     assert result.exit_code == 1
     # 한국어 안내 메시지 포함
-    assert "MLX 서버가 응답하지 않습니다" in result.output
+    assert "OpenAI 서버에 연결할 수 없습니다" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -187,7 +193,7 @@ def test_interview_헬스체크_실패_exit_1(
 
     httpx_mock.add_response(
         method="GET",
-        url="http://localhost:8080/v1/models",
+        url="https://api.openai.com/v1/models",
         status_code=503,
     )
 
@@ -204,10 +210,13 @@ def test_interview_헬스체크_실패_exit_1(
             "--n",
             "1",
         ],
-        env={"KPI_OUTPUT_DIR": str(tmp_path)},
+        env={
+            "KPI_OUTPUT_DIR": str(tmp_path),
+            "OPENAI_API_KEY": "test-key",
+        },
     )
     assert result.exit_code == 1
-    assert "MLX 서버가 응답하지 않습니다" in result.output
+    assert "OpenAI 서버에 연결할 수 없습니다" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -349,7 +358,7 @@ def test_interview_정상_3명_completed_exit_0(
 
     httpx_mock.add_response(
         method="GET",
-        url="http://localhost:8080/v1/models",
+        url="https://api.openai.com/v1/models",
         json={"data": [{"id": "test-model"}]},
         status_code=200,
     )
@@ -357,7 +366,7 @@ def test_interview_정상_3명_completed_exit_0(
     for _ in range(3):
         httpx_mock.add_response(
             method="POST",
-            url="http://localhost:8080/v1/chat/completions",
+            url="https://api.openai.com/v1/chat/completions",
             json={
                 "choices": [
                     {
@@ -372,7 +381,7 @@ def test_interview_정상_3명_completed_exit_0(
         )
         httpx_mock.add_response(
             method="POST",
-            url="http://localhost:8080/v1/chat/completions",
+            url="https://api.openai.com/v1/chat/completions",
             json={
                 "choices": [
                     {
@@ -410,7 +419,10 @@ def test_interview_정상_3명_completed_exit_0(
             "--output",
             str(tmp_path),
         ],
-        env={"KPI_OUTPUT_DIR": str(tmp_path)},
+        env={
+            "KPI_OUTPUT_DIR": str(tmp_path),
+            "OPENAI_API_KEY": "test-key",
+        },
     )
     assert result.exit_code == 0, result.output
     assert "다음 단계" in result.output
@@ -473,7 +485,7 @@ def test_report_정상_E2E_exit_0(httpx_mock, tmp_path: Path) -> None:
     )
     httpx_mock.add_response(
         method="POST",
-        url="http://localhost:8080/v1/chat/completions",
+        url="https://api.openai.com/v1/chat/completions",
         json={"choices": [{"message": {"role": "assistant", "content": insight_text}}]},
         status_code=200,
     )
@@ -482,7 +494,10 @@ def test_report_정상_E2E_exit_0(httpx_mock, tmp_path: Path) -> None:
     result = runner.invoke(
         cli,
         ["--no-color", "report", str(json_path)],
-        env={"KPI_OUTPUT_DIR": str(tmp_path)},
+        env={
+            "KPI_OUTPUT_DIR": str(tmp_path),
+            "OPENAI_API_KEY": "test-key",
+        },
     )
     assert result.exit_code == 0, result.output
     md_files = list(tmp_path.glob("report_*.md"))

@@ -58,7 +58,7 @@ def _persona(persona_id: str = "p-x", age: int = 27) -> PersonaMeta:
 def _add_models_response(httpx_mock) -> None:
     httpx_mock.add_response(
         method="GET",
-        url="http://localhost:8080/v1/models",
+        url="https://api.openai.com/v1/models",
         json={"data": [{"id": "test-model"}]},
         status_code=200,
     )
@@ -67,7 +67,7 @@ def _add_models_response(httpx_mock) -> None:
 def _add_chat_response(httpx_mock, content: str) -> None:
     httpx_mock.add_response(
         method="POST",
-        url="http://localhost:8080/v1/chat/completions",
+        url="https://api.openai.com/v1/chat/completions",
         json={"choices": [{"message": {"role": "assistant", "content": content}}]},
         status_code=200,
     )
@@ -388,7 +388,7 @@ async def test_run_batch_부분_실패_50_미만_partial_failure(
     for _ in range(9):
         httpx_mock.add_response(
             method="POST",
-            url="http://localhost:8080/v1/chat/completions",
+            url="https://api.openai.com/v1/chat/completions",
             status_code=500,
         )
 
@@ -471,7 +471,7 @@ async def test_run_batch_헬스체크_실패_ServerNotReachableError(
 
     httpx_mock.add_response(
         method="GET",
-        url="http://localhost:8080/v1/models",
+        url="https://api.openai.com/v1/models",
         status_code=503,
     )
 
