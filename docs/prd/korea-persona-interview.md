@@ -302,7 +302,9 @@ CLI는 4개 서브커맨드를 제공한다. 매크로 명령(예: `run-all`)은
   - OpenAI Chat Completions API(기본)
   - Anthropic Messages API(`provider=anthropic`)
   - OpenAI 호환 로컬 서버(mlx_lm.server, vLLM, llama.cpp 등). `provider=openai` + `--base-url` override
-- MCP 서버 진입점은 sampling 전용이다. host agent의 LLM에 위임하며 server-side 키가 불필요하다
+- MCP 서버 진입점은 `mcp.mode` 토글로 두 경로를 노출한다(ADR-004). 자동 fallback은 두지 않는다
+  - `mcp.mode: "server"`(기본)는 server-side OpenAI/Anthropic 백엔드를 사용한다. CLI와 동일한 `LlmConfig`를 그대로 활용하므로 mcp.json env에 `OPENAI_API_KEY` 또는 `ANTHROPIC_API_KEY`가 필요하다. 응답 라벨은 `mcp_server`다
+  - `mcp.mode: "sampling"`은 호스트 LLM에 `sampling/createMessage`로 위임한다. server-side 키가 필요 없다. 응답 라벨은 `mcp_sampling`이다
 - 인터넷 접근은 직접 호출 provider(OpenAI/Anthropic)와 데이터셋 첫 로드 시 Hugging Face Hub에 한해 필요하다. 로컬 LLM 또는 MCP sampling 경로는 인터넷 없이도 인터뷰가 가능하다(데이터셋 캐시 필요)
 - 의존성은 `httpx`, `datasets`, `pyyaml`, `tqdm`, `click`, `mcp`로 한정한다. `openai`/`anthropic` SDK는 도입하지 않는다(`dependency.md` §1 leftpad 안티패턴 회피와 직접 통제 목적). `mlx-lm` 의존도 v1에서 제거했다
 - 모든 의존성 버전은 `requirements.txt`에 안정 버전으로 고정하고 lock 파일을 함께 커밋한다(`dependency.md` §2)

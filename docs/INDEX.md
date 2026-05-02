@@ -8,7 +8,8 @@
 - [tdd/korea-persona-interview.md](tdd/korea-persona-interview.md) - 기술 설계(데이터셋 컬럼 매핑/모듈 책임/시그니처/JSON 스키마/에러/로깅/멀티턴/동시성/의존성/CLI/테스트/작업 분해)
 - [adr/2026-05-02-multiturn-strategy.md](adr/2026-05-02-multiturn-strategy.md) - 멀티턴 + 단일턴 구조화 요약 채택 결정
 - [adr/2026-05-02-openai-backend-migration.md](adr/2026-05-02-openai-backend-migration.md) - 로컬 MLX → OpenAI Chat Completions API 백엔드 전환 결정(ADR-003에 의해 supersede)
-- [adr/2026-05-02-multi-provider-backend.md](adr/2026-05-02-multi-provider-backend.md) - multi-provider 백엔드(OpenAI / Anthropic / 로컬 LLM / MCP sampling) 결정. ADR-002 supersede
+- [adr/2026-05-02-multi-provider-backend.md](adr/2026-05-02-multi-provider-backend.md) - multi-provider 백엔드(OpenAI / Anthropic / 로컬 LLM / MCP sampling) 결정. ADR-002 supersede. MCP sampling-only 결정 부분만 ADR-004로 supersede
+- [adr/2026-05-02-mcp-mode-toggle.md](adr/2026-05-02-mcp-mode-toggle.md) - MCP 동작 모드 토글(server default, sampling opt-in) 도입. ADR-003 §2의 sampling-only 결정 supersede
 - [ui/korea-persona-interview.md](ui/korea-persona-interview.md) - CLI 사용자 흐름과 콘솔 출력 명세, 한국어 에러 메시지 사전, 리포트 마크다운 섹션 트리
 - [tasks/korea-persona-interview.md](tasks/korea-persona-interview.md) - 작업 표(T1-T11 + GATE-1/2), 의존성 그래프, 마일스톤
 - [backlog/v1.2.0.md](backlog/v1.2.0.md) - v1.2.0으로 미룬 백로그 항목과 동기
@@ -97,15 +98,16 @@
 - 프로세스 단위 mtime 기반 in-memory 캐시로 디스크 I/O를 최소화한다. 파일 편집 후 다음 호출에서 자동 반영된다
 - 페르소나 풀은 `(filter_str, n, seed, field_map, gender_aliases, province_aliases, dataset_name, split)` 키로 in-memory 캐싱된다. `clear_persona_pool_cache()`로 무효화 가능하다
 
-### 3.7. MCP 서버(라운드 C + sampling 전용)
+### 3.7. MCP 서버(ADR-004 mode toggle)
 
-- 진입점은 `python -m src.mcp_server`(모듈 단위)와 console script `kpi-mcp-server` 두 가지다
-- 4개 도구는 `healthcheck`, `list_personas`, `interview`, `report`다(MCP 관례 snake_case)
-- 추론은 `McpSamplingBackend`로 host agent에 위임한다(sampling 전용). server-side에 OpenAI/Anthropic 키가 필요 없다
-- host가 sampling capability를 노출하지 않거나 MCP 호스트가 attach되지 않으면 ConfigError + CLI fallback 안내(`python main.py interview ...`)를 돌려준다
-- 도구 응답 형태는 `{"ok": true, ...}` 또는 `{"error": {"code", "message", "exit_code"}}`로 통일한다. 모든 응답은 `"backend": "mcp_sampling"` 라벨을 박는다
-- 진행률 표시는 `progress_disable=True`로 끈다. 로그는 stderr/`outputs/logs/run_*.jsonl`에 그대로 흘려 stdio JSON-RPC 채널을 오염시키지 않는다
-- `mcp` SDK import는 `_serve_stdio()` 안에서 lazy하게 수행한다. SDK 부재 시 친절한 한국어 안내 + exit 1로 종료한다
+- 진입점은 두 가지다. 모듈 단위는 `python -m src.mcp_server`이고 console script는 `kpi-mcp-server`다
+- 4개 도구는 `healthcheck`, `list_personas`, `interview`, `report`다. MCP 관례 snake_case 표기를 따른다
+- 추론 경로는 `mcp.mode` 토글로 명시 선택한다. ADR-004에 결정값이 박혀 있다. 자동 fallback은 없다
+  - `mode: "server"`는 기본값이다. server-side `OpenAIBackend`나 `AnthropicBackend`를 사용한다. CLI와 동일한 `LlmConfig` 필드를 그대로 적용한다. 적용 필드는 provider, base_url, model, api_key, timeout, retry, anthropic_cache_control, extra_chat_kwargs, streaming이다. mcp.json env에 `OPENAI_API_KEY` 또는 `ANTHROPIC_API_KEY`가 필요하다. 응답 라벨은 `"backend": "mcp_server"`다
+  - `mode: "sampling"`은 명시 opt-in이다. 호스트 LLM에 `sampling/createMessage`로 위임한다. server-side 키가 필요 없다. host가 sampling capability를 노출하지 않거나 MCP 호스트가 attach되지 않으면 ConfigError와 CLI fallback 안내를 돌려준다. fallback 안내 메시지에 `python main.py interview ...`가 포함된다. 응답 라벨은 `"backend": "mcp_sampling"`이다
+- 도구 응답 형태는 정상이면 `{"ok": true, "backend": "...", ...}`이고 에러면 `{"ok": false, "backend": "...", "error": {"code", "message", "exit_code"}}`로 통일한다
+- 진행률 표시는 `progress_disable=True`로 끈다. 로그는 stderr와 `outputs/logs/run_*.jsonl`에 그대로 흘려 stdio JSON-RPC 채널을 오염시키지 않는다
+- `mcp` SDK import는 `_serve_stdio()` 안에서 lazy하게 수행한다. SDK 부재 시 친절한 한국어 안내와 exit 1로 종료한다
 
 ### 3.8. 환경 도구
 
@@ -117,7 +119,8 @@
 
 - [ADR-001 (2026-05-02)](adr/2026-05-02-multiturn-strategy.md) - 멀티턴 + 단일턴 구조화 요약 채택. 후속 supersede 후보: 단일턴 + 사후 요약(100명 30분 SLO 위반 시)
 - [ADR-002 (2026-05-02)](adr/2026-05-02-openai-backend-migration.md) - 로컬 MLX → OpenAI Chat Completions API(`gpt-4o-mini`) 백엔드 전환. ADR-003에 의해 supersede(multi-provider로 확장)
-- [ADR-003 (2026-05-02)](adr/2026-05-02-multi-provider-backend.md) - multi-provider 백엔드 채택. CLI는 `provider=openai|anthropic` + 로컬 LLM via base_url override, MCP는 sampling 전용. 후속 supersede 후보: provider별 페르소나 품질 검증 결과에 따른 default 모델 변경
+- [ADR-003 (2026-05-02)](adr/2026-05-02-multi-provider-backend.md) - multi-provider 백엔드 채택. CLI는 `provider=openai|anthropic` + 로컬 LLM via base_url override, MCP는 sampling 전용. MCP sampling-only 결정은 ADR-004로 supersede(multi-provider 결정 자체는 유효). 후속 supersede 후보: provider별 페르소나 품질 검증 결과에 따른 default 모델 변경
+- [ADR-004 (2026-05-02)](adr/2026-05-02-mcp-mode-toggle.md) - MCP 동작 모드 토글 도입. `mcp.mode: "server"`(기본)는 server-side OpenAI/Anthropic 호출, `mcp.mode: "sampling"`은 호스트 LLM 위임. 자동 fallback 없음. ADR-003 §2의 sampling-only 결정 supersede. 후속 supersede 후보: sampling 호환 클라이언트 보급률 50%+ 도달 시 default를 sampling으로 전환
 
 ## 5. 갱신 이력
 
@@ -158,3 +161,4 @@
 - 2026-05-02 버전 1.0.0 안정 릴리즈, 비용 추정 제거. `src/_pricing.py` 모듈, `BatchResultEnvelope.estimated_cost_usd` 필드, `meta_extra.estimated_cost_usd` JSON 키, 콘솔 "비용 추정: $X.XXXX" 한 줄, 리포트 헤더 비용 행, `--json` 응답의 `estimated_cost_usd` 필드를 모두 제거. 토큰 사용량(prompt/completion/cached) 노출은 유지. 단가 표가 자주 변하고 추정치와 실제 청구 금액이 일치하지 않아 신뢰성을 해친다는 판단. 회귀 521 → 509개. `pyproject.toml`/`src/__init__.py`/README/CHANGELOG/CONTRIBUTING/SECURITY/PRD/TDD/ADR/v1.1.0 백로그 동기 갱신
 - 2026-05-02 버전 1.1.0 릴리즈, 라운드 G 27개 항목 일괄 적용. 기능 추가는 `--persona-id` 명시 페르소나 고정, `--resume` 부분 실패 재시도, `--insight-model` 단계별 모델 분리, `--json` 응답에 `ok` 필드, Anthropic prompt caching `cache_control` 마커, `llm.extra_chat_kwargs` 자유 양식 dict, OpenAI streaming SSE 응답, LLM-as-judge drift 옵트인, `acceptable_price_signal` 정성 신호 필드(BREAKING `schema_version` 1→2), `LLMClient` 클래스명(BREAKING, `MlxLLMClient` 제거), `_run_dry_run` 모듈 분리, prompts 패키지 fallback. 보안/관측성으로 `persona_id` 해시 마스킹, 인구통계 DEBUG 격하, `--output` 경로 정규화 경고, `outputs/` 0700 + 결과 파일 0600, product/질문 길이 상한과 시스템 프롬프트 마커 escape, `gender_aliases` 역방향 정규화. 휴리스틱 정밀화로 region/age/gender 축에 family_type과 같은 같은 문장 단위 정밀 정규식 + 부정문 가드 + 3인칭 제외, 직업명 영문 화이트리스트. 패키징 정리로 `requirements.txt`를 `-e .`로 단순화하고 `pyproject.toml`을 단일 정본으로. 회귀 509 → 555개. v1.1.0 backlog 27개 처리 완료, v1.2.0 backlog로 4개 항목(FastAPI REST, keychain, Batch API, multi-model A/B + 신규 streaming 저장 + provider 품질 검증) 이관
 - 2026-05-02 v1.1.0 push 직전 최종 정리. config.yaml line 43 dangling 주석 제거, llm 섹션 헤더에 진입점별 적용 범위 명시(CLI 전용 / MCP sampling 전달 / 양쪽 적용 분리). batch/dataset/interview/report/output 섹션 주석을 SDK 공개 수준으로 다듬음. McpSamplingBackend 적용 범위를 코드 검증으로 확정(messages/max_tokens/system_prompt/temperature 4개만 host에 전달, 나머지는 호스트가 소유)하고 README/TDD §12에 동기 반영. src/batch.py 모듈 docstring과 run_batch docstring을 영어 SDK 수준으로 재작성, src/dry_run.py에 누락되었던 acceptable_price_signal 필드 dump 추가, src/interview.py와 src/llm_client.py의 일부 한국어 주석을 일관성 있는 영어 주석으로 정리. README Features/Configuration/Usage Examples/Output Format/Limitations/Roadmap을 v1.1.0 신기능 전체로 갱신. PRD §5.1, §5.2, §5.4, §5.8, §5.9, §6.1, §6.6 갱신. TDD §1, §8, §12.2, §13, §16 갱신. UI 콘솔 출력 샘플을 v1.1.0 형식으로 갱신. 회귀 555 통과 유지
+- 2026-05-02 v1.1.1 patch 릴리즈, MCP 동작 모드 토글 도입. ADR-004 신규 채택으로 ADR-003 §2의 sampling-only 결정 supersede. `mcp.mode` 토글 추가(server default + sampling opt-in). server mode는 server-side OpenAI/Anthropic 백엔드를 CLI와 동일한 LlmConfig로 호출하고 응답 라벨은 mcp_server, sampling mode는 기존 sampling/createMessage 위임을 유지하고 응답 라벨은 mcp_sampling. 자동 fallback은 두지 않음. McpConfig dataclass와 화이트리스트 검증, _build_backend(config) mode 분기, _backend_label 헬퍼 추가. 모든 도구 응답 envelope에 backend 라벨 일관 박힘(정상/에러). examples/mcp/ 두 변형 mcp.json 갱신. README Integration 섹션 두 모드 안내 + 트레이드오프 비교. INDEX §3.7, PRD §5.10, TDD §2.10/§12 동기 갱신. 회귀 555 → 571개

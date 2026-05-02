@@ -18,7 +18,7 @@ The tool ships four CLI subcommands (`healthcheck`, `list-personas`, `interview`
 - `llm.extra_chat_kwargs` free-form dict forwarded into the OpenAI request body for backend-specific extensions (e.g. `chat_template_kwargs.enable_thinking` on mlx_lm.server / vLLM Qwen3)
 - LLM-as-judge drift refinement (`interview.llm_drift_review: true`, opt-in default off) that revisits heuristic drift detections with a single 1-token verdict call to clear false positives
 - `acceptable_price_signal` (`cheap`/`fair`/`expensive`/`null`) on every structured summary so price sentiment lands on every record even when the persona never names a number; `report.estimate_wtp_from_signal` opts into a recommendation prompt that uses the signal distribution alongside explicit numbers
-- MCP server (`python -m src.mcp_server`) that exposes the four CLI commands as tools to Claude Code, Cursor, and Codex. Inference is delegated to the host agent via `sampling/createMessage`, so the server itself holds no API key
+- MCP server (`python -m src.mcp_server`) that exposes the four CLI commands as tools to Claude Code, Cursor, and Codex. The `mcp.mode` toggle picks between two inference paths: `server` (default) calls OpenAI/Anthropic directly server-side using the same `LlmConfig` the CLI uses, and `sampling` delegates to the host agent via `sampling/createMessage`
 - Automatic markdown report after every interview run (toggle off with `--no-report` for JSON-only pipelines)
 - `--json` root mode that emits a single JSON document on stdout for shell scripts and external agents; every JSON envelope (CLI and MCP) carries an explicit `ok: true|false` field for one-key branching
 - Single-turn mode (`--single-turn`) that bundles every question into one chat call to cut tokens at scale
@@ -404,6 +404,7 @@ Notable yaml keys.
 - `report.cohort_min_cell` - cohort cell sample-size mask threshold (default 3, raise to 5 for more conservative reporting)
 - `report.histogram_bins` - price histogram bin count (default 10)
 - `report.bar_width` - text bar chart width (default 30, lower for narrow terminals)
+- `mcp.mode` - MCP entry point inference path. `server` (default) calls OpenAI/Anthropic server-side using the same `LlmConfig` the CLI uses. `sampling` delegates to the host agent's LLM via `sampling/createMessage` and does not require a server-side API key. No automatic fallback. See ADR-004 for the rationale and the MCP integration guide for mcp.json examples per mode
 
 Knobs added in v1.1.
 
@@ -469,14 +470,20 @@ The matrix below covers every supported entry point and inference target. Pick t
 | CLI | OpenAI | Your OpenAI account | `OPENAI_API_KEY` | `gpt-4o-mini` (default) or any OpenAI model | Reproducible defaults, validated persona quality |
 | CLI | Anthropic Claude | Your Anthropic account | `ANTHROPIC_API_KEY` | `claude-haiku-4-5` (default), Sonnet, Opus | When you already have Anthropic credits or want a Claude baseline |
 | CLI | Local OpenAI-compatible (mlx_lm.server, vLLM, llama.cpp) | None | any non-empty | The local server's loaded model | Offline runs, custom fine-tunes, hardware you control |
-| MCP server | Host agent's LLM via `sampling/createMessage` | The host agent's plan | None on the server | Whatever the host picks | When the agent (Claude Code, Cursor, ...) already has an LLM and you do not want a second bill |
+| MCP server (`mcp.mode: "server"`, default) | OpenAI or Anthropic via the same `LlmConfig` the CLI uses | Your provider account | `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` on the MCP server | Same as CLI (`gpt-4o-mini` or `claude-haiku-4-5` by default) | One-tool registration that works in any MCP client today; reuses CLI defaults and prompt caching |
+| MCP server (`mcp.mode: "sampling"`, opt-in) | Host agent's LLM via `sampling/createMessage` | The host agent's plan | None on the server | Whatever the host picks | When the host already advertises sampling capability and you do not want a second bill |
 
-The MCP server is sampling-only: there is no OpenAI/Anthropic fallback inside the MCP entry point. If you run `python -m src.mcp_server` outside an MCP host, every tool returns a config error pointing back at the CLI. The reverse is also true: the CLI never opens an MCP session.
+The MCP server picks the backend at startup based on `mcp.mode` in `config.yaml`. There is no automatic fallback between modes, so the response always carries an explicit `"backend": "mcp_server"` or `"backend": "mcp_sampling"` label that tells you which path handled the call. ADR-004 captures the rationale.
+
+Why the default is `server`. As of 2026-04 most mainstream MCP clients (Claude Code Desktop release builds, Cursor stable, cmux) do not advertise the sampling capability yet, so the previous sampling-only policy returned a config error on every tool call out of the box. Server mode boots immediately at the cost of one server-side API key. Switch to `sampling` once your host advertises the capability.
+
+If you run `python -m src.mcp_server` outside an MCP host with `mcp.mode: "sampling"`, every tool returns a config error pointing back at the CLI or suggesting `mcp.mode: "server"`. The CLI itself never opens an MCP session.
 
 Which `llm.*` yaml fields apply on each entry point.
 
 - CLI entry point: every `llm.*` field is honored (provider, base_url, model, api_key, max_tokens, temperature, timeout, context_budget, retry_max_attempts, retry_backoff_seconds, anthropic_cache_control, extra_chat_kwargs, streaming).
-- MCP server entry point: backend identity is owned by the host agent, so provider, base_url, model, api_key, streaming, extra_chat_kwargs, anthropic_cache_control, timeout, retry_max_attempts, retry_backoff_seconds are all ignored. Only `max_tokens` and `temperature` are forwarded into the host's `sampling/createMessage` call. `context_budget` is applied by the message-history truncator on both paths so it is honored regardless.
+- MCP server entry point with `mcp.mode: "server"`: every `llm.*` field is honored, identical to the CLI. The OpenAI/Anthropic backend runs server-side on the MCP host process.
+- MCP server entry point with `mcp.mode: "sampling"`: backend identity is owned by the host agent, so provider, base_url, model, api_key, streaming, extra_chat_kwargs, anthropic_cache_control, timeout, retry_max_attempts, retry_backoff_seconds are all ignored. Only `max_tokens` and `temperature` are forwarded into the host's `sampling/createMessage` call. `context_budget` is applied by the message-history truncator on both paths so it is honored regardless.
 
 Trade-offs to keep in mind.
 
@@ -490,6 +497,13 @@ The project ships a Model Context Protocol (MCP) server that exposes the four CL
 
 The server speaks JSON-RPC over stdio. Logs flow to stderr and `outputs/logs/run_*.jsonl`, so they do not pollute the stdio channel that the agent reads.
 
+Pick a mode before you register the server. The toggle lives in `config.yaml` under `mcp.mode`.
+
+- `mcp.mode: "server"` (default). Server-side OpenAI or Anthropic calls. Set `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` in the mcp.json `env` block. Works in any MCP client today, including hosts that do not advertise the sampling capability
+- `mcp.mode: "sampling"`. Inference is delegated to the host agent via `sampling/createMessage`. No server-side API key required, but the host must advertise the sampling capability. As of 2026-04 only some Cursor builds advertise it; Claude Code Desktop release builds and cmux do not yet
+
+There is no automatic fallback between modes. The chosen path is reflected on every response as `"backend": "mcp_server"` or `"backend": "mcp_sampling"`. ADR-004 captures the rationale.
+
 Run the server manually to verify it starts.
 
 ```bash
@@ -497,6 +511,8 @@ python -m src.mcp_server
 ```
 
 Register it in Claude Code by adding the snippet below to `~/.claude/mcp.json` (create the file if it does not exist). The `cwd` must point at the project root so that `config.yaml`, `prompts/system_prompt.txt`, and `outputs/` resolve correctly.
+
+The default `mcp.mode: "server"` snippet uses an OpenAI key.
 
 ```json
 {
@@ -513,7 +529,21 @@ Register it in Claude Code by adding the snippet below to `~/.claude/mcp.json` (
 }
 ```
 
-Register it in Cursor by adding the snippet below to `.cursor/mcp.json` at the project root or to the global Cursor MCP settings.
+If you opt into `mcp.mode: "sampling"` (set in `config.yaml`), the `env` block can drop the API key entirely because the host pays for inference.
+
+```json
+{
+  "mcpServers": {
+    "korea-persona-interview": {
+      "command": "/absolute/path/to/.venv/bin/python",
+      "args": ["-m", "src.mcp_server"],
+      "cwd": "/absolute/path/to/korea-persona-interview"
+    }
+  }
+}
+```
+
+Register it in Cursor by adding the snippet below to `.cursor/mcp.json` at the project root or to the global Cursor MCP settings. The example below uses server mode.
 
 ```json
 {
@@ -532,11 +562,11 @@ Register it in Cursor by adding the snippet below to `.cursor/mcp.json` at the p
 
 Drop-in copies of both files live under [examples/mcp/](examples/mcp/).
 
-The four tools exposed are below. Each tool returns a single JSON document. On failure the document has the shape `{"error": {"code": "...", "message": "...", "exit_code": N}}`.
+The four tools exposed are below. Each tool returns a single JSON document. Every successful and error response carries a `backend` field (`"mcp_server"` or `"mcp_sampling"`). On failure the envelope has the shape `{"ok": false, "backend": "...", "error": {"code": "...", "message": "...", "exit_code": N}}`.
 
 | Tool | Purpose | Required arguments |
 | --- | --- | --- |
-| `healthcheck` | Verify OpenAI API reachability and model availability | (none) |
+| `healthcheck` | Verify provider reachability (server mode) or sampling capability (sampling mode) | (none) |
 | `list_personas` | Preview personas matching a filter | (none) |
 | `interview` | Run a batch interview, write the result JSON, return summary | `product`, `questions` |
 | `report` | Generate a markdown report from a result JSON | `json_path` |
