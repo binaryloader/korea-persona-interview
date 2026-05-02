@@ -31,6 +31,10 @@ class PersonaMeta:
 
     데이터셋의 컬럼 매핑 결과(TDD §1.3)를 보존한다. ``name``은 데이터셋에 별도
     이름 컬럼이 없어 v1에서 ``None``으로 두는 것을 기본 동작으로 한다.
+
+    ``family_type``/``housing_type``은 1인 가구 여부와 주거 유형을 시스템
+    프롬프트에 그대로 노출하기 위한 필드다. 데이터셋에 해당 컬럼이 없거나
+    비어 있는 경우 ``None``으로 둔다(field_map 매핑 결과 부재 시 동일).
     """
 
     persona_id: str
@@ -43,6 +47,8 @@ class PersonaMeta:
     marital: str
     education: str
     raw: dict
+    family_type: Optional[str] = None
+    housing_type: Optional[str] = None
 
     def __post_init__(self) -> None:
         if self.gender not in ALLOWED_GENDER:

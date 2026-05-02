@@ -110,6 +110,74 @@ def test_build_system_prompt_토글_OFF_미주입(fake_persona_meta) -> None:
     assert fake_persona_meta.raw["sports_persona"] not in prompt
 
 
+def test_build_system_prompt_family_type_주입(fake_persona_meta) -> None:
+    """family_type이 시스템 프롬프트의 페르소나 JSON에 포함된다(박태민 사례 회귀)."""
+
+    prompt = build_system_prompt(
+        fake_persona_meta,
+        product="반찬",
+        persona_fields=("summary",),
+        field_map=_FIELD_MAP,
+    )
+    assert fake_persona_meta.family_type in prompt
+
+
+def test_build_system_prompt_housing_type_주입(fake_persona_meta) -> None:
+    """housing_type이 시스템 프롬프트의 페르소나 JSON에 포함된다."""
+
+    prompt = build_system_prompt(
+        fake_persona_meta,
+        product="반찬",
+        persona_fields=("summary",),
+        field_map=_FIELD_MAP,
+    )
+    assert fake_persona_meta.housing_type in prompt
+
+
+def test_build_system_prompt_거주_형태_지침_포함(fake_persona_meta) -> None:
+    """[지침] 섹션에 family_type 추측 금지 한 줄이 포함된다."""
+
+    prompt = build_system_prompt(
+        fake_persona_meta,
+        product="반찬",
+        persona_fields=("summary",),
+        field_map=_FIELD_MAP,
+    )
+    assert "family_type" in prompt
+    assert "추측하지" in prompt
+
+
+def test_build_system_prompt_family_type_None이면_JSON에_미주입() -> None:
+    """family_type이 None이면 페르소나 JSON 객체에 키가 등장하지 않는다.
+
+    [지침] 섹션에는 family_type 단어가 항상 등장하므로 JSON 부분만 검사한다.
+    JSON은 ``[페르소나 정보]`` 라벨과 다음 빈 줄 사이에 위치한다.
+    """
+
+    persona = PersonaMeta(
+        persona_id="p",
+        name=None,
+        gender="여자",
+        age=30,
+        region="서울",
+        subregion="서울-X",
+        occupation="x",
+        marital="x",
+        education="x",
+        raw={},
+        family_type=None,
+        housing_type=None,
+    )
+    prompt = build_system_prompt(
+        persona,
+        product="반찬",
+        persona_fields=("summary",),
+        field_map=_FIELD_MAP,
+    )
+    persona_json_block = prompt.split("[페르소나 정보]\n", 1)[1].split("\n\n", 1)[0]
+    assert '"family_type"' not in persona_json_block
+
+
 # ---------------------------------------------------------------------------
 # estimate_tokens / estimate_messages_tokens
 # ---------------------------------------------------------------------------
@@ -248,7 +316,13 @@ def test_should_auto_follow_up_딱히_키워드() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _persona(age: int = 70, gender: str = "여자", region: str = "서울") -> PersonaMeta:
+def _persona(
+    age: int = 70,
+    gender: str = "여자",
+    region: str = "서울",
+    family_type: str | None = None,
+    housing_type: str | None = None,
+) -> PersonaMeta:
     return PersonaMeta(
         persona_id="p",
         name=None,
@@ -260,6 +334,8 @@ def _persona(age: int = 70, gender: str = "여자", region: str = "서울") -> P
         marital="x",
         education="x",
         raw={},
+        family_type=family_type,
+        housing_type=housing_type,
     )
 
 
@@ -314,6 +390,73 @@ def test_detect_persona_drift_영어_단어_비율_단어단위_True() -> None:
 
     text = "I think this product is good because it really helps me daily and so on."
     assert detect_persona_drift(text, _persona()) is True
+
+
+def test_detect_persona_drift_단독거주_1인_가구_부정_True() -> None:
+    """family_type=혼자 거주 페르소나가 ``저는 1인 가구가 아니``를 단언하면 drift다."""
+
+    text = "성수동에서 살고 있는데, 딱히 저는 1인 가구가 아니라서 필요성을 못 느끼겠네요."
+    persona = _persona(age=25, gender="남자", region="서울", family_type="혼자 거주")
+    assert detect_persona_drift(text, persona) is True
+
+
+def test_detect_persona_drift_단독거주_1인_가구_표기_True() -> None:
+    """family_type=1인 가구 표기 페르소나도 동일하게 drift를 잡는다."""
+
+    text = "저는 가족과 함께 살아서 그런 서비스가 필요 없어요."
+    persona = _persona(age=25, family_type="1인 가구")
+    assert detect_persona_drift(text, persona) is True
+
+
+def test_detect_persona_drift_가족동거_혼자_산다_단언_True() -> None:
+    """family_type=배우자와 거주 페르소나가 ``저는 혼자 산다``를 단언하면 drift다."""
+
+    text = "저는 혼자 사는 입장이라 그런 거 잘 모르겠어요."
+    persona = _persona(age=34, gender="남자", family_type="배우자와 거주")
+    assert detect_persona_drift(text, persona) is True
+
+
+def test_detect_persona_drift_가족동거_1인_가구_단언_True() -> None:
+    """family_type=배우자·자녀와 거주 페르소나가 ``저는 1인 가구``를 단언하면 drift다."""
+
+    text = "저는 1인 가구라서 식비가 늘 부담이에요."
+    persona = _persona(age=41, family_type="배우자·자녀와 거주")
+    assert detect_persona_drift(text, persona) is True
+
+
+def test_detect_persona_drift_단독거주_정합_답변_False() -> None:
+    """family_type=혼자 거주 페르소나의 정합 답변(예: ``저는 1인 가구라``)은 drift가 아니다."""
+
+    text = "저는 1인 가구라서 작은 단위로 사는 게 편해요."
+    persona = _persona(age=25, family_type="혼자 거주")
+    assert detect_persona_drift(text, persona) is False
+
+
+def test_detect_persona_drift_가족동거_정합_답변_False() -> None:
+    """family_type=배우자와 거주 페르소나의 정합 답변(``저는 가족과 함께``)은 drift가 아니다."""
+
+    text = "저는 가족과 함께 살아서 한 번에 큰 단위로 장을 봐요."
+    persona = _persona(age=34, gender="남자", family_type="배우자와 거주")
+    assert detect_persona_drift(text, persona) is False
+
+
+def test_detect_persona_drift_family_type_None이면_검사_건너뜀() -> None:
+    """family_type이 None이면 거주 형태 휴리스틱은 동작하지 않는다(과도한 false positive 회피)."""
+
+    text = "저는 1인 가구가 아니라서 필요성을 못 느끼겠어요."
+    persona = _persona(age=25, family_type=None)
+    assert detect_persona_drift(text, persona) is False
+
+
+def test_detect_persona_drift_지역_자기_시도_동시_등장_False() -> None:
+    """자기 단언 컨텍스트에 자기 시도와 다른 시도가 동시에 등장하면 false positive를 내지 않는다.
+
+    예: 서울 거주자가 ``저는 서울 사람이지만 부산에도 자주 갑니다``라고 하면 drift가 아니다.
+    """
+
+    text = "저는 서울 사람이지만 부산에도 자주 갑니다."
+    persona = _persona(region="서울")
+    assert detect_persona_drift(text, persona) is False
 
 
 def test_truncate_history_O_n_재계산_없이_동일결과() -> None:

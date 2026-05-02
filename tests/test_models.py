@@ -107,6 +107,27 @@ def test_persona_meta_asdict_직렬화_가능() -> None:
     assert d["raw"] == {}
 
 
+def test_persona_meta_family_type_기본_None() -> None:
+    """family_type 인자를 주지 않으면 기본값은 None이다(후방 호환성)."""
+
+    persona = _make_persona()
+    assert persona.family_type is None
+
+
+def test_persona_meta_housing_type_기본_None() -> None:
+    """housing_type 인자를 주지 않으면 기본값은 None이다(후방 호환성)."""
+
+    persona = _make_persona()
+    assert persona.housing_type is None
+
+
+def test_persona_meta_family_type_명시값_보존() -> None:
+    """family_type을 명시 주입하면 그대로 보존된다."""
+
+    persona = _make_persona(family_type="혼자 거주")
+    assert persona.family_type == "혼자 거주"
+
+
 # ---------------------------------------------------------------------------
 # MessageEntry
 # ---------------------------------------------------------------------------

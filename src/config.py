@@ -179,6 +179,8 @@ def _default_dict() -> dict:
                 "occupation": "occupation",
                 "marital": "marital_status",
                 "education": "education_level",
+                "family_type": "family_type",
+                "housing_type": "housing_type",
                 "summary": "persona",
                 "professional": "professional_persona",
                 "sports": "sports_persona",

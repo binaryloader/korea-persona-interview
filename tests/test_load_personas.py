@@ -52,6 +52,8 @@ _FIELD_MAP = {
     "occupation": "occupation",
     "marital": "marital_status",
     "education": "education_level",
+    "family_type": "family_type",
+    "housing_type": "housing_type",
     "summary": "persona",
     "professional": "professional_persona",
     "sports": "sports_persona",
@@ -303,6 +305,28 @@ def test_build_persona_meta_age_정수아님_DatasetUnavailableError() -> None:
     row = _row(age="abc")
     with pytest.raises(DatasetUnavailableError):
         _build_persona_meta(row, _FIELD_MAP)
+
+
+def test_build_persona_meta_family_type_매핑(fake_persona_row: dict) -> None:
+    """데이터셋의 family_type 컬럼이 PersonaMeta.family_type으로 매핑된다."""
+
+    persona = _build_persona_meta(fake_persona_row, _FIELD_MAP)
+    assert persona.family_type == fake_persona_row["family_type"]
+
+
+def test_build_persona_meta_housing_type_매핑(fake_persona_row: dict) -> None:
+    """데이터셋의 housing_type 컬럼이 PersonaMeta.housing_type으로 매핑된다."""
+
+    persona = _build_persona_meta(fake_persona_row, _FIELD_MAP)
+    assert persona.housing_type == fake_persona_row["housing_type"]
+
+
+def test_build_persona_meta_family_type_컬럼_없음_None(fake_persona_row: dict) -> None:
+    """데이터셋에 family_type 컬럼이 없으면 PersonaMeta.family_type은 None이다."""
+
+    row = {k: v for k, v in fake_persona_row.items() if k != "family_type"}
+    persona = _build_persona_meta(row, _FIELD_MAP)
+    assert persona.family_type is None
 
 
 # ---------------------------------------------------------------------------

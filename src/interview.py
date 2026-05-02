@@ -97,6 +97,53 @@ _SELF_INTRO_PATTERN = re.compile(
 )
 
 
+# family_type 가족 동거 표현. 데이터셋에 등장하는 표기를 망라한다.
+# ``혼자 거주``/``1인 가구``는 단독 거주를 의미하므로 본 집합에 포함하지 않는다.
+_FAMILY_COHABITATION_TOKENS: tuple = (
+    "배우자",
+    "자녀",
+    "부모",
+    "어머니",
+    "아버지",
+    "조부모",
+    "형제",
+    "자매",
+    "친척",
+    "가족",
+)
+
+
+# family_type=단독 거주 페르소나가 응답에서 부정/대치할 때 매칭할 토큰.
+# ``저는|나는|제가|내가`` 컨텍스트에서만 검사하여 false positive를 줄인다.
+_SOLO_NEGATION_TOKENS: tuple = (
+    "1인 가구가 아니",
+    "혼자 사는 게 아니",
+    "혼자 살지 않",
+    "가족이랑 같이",
+    "가족과 같이",
+    "가족과 함께",
+    "식구가 많",
+    "아이들",
+    "자녀",
+    "남편",
+    "아내",
+    "배우자",
+)
+
+
+# family_type=가족 동거 페르소나가 응답에서 부정/대치할 때 매칭할 토큰.
+# ``혼자 사``는 ``혼자 사는``/``혼자 살고``/``혼자 살아``/``혼자 사니까`` 등
+# 다양한 활용형을 한 번에 잡기 위한 prefix 토큰이다.
+_COHABIT_NEGATION_TOKENS: tuple = (
+    "혼자 사",
+    "혼자 살",
+    "혼자 거주",
+    "1인 가구",
+    "혼자 지내",
+    "독거",
+)
+
+
 # ---------------------------------------------------------------------------
 # 시스템 프롬프트 빌드
 # ---------------------------------------------------------------------------
@@ -126,6 +173,8 @@ def build_system_prompt(
     """
 
     # 기본 묶음: 인구 통계 + summary 페르소나(TDD §1.4).
+    # family_type/housing_type은 1인 가구 여부와 주거 유형을 모델이 추론으로
+    # 채우지 않도록 명시적으로 노출한다(박태민 사례 회귀 방지).
     persona_obj: dict = {
         "name": persona.name,
         "gender": persona.gender,
@@ -136,6 +185,10 @@ def build_system_prompt(
         "region": persona.region,
         "subregion": persona.subregion,
     }
+    if persona.family_type:
+        persona_obj["family_type"] = persona.family_type
+    if persona.housing_type:
+        persona_obj["housing_type"] = persona.housing_type
 
     # summary는 항상 주입한다. 데이터셋의 ``persona`` 컬럼이 매핑된다.
     summary_col = field_map.get("summary", "persona")
@@ -175,7 +228,10 @@ def build_system_prompt(
         "- 모르는 것은 솔직히 모른다고 답하세요.\n"
         "- 답변은 2-4문장으로 간결하게.\n"
         "- 솔직한 거절도 좋습니다. 무리해서 긍정하지 마세요.\n"
-        "- 페르소나 정보에 없는 사실을 지어내지 마세요."
+        "- 페르소나 정보에 없는 사실을 지어내지 마세요.\n"
+        "- 페르소나의 family_type 정보(예: '혼자 거주', '배우자와 거주')를 "
+        "그대로 반영해 답하세요. 1인 가구 여부 등 거주 형태에 대해 "
+        "추측하지 마세요."
     )
 
 
@@ -349,18 +405,49 @@ def _all_age_buckets() -> tuple:
     return ("10대", "20대", "30대", "40대", "50대", "60대 이상")
 
 
+def _is_solo_living(family_type: Optional[str]) -> bool:
+    """``family_type`` 값이 단독 거주(1인 가구)에 해당하는지 판정한다.
+
+    데이터셋 표기 ``혼자 거주``/``1인 가구``를 모두 인식한다. ``None`` 또는
+    빈 문자열이면 판정 불가로 보고 False를 반환한다.
+    """
+
+    if not family_type:
+        return False
+    return ("혼자 거주" in family_type) or ("1인 가구" in family_type)
+
+
+def _is_cohabiting(family_type: Optional[str]) -> bool:
+    """``family_type``이 가족 동거에 해당하는지 판정한다.
+
+    ``배우자/자녀/부모/어머니/아버지/조부모/형제/자매/친척/가족`` 토큰이 하나라도
+    들어 있으면 동거로 본다. 단독 거주 표기와 겹치는 경우(``배우자와 거주``
+    옆에 ``혼자 거주`` 가 동시에 있을 일은 없지만)는 단독 거주가 우선한다.
+    """
+
+    if not family_type:
+        return False
+    if _is_solo_living(family_type):
+        return False
+    return any(token in family_type for token in _FAMILY_COHABITATION_TOKENS)
+
+
 def detect_persona_drift(response: str, persona: PersonaMeta) -> bool:
     """페르소나 정면 모순 또는 영어 비율 30% 초과 여부를 판정한다(TDD §8.2).
 
-    감지 축은 아래 셋이다.
+    감지 축은 아래와 같다.
 
     - 영어 비율: ``_english_ratio`` > 0.30이면 True
     - 연령대 모순: ``저는 20대``처럼 자기 연령 버킷이 아닌 버킷을 단언
     - 성별 모순: 여자 페르소나가 ``저는 남자``를 단언, 또는 그 반대
     - 지역 모순: 자기 시도가 아닌 다른 시도를 거주지로 단언
+    - 거주 형태 모순: family_type이 단독 거주인데 ``1인 가구가 아니``/``가족과
+      함께``를 단언하거나, 가족 동거인데 ``혼자 산다``/``1인 가구``를 단언
 
     가짜 양성을 줄이기 위해 ``저는``/``나는``/``제가``/``내가`` 같은 자기 단언
-    표현 뒤에 따라오는 30자 이내 토큰만 검사한다.
+    표현 뒤에 따라오는 30자 이내 토큰만 검사한다. 지역 모순은 자기 시도와 다른
+    시도가 같은 컨텍스트에 동시 등장하면 매칭에서 제외해 ``저는 서울 출신이지만
+    부산에도 자주 갑니다`` 류 false positive를 줄인다.
     """
 
     if not response:
@@ -381,6 +468,9 @@ def detect_persona_drift(response: str, persona: PersonaMeta) -> bool:
 
     # 시도 비교는 prefix 매칭으로 수행한다(데이터셋 표기는 짧은 형태).
     other_provinces = tuple(p for p in _KOREAN_PROVINCES if p != own_region)
+
+    solo_living = _is_solo_living(persona.family_type)
+    cohabiting = _is_cohabiting(persona.family_type)
 
     for ctx in self_intros:
         text = ctx.strip()
@@ -404,13 +494,22 @@ def detect_persona_drift(response: str, persona: PersonaMeta) -> bool:
                 return True
 
         # 지역 모순. ``저는 부산 사람`` 형태.
-        for province in other_provinces:
-            # 다른 시도명이 self-intro 컨텍스트에 등장 + ``사람``/``살``/``에서``
-            # 같은 거주 단언 키워드 동반.
-            if province in text and any(
-                k in text for k in ("사람", "살고", "에서 자랐", "살아")
-            ):
-                return True
+        # 자기 시도가 동일 컨텍스트에 있으면 ``저는 서울 출신이지만 부산에도``
+        # 같은 false positive를 막기 위해 매칭에서 제외한다.
+        if own_region not in text:
+            for province in other_provinces:
+                # 다른 시도명이 self-intro 컨텍스트에 등장 + ``사람``/``살``/
+                # ``에서`` 같은 거주 단언 키워드 동반.
+                if province in text and any(
+                    k in text for k in ("사람", "살고", "에서 자랐", "살아")
+                ):
+                    return True
+
+        # 거주 형태 모순(family_type 정보가 있을 때만 검사).
+        if solo_living and any(token in text for token in _SOLO_NEGATION_TOKENS):
+            return True
+        if cohabiting and any(token in text for token in _COHABIT_NEGATION_TOKENS):
+            return True
 
     return False
 

@@ -235,6 +235,8 @@ def _records_from_payload(payload: dict) -> list:
                 marital=str(persona_raw.get("marital", "")),
                 education=str(persona_raw.get("education", "")),
                 raw=dict(persona_raw.get("raw", {})),
+                family_type=persona_raw.get("family_type"),
+                housing_type=persona_raw.get("housing_type"),
             )
         except (TypeError, ValueError) as exc:
             logger.warning(

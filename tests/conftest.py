@@ -210,6 +210,8 @@ def fake_persona_meta(fake_persona_row: dict):
         marital=fake_persona_row["marital_status"],
         education=fake_persona_row["education_level"],
         raw={k: v for k, v in fake_persona_row.items() if k != "uuid"},
+        family_type=fake_persona_row.get("family_type"),
+        housing_type=fake_persona_row.get("housing_type"),
     )
 
 

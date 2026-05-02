@@ -366,6 +366,17 @@ def _build_persona_meta(row: dict, field_map: dict) -> PersonaMeta:
             f"age={raw_age!r}"
         ) from exc
 
+    family_type_field = field_map.get("family_type", "family_type")
+    housing_type_field = field_map.get("housing_type", "housing_type")
+    raw_family_type = row.get(family_type_field) if family_type_field else None
+    raw_housing_type = row.get(housing_type_field) if housing_type_field else None
+    family_type_value: Optional[str] = (
+        str(raw_family_type) if raw_family_type else None
+    )
+    housing_type_value: Optional[str] = (
+        str(raw_housing_type) if raw_housing_type else None
+    )
+
     return PersonaMeta(
         persona_id=persona_id,
         name=name_value,
@@ -377,6 +388,8 @@ def _build_persona_meta(row: dict, field_map: dict) -> PersonaMeta:
         marital=str(row.get(field_map.get("marital", "marital_status"), "")),
         education=str(row.get(field_map.get("education", "education_level"), "")),
         raw=raw_dict,
+        family_type=family_type_value,
+        housing_type=housing_type_value,
     )
 
 
