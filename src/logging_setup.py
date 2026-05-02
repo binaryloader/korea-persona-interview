@@ -1,11 +1,8 @@
 """구조화 로깅(JSON Lines) 설정.
 
-stdlib ``logging`` 위에 ``JsonLineFormatter``를 얹는다. structlog/loguru
-의존을 회피한다(dependency.md §1). request_id는 ``contextvars.ContextVar``
-로 관리하여 비동기 task 간 안전하게 격리된다.
+stdlib ``logging`` 위에 ``JsonLineFormatter``를 얹는다. structlog/loguru 의존을 회피한다(dependency.md §1). request_id는 ``contextvars.ContextVar``로 관리하여 비동기 task 간 안전하게 격리된다.
 
-마스킹 규칙은 logging.md §2와 PRD §6.6을 따른다. 사업 아이템 본문(``product``)
-과 페르소나 이름(``persona.name``)은 본 모듈의 헬퍼로 일원화 마스킹한다.
+마스킹 규칙은 logging.md §2와 PRD §6.6을 따른다. 사업 아이템 본문(``product``)과 페르소나 이름(``persona.name``)은 본 모듈의 헬퍼로 일원화 마스킹한다.
 """
 
 from __future__ import annotations
@@ -25,8 +22,7 @@ _REQUEST_ID: contextvars.ContextVar[str] = contextvars.ContextVar(
     "kpi_request_id", default="-"
 )
 
-# JsonLineFormatter가 기본 record dict에서 빼낼 표준 필드. 그 외는 extra로
-# 간주하여 JSON에 그대로 합친다.
+# JsonLineFormatter가 기본 record dict에서 빼낼 표준 필드. 그 외는 extra로 간주하여 JSON에 그대로 합친다.
 _RESERVED_LOG_KEYS = frozenset(
     {
         "name",
@@ -112,8 +108,7 @@ def mask_name(name: Optional[str]) -> str:
 def mask_product(product: Optional[str], head: int = 30) -> str:
     """사업 아이템 본문 마스킹. 첫 head 글자 + ``(N자)`` 꼬리.
 
-    PRD §6.6에 따라 로그 본문에 그대로 기록하지 않는다. 결과 JSON에는 원문이
-    저장되지만 그것은 로컬 파일 한정이다.
+    PRD §6.6에 따라 로그 본문에 그대로 기록하지 않는다. 결과 JSON에는 원문이 저장되지만 그것은 로컬 파일 한정이다.
     """
 
     if product is None:
@@ -127,9 +122,8 @@ def mask_product(product: Optional[str], head: int = 30) -> str:
 def mask_persona_id(persona_id: Optional[str], prefix_len: int = 12) -> str:
     """persona_id를 sha256 prefix로 마스킹한다(라운드 G16).
 
-    데이터셋의 uuid가 그대로 로그에 남으면 동일 페르소나의 다른 실행 결과를
-    cross-link할 수 있다. sha256 hex prefix 12자만 노출해 동일 ID라는 사실은
-    유지하되 원본 uuid를 추적할 수 없게 한다(security.md §1, logging.md §2).
+    데이터셋의 uuid가 그대로 로그에 남으면 동일 페르소나의 다른 실행 결과를 cross-link할 수 있다.
+    sha256 hex prefix 12자만 노출해 동일 ID라는 사실은 유지하되 원본 uuid를 추적할 수 없게 한다(security.md §1, logging.md §2).
     """
 
     if not persona_id:
@@ -148,8 +142,7 @@ def mask_persona_id(persona_id: Optional[str], prefix_len: int = 12) -> str:
 class JsonLineFormatter(logging.Formatter):
     """LogRecord를 JSON Lines로 직렬화한다.
 
-    필드는 ``timestamp``(ISO 8601 UTC), ``level``, ``logger``, ``message``,
-    ``request_id``, ``module``이고 LogRecord의 extra 키는 그대로 합친다.
+    필드는 ``timestamp``(ISO 8601 UTC), ``level``, ``logger``, ``message``, ``request_id``, ``module``이고 LogRecord의 extra 키는 그대로 합친다.
     """
 
     def format(self, record: logging.LogRecord) -> str:  # noqa: D401
@@ -167,8 +160,7 @@ class JsonLineFormatter(logging.Formatter):
             "request_id": get_request_id(),
         }
 
-        # 호출자가 logger.info("...", extra={"key": "value"}) 식으로 넣은 키를
-        # 합친다. 표준 LogRecord 속성과 충돌하는 키는 건너뛴다.
+        # 호출자가 logger.info("...", extra={"key": "value"}) 식으로 넣은 키를 합친다. 표준 LogRecord 속성과 충돌하는 키는 건너뛴다.
         for key, value in record.__dict__.items():
             if key in _RESERVED_LOG_KEYS or key.startswith("_"):
                 continue
@@ -193,8 +185,7 @@ def configure_logging(
 ) -> None:
     """루트 로거에 콘솔(stderr) + 파일(JSON Lines) 핸들러를 부착한다.
 
-    동일 루트에 이미 핸들러가 있으면 중복 부착을 막기 위해 비운 뒤 재설정한다.
-    호출자(main.py)는 CLI 진입점에서 1회만 호출하면 된다.
+    동일 루트에 이미 핸들러가 있으면 중복 부착을 막기 위해 비운 뒤 재설정한다. 호출자(main.py)는 CLI 진입점에서 1회만 호출하면 된다.
 
     Args:
         level: ``DEBUG``, ``INFO``, ``WARNING``, ``ERROR`` 중 하나(대소문자 무관).

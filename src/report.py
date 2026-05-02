@@ -1,11 +1,8 @@
 """리포트 생성기.
 
-배치 인터뷰 결과 JSON을 읽어 정량 집계와 LLM 정성 인사이트를 결합한 마크다운
-리포트를 생성한다(TDD §3.7, UI §4). ``statistics`` 모듈만 사용하고 numpy/scipy
-의존을 도입하지 않는다(dependency.md §1).
+배치 인터뷰 결과 JSON을 읽어 정량 집계와 LLM 정성 인사이트를 결합한 마크다운 리포트를 생성한다(TDD §3.7, UI §4). ``statistics`` 모듈만 사용하고 numpy/scipy 의존을 도입하지 않는다(dependency.md §1).
 
-application 계층이며 infrastructure(``LLMClient``)와 domain(``InterviewRecord``,
-``StructuredSummary``)을 조합한다(architecture.md §1).
+application 계층이며 infrastructure(``LLMClient``)와 domain(``InterviewRecord``, ``StructuredSummary``)을 조합한다(architecture.md §1).
 
 리포트 마크다운은 H2 4개 섹션이다.
 
@@ -14,9 +11,7 @@ application 계층이며 infrastructure(``LLMClient``)와 domain(``InterviewReco
 - ``## 3. 제외 record 요약``: status별 인원과 비율
 - ``## 4. 한계와 출처``: CC BY 4.0과 합성 데이터 한계 명시
 
-정성 인사이트 LLM 호출이 실패하면 정량만 채우고 정성 섹션은 안내 문구로
-대체한다(PRD §6.4, UI §4.3과 대비). v1은 모델 변경 없이도 사용 가능한 안전망을
-우선한다.
+정성 인사이트 LLM 호출이 실패하면 정량만 채우고 정성 섹션은 안내 문구로 대체한다(PRD §6.4, UI §4.3과 대비). v1은 모델 변경 없이도 사용 가능한 안전망을 우선한다.
 """
 
 from __future__ import annotations
@@ -50,8 +45,7 @@ logger = logging.getLogger(__name__)
 
 
 # 코호트 셀 표본 부족 임계값 default. PRD §5.6, TDD §3.7.
-# 정본은 ``ReportConfig.cohort_min_cell``이며 본 상수는 yaml/CLI override가 빠진
-# 호출 경로의 fallback이다.
+# 정본은 ``ReportConfig.cohort_min_cell``이며 본 상수는 yaml/CLI override가 빠진 호출 경로의 fallback이다.
 _MIN_COHORT_CELL = 3
 
 # 가격 히스토그램 구간 수 default. UI §4.2.2.

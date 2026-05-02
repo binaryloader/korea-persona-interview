@@ -1,12 +1,8 @@
 """모든 MCP mode 공통 helper 도구.
 
-CLI와 MCP server 모드는 휴리스틱(`detect_persona_drift`,
-`should_auto_follow_up`, `_parse_summary_payload`)이 자동 적용되지만, MCP
-orchestrator 모드는 호스트 sub-agent가 인터뷰를 수행하므로 호스트가 동일
-임계값/키워드로 판정 가능하도록 본 휴리스틱을 도구로 노출한다.
+CLI와 MCP server 모드는 휴리스틱(`detect_persona_drift`, `should_auto_follow_up`, `_parse_summary_payload`)이 자동 적용되지만, MCP orchestrator 모드는 호스트 sub-agent가 인터뷰를 수행하므로 호스트가 동일 임계값/키워드로 판정 가능하도록 본 휴리스틱을 도구로 노출한다.
 
-본 모듈의 도구는 server-side LLM을 호출하지 않는다(순수 Python 함수). 따라서
-MCP server / MCP orchestrator 어느 모드에서나 동일한 응답을 돌려준다.
+본 모듈의 도구는 server-side LLM을 호출하지 않는다(순수 Python 함수). 따라서 MCP server / MCP orchestrator 어느 모드에서나 동일한 응답을 돌려준다.
 """
 
 from __future__ import annotations
@@ -36,8 +32,7 @@ logger = logging.getLogger(__name__)
 def _persona_from_payload(persona_meta: dict) -> PersonaMeta:
     """``persona_meta`` dict를 ``PersonaMeta`` dataclass로 복원한다.
 
-    detect_persona_drift 도구가 호스트로부터 받은 페르소나 dict를 dataclass로
-    되돌릴 때 사용한다. 키가 모자라면 ConfigError로 차단한다.
+    detect_persona_drift 도구가 호스트로부터 받은 페르소나 dict를 dataclass로 되돌릴 때 사용한다. 키가 모자라면 ConfigError로 차단한다.
     """
 
     required = {"persona_id", "gender", "age", "region", "subregion", "occupation", "marital", "education"}
@@ -66,9 +61,7 @@ def _persona_from_payload(persona_meta: dict) -> PersonaMeta:
 async def detect_persona_drift_tool(arguments: dict) -> dict:
     """페르소나 깨짐 휴리스틱을 호스트가 명시 호출할 수 있도록 노출한다.
 
-    입력으로 ``text``(인터뷰 응답)와 ``persona_meta``(dict)를 받아 4축 정밀
-    정규식 + 영어 비율 임계값 기반의 drift 여부를 boolean으로 돌려준다.
-    임계값과 화이트리스트는 ``heuristics.*`` yaml 값을 따른다.
+    입력으로 ``text``(인터뷰 응답)와 ``persona_meta``(dict)를 받아 4축 정밀 정규식 + 영어 비율 임계값 기반의 drift 여부를 boolean으로 돌려준다. 임계값과 화이트리스트는 ``heuristics.*`` yaml 값을 따른다.
     """
 
     text = arguments.get("text")

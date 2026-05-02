@@ -1,32 +1,17 @@
 """동시성 배치 인터뷰 실행기.
 
-페르소나 N명에 대해 ``run_interview``를 병렬 실행하고 결과를 ``BatchResult``로
-취합한다. 동시성은 ``asyncio.Semaphore``로 제어한다. 진행률 표시는 수동 update
-모드의 tqdm을 사용해 부분 실패 WARN 라인을 progress bar 위에 carriage return을
-깨뜨리지 않고 출력할 수 있다.
+페르소나 N명에 대해 ``run_interview``를 병렬 실행하고 결과를 ``BatchResult``로 취합한다. 동시성은 ``asyncio.Semaphore``로 제어한다. 진행률 표시는 수동 update 모드의 tqdm을 사용해 부분 실패 WARN 라인을 progress bar 위에 carriage return을 깨뜨리지 않고 출력할 수 있다.
 
-본 모듈은 LLM transport(``LLMBackend``)와 도메인 모델(``InterviewRecord``,
-``RunMeta``, ``BatchResult``)을 잇는 application 계층이다. 한 페르소나의 실패가
-형제 task를 함께 죽이면 안 되므로 ``_run_single`` 내부에서 try/except로
-알려진 도메인 예외를 흡수해 ``status=failed`` record로 변환한다. 첫 페르소나가
-시작하기 전에 ``client.healthcheck()``를 한 번 호출해 서버 장애를 빠르게
-표면화한다.
+본 모듈은 LLM transport(``LLMBackend``)와 도메인 모델(``InterviewRecord``, ``RunMeta``, ``BatchResult``)을 잇는 application 계층이다. 한 페르소나의 실패가 형제 task를 함께 죽이면 안 되므로 ``_run_single`` 내부에서 try/except로 알려진 도메인 예외를 흡수해 ``status=failed`` record로 변환한다. 첫 페르소나가 시작하기 전에 ``client.healthcheck()``를 한 번 호출해 서버 장애를 빠르게 표면화한다.
 
-SIGINT 처리는 UI 명세에 정의된 UX 그대로 두 단계로 동작한다. Ctrl+C 1회:
-``cancel_event.set()``으로 새 task 시작을 막는다. 이미 진행 중인 task는 현재
-chat 호출을 끝까지 마치고 partial JSON을 저장한다. Ctrl+C 2회:
-``KeyboardInterrupt``를 그대로 전파해 asyncio 루프가 즉시 모든 작업을
-종료한다.
+SIGINT 처리는 UI 명세에 정의된 UX 그대로 두 단계로 동작한다.
+Ctrl+C 1회: ``cancel_event.set()``으로 새 task 시작을 막는다. 이미 진행 중인 task는 현재 chat 호출을 끝까지 마치고 partial JSON을 저장한다.
+Ctrl+C 2회: ``KeyboardInterrupt``를 그대로 전파해 asyncio 루프가 즉시 모든 작업을 종료한다.
 
-결과 JSON 파일은 ``outputs/interview_{slug}_{YYYYMMDD_HHMMSS}.json`` 위치에
-저장된다. SIGINT나 부분 실패 조건에 걸리면 ``meta_extra``에 ``partial: true``가
-표기된다. 직렬화는 ``dataclasses.asdict`` + ``json.dumps(..., ensure_ascii=False,
-indent=2)`` 조합이라 파일 안 한국어 본문이 그대로 사람이 읽기 좋게 남는다.
+결과 JSON 파일은 ``outputs/interview_{slug}_{YYYYMMDD_HHMMSS}.json`` 위치에 저장된다. SIGINT나 부분 실패 조건에 걸리면 ``meta_extra``에 ``partial: true``가 표기된다.
+직렬화는 ``dataclasses.asdict`` + ``json.dumps(..., ensure_ascii=False, indent=2)`` 조합이라 파일 안 한국어 본문이 그대로 사람이 읽기 좋게 남는다.
 
-resume 모드(``resume_records=...``)는 이전 run의 record를 읽어
-completed/refused/drift 항목을 그대로 보존하고 ``status=failed`` 페르소나 ID만
-재시도한다. 합쳐진 JSON에는 새 timestamp가 부여되고 ``meta_extra.previous_run_id``로
-원본 run으로 거슬러 올라갈 수 있다.
+resume 모드(``resume_records=...``)는 이전 run의 record를 읽어 completed/refused/drift 항목을 그대로 보존하고 ``status=failed`` 페르소나 ID만 재시도한다. 합쳐진 JSON에는 새 timestamp가 부여되고 ``meta_extra.previous_run_id``로 원본 run으로 거슬러 올라갈 수 있다.
 """
 
 from __future__ import annotations
@@ -67,9 +52,8 @@ from .models import (
 )
 
 
-# 알려진 도메인 예외 클래스를 부분 실패 안내에 노출되는 ``error.type``
-# 문자열로 매핑한다. 매핑되지 않은 예외는 ``unhandled_exception`` 버킷으로
-# 떨어져, 예상 못한 예외도 사유 분포에 함께 집계된다.
+# 알려진 도메인 예외 클래스를 부분 실패 안내에 노출되는 ``error.type`` 문자열로 매핑한다.
+# 매핑되지 않은 예외는 ``unhandled_exception`` 버킷으로 떨어져, 예상 못한 예외도 사유 분포에 함께 집계된다.
 _DOMAIN_EXC_TYPE_MAP: dict = {
     ServerNotReachableError: "server_not_reachable",
     RetryExhaustedError: "retry_exhausted",
@@ -86,9 +70,7 @@ logger = logging.getLogger(__name__)
 class BatchSummary:
     """tqdm postfix와 종료 라인이 사용하는 경량 집계 dataclass.
 
-    ``success_count``는 refused와 drift도 포함한다. 두 경우 모두 모델이 응답을
-    돌려준 케이스이기 때문이다. ``failed``(LLM 호출이 retry를 모두 소진했거나
-    도메인 예외가 raise된 경우)만 hard failure로 본다.
+    ``success_count``는 refused와 drift도 포함한다. 두 경우 모두 모델이 응답을 돌려준 케이스이기 때문이다. ``failed``(LLM 호출이 retry를 모두 소진했거나 도메인 예외가 raise된 경우)만 hard failure로 본다.
     """
 
     requested: int
@@ -165,10 +147,7 @@ def _serialize_batch(
 ) -> str:
     """``BatchResult``를 디스크 저장용 JSON 문자열로 직렬화한다.
 
-    ``ensure_ascii=False``로 한국어 본문을 그대로 보존한다. 마스킹 정책은
-    로그 라인에만 적용된다. 결과 JSON은 의도적으로 ``--product`` 원문과
-    페르소나 이름을 그대로 보존해, 다운스트림 분석 도구가 원본 필드를
-    그대로 사용할 수 있게 한다.
+    ``ensure_ascii=False``로 한국어 본문을 그대로 보존한다. 마스킹 정책은 로그 라인에만 적용된다. 결과 JSON은 의도적으로 ``--product`` 원문과 페르소나 이름을 그대로 보존해, 다운스트림 분석 도구가 원본 필드를 그대로 사용할 수 있게 한다.
     """
 
     payload = dataclasses.asdict(result)
@@ -204,9 +183,8 @@ def save_batch_result(
 
     ts = timestamp or _timestamp_filename()
     output_dir.mkdir(parents=True, exist_ok=True)
-    # outputs/ 권한을 0700으로 조여, 같은 호스트의 다른 로컬 사용자가 외부
-    # LLM에 이미 송신한 인터뷰 본문을 읽지 못하게 한다. Windows에서는 chmod가
-    # no-op이지만 호출 자체는 안전하다.
+    # outputs/ 권한을 0700으로 조여, 같은 호스트의 다른 로컬 사용자가 외부 LLM에 이미 송신한 인터뷰 본문을 읽지 못하게 한다.
+    # Windows에서는 chmod가 no-op이지만 호출 자체는 안전하다.
     try:
         os.chmod(output_dir, 0o700)
     except (PermissionError, OSError):
@@ -216,14 +194,12 @@ def save_batch_result(
 
     serialized = _serialize_batch(result, partial=partial, extra_meta=extra_meta)
 
-    # tmp + os.replace로 atomic write를 수행한다. 단순 ``write_text``는 쓰기
-    # 도중 SIGINT나 kill -9가 들어오면 절단된 JSON을 남길 수 있다. rename
-    # 패턴은 reader가 항상 완성된 파일 또는 이전 버전 중 하나를 보게 한다.
+    # tmp + os.replace로 atomic write를 수행한다. 단순 ``write_text``는 쓰기 도중 SIGINT나 kill -9가 들어오면 절단된 JSON을 남길 수 있다.
+    # rename 패턴은 reader가 항상 완성된 파일 또는 이전 버전 중 하나를 보게 한다.
     tmp_target = target.with_suffix(target.suffix + ".tmp")
     tmp_target.write_text(serialized, encoding="utf-8")
     os.replace(tmp_target, target)
-    # 결과 파일 0600은 디렉토리 0700과 짝을 이룬다. 같은 호스트의 다른
-    # 사용자가 응답 본문을 읽지 못하게 한다.
+    # 결과 파일 0600은 디렉토리 0700과 짝을 이룬다. 같은 호스트의 다른 사용자가 응답 본문을 읽지 못하게 한다.
     try:
         os.chmod(target, 0o600)
     except (PermissionError, OSError):
@@ -266,9 +242,7 @@ def _summarize_records(
 def _aggregate_usage(records: list) -> TokenUsage:
     """모든 record의 ``raw_responses[*].usage`` 합산.
 
-    멀티턴 한 호출이 한 ``RawResponse``를 만든다. 자동 follow-up도 별도
-    ``RawResponse``로 누적되므로 사실상 모든 chat 호출의 usage가 합산된다.
-    구조화 요약과 정성 인사이트 단계는 별도 호출이라 본 합산에 포함되지 않는다.
+    멀티턴 한 호출이 한 ``RawResponse``를 만든다. 자동 follow-up도 별도 ``RawResponse``로 누적되므로 사실상 모든 chat 호출의 usage가 합산된다. 구조화 요약과 정성 인사이트 단계는 별도 호출이라 본 합산에 포함되지 않는다.
     """
 
     total = TokenUsage()
@@ -316,8 +290,7 @@ async def _run_single(
 ) -> Optional[InterviewRecord]:
     """페르소나 1명에 대한 인터뷰 1회. semaphore로 동시성 제어한다.
 
-    ``cancel_event``가 set되면 새 호출을 시작하지 않고 ``None``을 반환한다.
-    이미 진행 중이던 호출은 끝까지 진행한 뒤 결과를 반환한다(UI §6.3).
+    ``cancel_event``가 set되면 새 호출을 시작하지 않고 ``None``을 반환한다. 이미 진행 중이던 호출은 끝까지 진행한 뒤 결과를 반환한다(UI §6.3).
     """
 
     if cancel_event.is_set():
@@ -404,9 +377,7 @@ def _build_resume_only_envelope(
 ) -> "BatchResultEnvelope":
     """모든 record가 이미 completed인 resume 호출의 짧은 경로.
 
-    LLM 호출과 SIGINT 핸들러 부착 없이 기존 결과를 그대로 ``BatchResultEnvelope``
-    로 감싸 반환한다. JSON 저장도 새 timestamp로 한 번 더 수행해 호출 시점의
-    파일이 완성된 결과와 동일한 형식으로 남는다.
+    LLM 호출과 SIGINT 핸들러 부착 없이 기존 결과를 그대로 ``BatchResultEnvelope``로 감싸 반환한다. JSON 저장도 새 timestamp로 한 번 더 수행해 호출 시점의 파일이 완성된 결과와 동일한 형식으로 남는다.
     """
 
     started_at = _now_iso()
@@ -477,8 +448,7 @@ def _build_failed_record(
 ) -> InterviewRecord:
     """예외를 ``status=failed`` record로 변환한다.
 
-    ``error.type``은 ``_classify_exception``이 도메인 예외를 명시 매핑한 결과를
-    채운다. 알려지지 않은 예외만 ``unhandled_exception``으로 떨어진다.
+    ``error.type``은 ``_classify_exception``이 도메인 예외를 명시 매핑한 결과를 채운다. 알려지지 않은 예외만 ``unhandled_exception``으로 떨어진다.
     """
 
     from .models import Flags  # 지역 import로 순환 의존 회피.
@@ -541,8 +511,8 @@ class _ProgressTracker:
         try:
             self._bar.write(message)
         except (AttributeError, OSError):
-            # AttributeError: tqdm이 disable이라 일부 메서드가 결손인 케이스.
-            # OSError: stderr가 닫혀 print/write 실패하는 케이스(긴 배치 종료 시).
+            # AttributeError는 tqdm이 disable이라 일부 메서드가 결손인 케이스.
+            # OSError는 stderr가 닫혀 print/write 실패하는 케이스(긴 배치 종료 시).
             print(message)
         except Exception:  # noqa: BLE001 - tqdm 신규 버전 예외 안전망
             print(message)

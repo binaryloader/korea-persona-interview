@@ -1,27 +1,17 @@
 """MCP 서버 엔트리 포인트.
 
-stdio JSON-RPC 위에 인터뷰 파이프라인 도구를 노출해서 외부 에이전트
-(Claude Code, Cursor, Codex 등)가 자연어로 본 도구를 구동할 수 있게 한다.
+stdio JSON-RPC 위에 인터뷰 파이프라인 도구를 노출해서 외부 에이전트(Claude Code, Cursor, Codex 등)가 자연어로 본 도구를 구동할 수 있게 한다.
 
 추론 경로는 ``config.yaml`` ``mcp.mode``로 명시 선택한다(ADR-005).
 
-- ``mode: "server"`` (기본): server-side ``OpenAIBackend``/``AnthropicBackend``
-  를 사용한다. CLI와 동일한 ``LlmConfig``를 활용하므로 mcp.json ``env``에
-  ``OPENAI_API_KEY``/``ANTHROPIC_API_KEY``를 박아 주어야 한다. 응답에는
-  ``backend: "mcp_server"`` 라벨이 박힌다
-- ``mode: "orchestrator"``: server-side에서 LLM을 호출하지 않는다. 호스트
-  sub-agent가 자기 LLM으로 인터뷰를 수행하고 본 도구는 데이터/프롬프트
-  helper만 노출한다. server-side 키 불필요. 응답에는 ``backend:
-  "mcp_orchestrator"`` 라벨이 박힌다
+- ``mode: "orchestrator"`` (기본): server-side에서 LLM을 호출하지 않는다. 호스트 sub-agent가 자기 LLM으로 인터뷰를 수행하고 본 도구는 데이터/프롬프트 helper만 노출한다. server-side 키 불필요. 응답에는 ``backend: "mcp_orchestrator"`` 라벨이 박힌다
+- ``mode: "server"``: server-side ``OpenAIBackend``/``AnthropicBackend``를 사용한다. CLI와 동일한 ``LlmConfig``를 활용하므로 mcp.json ``env`` 또는 `.env`에 ``OPENAI_API_KEY``/``ANTHROPIC_API_KEY``를 박아 주어야 한다. 응답에는 ``backend: "mcp_server"`` 라벨이 박힌다
 
 자동 fallback은 하지 않는다. yaml의 ``mcp.mode`` 값으로 분기가 결정된다.
 
-도구 핸들러는 ``src.mcp_handlers`` 패키지에 모드별로 분리되어 있다. 본 모듈은
-stdio loop, list_tools 메타데이터, dispatch 라우팅만 책임진다.
+도구 핸들러는 ``src.mcp_handlers`` 패키지에 모드별로 분리되어 있다. 본 모듈은 stdio loop, list_tools 메타데이터, dispatch 라우팅만 책임진다.
 
-``mcp`` SDK는 ``main()`` 안에서 lazy import 한다. 덕분에 SDK가 없어도 이
-모듈 자체는 문제없이 import되고 사용자는 stack trace 대신 안내 메시지와
-종료 코드 1을 본다.
+``mcp`` SDK는 ``main()`` 안에서 lazy import 한다. 덕분에 SDK가 없어도 이 모듈 자체는 문제없이 import되고 사용자는 stack trace 대신 안내 메시지와 종료 코드 1을 본다.
 """
 
 from __future__ import annotations
@@ -238,8 +228,7 @@ _AGGREGATE_RESULTS_SCHEMA: dict = {
         "insights": {
             "type": "object",
             "description": (
-                "정성 인사이트 옵션(common_reactions, insights, cohort_differences 키)을 "
-                "호스트 sub-agent가 직접 채워 넘기면 그대로 리포트에 박힌다."
+                "정성 인사이트 옵션(common_reactions, insights, cohort_differences 키)을 호스트 sub-agent가 직접 채워 넘기면 그대로 리포트에 박힌다."
             ),
         },
     },
@@ -288,77 +277,56 @@ _HELPER_RECORD_SCHEMA_SCHEMA: dict = {
 }
 
 
-# 도구 이름 → (description, inputSchema) 매핑. list_tools 메타데이터를 mode별로
-# 잘라낼 때 사용한다.
+# 도구 이름 → (description, inputSchema) 매핑. list_tools 메타데이터를 mode별로 잘라낼 때 사용한다.
 _TOOL_METADATA: dict = {
     "healthcheck": (
-        "MCP server 모드에서는 provider 엔드포인트 도달성을 검증하고, "
-        "MCP orchestrator 모드에서는 도구 부팅 자체와 cwd, dataset 정보를 돌려줍니다.",
+        "MCP server 모드에서는 provider 엔드포인트 도달성을 검증하고, MCP orchestrator 모드에서는 도구 부팅 자체와 cwd, dataset 정보를 돌려줍니다.",
         _HEALTHCHECK_SCHEMA,
     ),
     "list_personas": (
-        "필터 결과에 해당하는 한국인 합성 페르소나(NVIDIA Nemotron-Personas-Korea, "
-        "CC BY 4.0)를 미리 보여줍니다. 인터뷰 표본이 의도한 인구 통계 분포에 "
-        "부합하는지 사전 점검할 때 사용합니다.",
+        "필터 결과에 해당하는 한국인 합성 페르소나(NVIDIA Nemotron-Personas-Korea, CC BY 4.0)를 미리 보여줍니다. 인터뷰 표본이 의도한 인구 통계 분포에 부합하는지 사전 점검할 때 사용합니다.",
         _LIST_PERSONAS_SCHEMA,
     ),
     "interview": (
-        "사업 아이템과 질문 리스트로 N명의 합성 페르소나에게 배치 인터뷰를 "
-        "실행합니다. server-side LLM을 사용해 결과 JSON 경로와 요약 통계, 토큰 사용량을 "
-        "돌려줍니다. 결과 JSON은 ``report`` 도구에 그대로 입력할 수 있습니다. "
-        "MCP server 모드 전용 도구입니다.",
+        "사업 아이템과 질문 리스트로 N명의 합성 페르소나에게 배치 인터뷰를 실행합니다. server-side LLM을 사용해 결과 JSON 경로와 요약 통계, 토큰 사용량을 돌려줍니다. 결과 JSON은 ``report`` 도구에 그대로 입력할 수 있습니다. MCP server 모드 전용 도구입니다.",
         _INTERVIEW_SCHEMA,
     ),
     "report": (
-        "결과 JSON에서 마크다운 리포트를 생성합니다. 정량 지표는 모든 모드에서 "
-        "동일하게 채워지며, 정성 인사이트는 MCP server 모드에서만 server-side LLM "
-        "호출로 채웁니다(MCP orchestrator 모드는 fallback 메시지).",
+        "결과 JSON에서 마크다운 리포트를 생성합니다. 정량 지표는 모든 모드에서 동일하게 채워지며, 정성 인사이트는 MCP server 모드에서만 server-side LLM 호출로 채웁니다(MCP orchestrator 모드는 fallback 메시지).",
         _REPORT_SCHEMA,
     ),
     "build_persona_prompt": (
-        "단일 페르소나에 대한 시스템 프롬프트와 페르소나 dict를 돌려줍니다. "
-        "MCP orchestrator 모드 전용. 호스트 sub-agent가 받은 시스템 프롬프트로 "
-        "자기 LLM을 호출해 인터뷰를 수행합니다.",
+        "단일 페르소나에 대한 시스템 프롬프트와 페르소나 dict를 돌려줍니다. MCP orchestrator 모드 전용. 호스트 sub-agent가 받은 시스템 프롬프트로 자기 LLM을 호출해 인터뷰를 수행합니다.",
         _BUILD_PERSONA_PROMPT_SCHEMA,
     ),
     "build_batch_prompts": (
-        "N명 분의 시스템 프롬프트 + 페르소나 dict를 한 번에 돌려줍니다. "
-        "MCP orchestrator 모드 전용. 호스트 sub-agent가 fan-out으로 N개의 인터뷰를 "
-        "병렬 수행하는 흐름을 지원합니다.",
+        "N명 분의 시스템 프롬프트 + 페르소나 dict를 한 번에 돌려줍니다. MCP orchestrator 모드 전용. 호스트 sub-agent가 fan-out으로 N개의 인터뷰를 병렬 수행하는 흐름을 지원합니다.",
         _BUILD_BATCH_PROMPTS_SCHEMA,
     ),
     "aggregate_results": (
-        "호스트가 모은 인터뷰 record 리스트로 정량 집계와 마크다운 리포트를 생성합니다. "
-        "MCP orchestrator 모드 전용. 정성 인사이트는 호스트 sub-agent가 직접 만들어 "
-        "insights 인자로 전달하면 그대로 리포트에 박힙니다.",
+        "호스트가 모은 인터뷰 record 리스트로 정량 집계와 마크다운 리포트를 생성합니다. MCP orchestrator 모드 전용. 정성 인사이트는 호스트 sub-agent가 직접 만들어 insights 인자로 전달하면 그대로 리포트에 박힙니다.",
         _AGGREGATE_RESULTS_SCHEMA,
     ),
     "detect_persona_drift": (
-        "페르소나 깨짐 휴리스틱(영어 비율 + 4축 정밀 정규식)을 호스트가 명시 호출할 수 "
-        "있도록 노출합니다. CLI와 MCP server는 자동 적용하지만, MCP orchestrator는 "
-        "호스트가 본 도구를 호출해야 같은 임계값으로 drift를 판정할 수 있습니다.",
+        "페르소나 깨짐 휴리스틱(영어 비율 + 4축 정밀 정규식)을 호스트가 명시 호출할 수 있도록 노출합니다. CLI와 MCP server는 자동 적용하지만, MCP orchestrator는 호스트가 본 도구를 호출해야 같은 임계값으로 drift를 판정할 수 있습니다.",
         _HELPER_DRIFT_SCHEMA,
     ),
     "should_auto_follow_up": (
-        "짧은 답변/모호 키워드 매칭으로 자동 follow-up 트리거 여부를 돌려줍니다. "
-        "임계값과 키워드는 heuristics.* yaml 값을 따릅니다.",
+        "짧은 답변/모호 키워드 매칭으로 자동 follow-up 트리거 여부를 돌려줍니다. 임계값과 키워드는 heuristics.* yaml 값을 따릅니다.",
         _HELPER_FOLLOWUP_SCHEMA,
     ),
     "parse_structured_summary": (
-        "LLM의 구조화 요약 응답 텍스트(JSON)를 정규화된 structured_summary dict로 "
-        "파싱합니다. 코드 펜스/주변 텍스트가 섞여도 가장 바깥 JSON 객체만 골라냅니다.",
+        "LLM의 구조화 요약 응답 텍스트(JSON)를 정규화된 structured_summary dict로 파싱합니다. 코드 펜스/주변 텍스트가 섞여도 가장 바깥 JSON 객체만 골라냅니다.",
         _HELPER_PARSE_SUMMARY_SCHEMA,
     ),
     "interview_record_schema": (
-        "aggregate_results 도구에 전달할 record dict 형식을 안내합니다. 필드 이름, "
-        "허용 enum, 한 record 예시를 돌려줍니다.",
+        "aggregate_results 도구에 전달할 record dict 형식을 안내합니다. 필드 이름, 허용 enum, 한 record 예시를 돌려줍니다.",
         _HELPER_RECORD_SCHEMA_SCHEMA,
     ),
 }
 
 
-# 호환성: 기존 import 경로를 유지하기 위해 _TOOL_HANDLERS 에는 server 모드 핸들러만
-# 노출한다(외부 테스트는 본 매핑을 사용해 dispatch 호환성을 확인했었다).
+# 호환성: 기존 import 경로를 유지하기 위해 _TOOL_HANDLERS 에는 server 모드 핸들러만 노출한다(외부 테스트는 본 매핑을 사용해 dispatch 호환성을 확인했었다).
 from .mcp_handlers import common as _common_handlers
 from .mcp_handlers import server as _server_handlers
 
@@ -386,10 +354,8 @@ def _build_backend(config):
 
     v1.2.0(ADR-005)부터 두 모드만 다룬다.
 
-    - ``mode == "server"``: ``build_cli_backend(config.llm)``으로 CLI와 동일한
-      OpenAIBackend/AnthropicBackend를 만든다. server-side에 API 키가 필요하다
-    - ``mode == "orchestrator"``: server-side LLM을 호출하지 않으므로 ConfigError
-      로 차단한다. orchestrator 도구 핸들러는 본 함수를 호출하지 않는다
+    - ``mode == "server"``: ``build_cli_backend(config.llm)``으로 CLI와 동일한 OpenAIBackend/AnthropicBackend를 만든다. server-side에 API 키가 필요하다
+    - ``mode == "orchestrator"``: server-side LLM을 호출하지 않으므로 ConfigError로 차단한다. orchestrator 도구 핸들러는 본 함수를 호출하지 않는다
     """
 
     from .llm_backend import build_cli_backend
@@ -420,11 +386,9 @@ def _build_backend(config):
 async def dispatch_tool(name: str, arguments: Optional[dict]) -> dict:
     """이름으로 도구 호출을 dispatch하고 공통 응답 dict를 돌려준다.
 
-    핸들러 내부에서 발생한 에러는 ``error_payload`` dict로 변환해 MCP
-    TextContent 봉투가 항상 JSON 객체를 실어 보내도록 한다.
+    핸들러 내부에서 발생한 에러는 ``error_payload`` dict로 변환해 MCP TextContent 봉투가 항상 JSON 객체를 실어 보내도록 한다.
 
-    mode별 도구 노출 정책은 ``mcp_handlers.HANDLERS``를 따른다. 본 mode에 노출
-    되지 않는 도구는 ``tool_unavailable_in_mode`` 코드로 차단된다.
+    mode별 도구 노출 정책은 ``mcp_handlers.HANDLERS``를 따른다. 본 mode에 노출되지 않는 도구는 ``tool_unavailable_in_mode`` 코드로 차단된다.
     """
 
     args = arguments or {}
@@ -435,8 +399,7 @@ async def dispatch_tool(name: str, arguments: Optional[dict]) -> dict:
             exit_code=1,
         )
 
-    # mode 결정. config 로드 실패는 backend 라벨 없이 에러를 돌려준다(handler 안
-    # 에서도 같은 처리를 하지만 unknown_tool 분기 전에 mode를 알아야 한다).
+    # mode 결정. config 로드 실패는 backend 라벨 없이 에러를 돌려준다(handler 안에서도 같은 처리를 하지만 unknown_tool 분기 전에 mode를 알아야 한다).
     try:
         config = load_config(yaml_path=None, cli_overrides=None)
     except ConfigError as exc:
@@ -447,8 +410,7 @@ async def dispatch_tool(name: str, arguments: Optional[dict]) -> dict:
 
     handler = HANDLERS.get((mode, name))
     if handler is None:
-        # mode에 노출되지 않은 도구. 다른 mode에서는 사용 가능한 도구라면 친절한
-        # 안내를 단다.
+        # mode에 노출되지 않은 도구. 다른 mode에서는 사용 가능한 도구라면 친절한 안내를 단다.
         all_known = {tool for (_, tool) in HANDLERS.keys()}
         if name not in all_known:
             return _error_payload(

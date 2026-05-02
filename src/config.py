@@ -37,17 +37,11 @@ _VALID_MCP_MODES = frozenset({"server", "orchestrator"})
 class LlmConfig:
     """LLM HTTP 클라이언트 설정.
 
-    ``provider``는 OpenAI Chat Completions API와 Anthropic Messages API 중
-    하나를 선택한다. 로컬 LLM(mlx_lm.server, vLLM, llama.cpp)은
-    ``provider=openai``로 두고 ``base_url``을 ``http://localhost:PORT/v1``로
-    덮어쓰면 동작한다. 비어 있지 않은 ``api_key`` 값이면 모두 허용한다.
+    ``provider``는 OpenAI Chat Completions API와 Anthropic Messages API 중 하나를 선택한다. 로컬 LLM(mlx_lm.server, vLLM, llama.cpp)은 ``provider=openai``로 두고 ``base_url``을 ``http://localhost:PORT/v1``로 덮어쓰면 동작한다. 비어 있지 않은 ``api_key`` 값이면 모두 허용한다.
 
-    ``api_key``는 ``OPENAI_API_KEY``(또는 ``provider=anthropic``일 때
-    ``ANTHROPIC_API_KEY``)에서만 읽는다. yaml 키 값은 의도적으로 무시하므로
-    시크릿이 디스크나 쉘 히스토리에 남지 않는다.
+    ``api_key``는 ``OPENAI_API_KEY``(또는 ``provider=anthropic``일 때 ``ANTHROPIC_API_KEY``)에서만 읽는다. yaml 키 값은 의도적으로 무시하므로 시크릿이 디스크나 쉘 히스토리에 남지 않는다.
 
-    ``__post_init__``에서 강제하는 수치 범위는 비현실적인 yaml/환경 값에
-    대한 운영 안전장치다.
+    ``__post_init__``에서 강제하는 수치 범위는 비현실적인 yaml/환경 값에 대한 운영 안전장치다.
     """
 
     base_url: str
@@ -96,8 +90,7 @@ class LlmConfig:
     def extra_chat_kwargs_dict(self) -> dict:
         """``extra_chat_kwargs`` 튜플을 dict로 풀어 반환한다.
 
-        frozen dataclass는 hashable이어야 하므로 dict 자체를 필드로 보관할 수
-        없다. 외부에 노출할 때는 dict로 풀어주는 헬퍼를 둔다.
+        frozen dataclass는 hashable이어야 하므로 dict 자체를 필드로 보관할 수 없다. 외부에 노출할 때는 dict로 풀어주는 헬퍼를 둔다.
         """
 
         return dict(self.extra_chat_kwargs)
@@ -107,13 +100,9 @@ class LlmConfig:
 class BatchConfig:
     """배치 인터뷰 동시성과 부분 실패 임계값.
 
-    동시성 1-10은 일반적인 OpenAI 티어 rate limit 아래에 여유를 두기 위한
-    soft cap이다. ``partial_failure_threshold``(0.0-1.0)는 이 비율 아래로
-    성공률이 떨어지면 ``BatchResultEnvelope.partial_failure``를 true로
-    뒤집고 CLI는 종료 코드 3으로 빠져나오는 임계값이다.
+    동시성 1-10은 일반적인 OpenAI 티어 rate limit 아래에 여유를 두기 위한 soft cap이다. ``partial_failure_threshold``(0.0-1.0)는 이 비율 아래로 성공률이 떨어지면 ``BatchResultEnvelope.partial_failure``를 true로 뒤집고 CLI는 종료 코드 3으로 빠져나오는 임계값이다.
 
-    ``single_turn``은 CLI ``--single-turn`` 일회성 옵션이 cli_overrides 경로로
-    주입되므로 본 dataclass에 보관한다. yaml에는 키가 없다.
+    ``single_turn``은 CLI ``--single-turn`` 일회성 옵션이 cli_overrides 경로로 주입되므로 본 dataclass에 보관한다. yaml에는 키가 없다.
     """
 
     concurrency: int
@@ -147,14 +136,9 @@ class DatasetConfig:
 class PersonaConfig:
     """페르소나 토글과 시스템 프롬프트 템플릿 경로.
 
-    ``fields``는 시스템 프롬프트에 추가 주입할 페르소나 토글 키워드 튜플이다.
-    ``("summary",)``가 기본값이며 ``professional``/``sports``/``arts``/``travel``/
-    ``culinary``/``family``를 추가하면 해당 자유 서술 컬럼이 페르소나 객체에
-    합쳐진다.
+    ``fields``는 시스템 프롬프트에 추가 주입할 페르소나 토글 키워드 튜플이다. ``("summary",)``가 기본값이며 ``professional``/``sports``/``arts``/``travel``/``culinary``/``family``를 추가하면 해당 자유 서술 컬럼이 페르소나 객체에 합쳐진다.
 
-    ``system_prompt_path``는 시스템 프롬프트 템플릿 파일 경로다(절대 경로 또는
-    프로젝트 루트 기준 상대 경로). pip-installed 환경에서 본 경로가 부재하고
-    default 경로면 패키지 내부 ``src._prompts.system_prompt.txt``로 fallback한다.
+    ``system_prompt_path``는 시스템 프롬프트 템플릿 파일 경로다(절대 경로 또는 프로젝트 루트 기준 상대 경로). pip-installed 환경에서 본 경로가 부재하고 default 경로면 패키지 내부 ``src._prompts.system_prompt.txt``로 fallback한다.
     """
 
     fields: tuple
@@ -171,13 +155,9 @@ class PersonaConfig:
 class HeuristicsConfig:
     """인터뷰 휴리스틱 임계값과 키워드 리스트.
 
-    이 값들을 외부화하면 사용자는 코드를 건드리지 않고 yaml에서 자동
-    follow-up 트리거와 페르소나 drift 감지기를 조정할 수 있다. 범위를
-    벗어난 값은 ``__post_init__``에서 거부한다.
+    이 값들을 외부화하면 사용자는 코드를 건드리지 않고 yaml에서 자동 follow-up 트리거와 페르소나 drift 감지기를 조정할 수 있다. 범위를 벗어난 값은 ``__post_init__``에서 거부한다.
 
-    v1.2.0(ADR-005)부터 ``InterviewConfig``에서 ``HeuristicsConfig``로 이름이
-    바뀌었다. ``system_prompt_path``와 ``persona_fields``는 ``CommonConfig.persona``로
-    이동했다.
+    v1.2.0(ADR-005)부터 ``InterviewConfig``에서 ``HeuristicsConfig``로 이름이 바뀌었다. ``system_prompt_path``와 ``persona_fields``는 ``CommonConfig.persona``로 이동했다.
     """
 
     short_answer_threshold: int
@@ -461,8 +441,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 def _load_dotenv(path: Optional[Path] = None) -> dict:
     """표준 라이브러리만으로 ``.env`` 파일을 파싱한다.
 
-    ``path``가 ``None``일 때 탐색 순서는 현재 작업 디렉토리, 그 다음 프로젝트
-    루트다. 파일이 없으면 빈 dict를 돌려준다.
+    ``path``가 ``None``일 때 탐색 순서는 현재 작업 디렉토리, 그 다음 프로젝트 루트다. 파일이 없으면 빈 dict를 돌려준다.
     """
 
     candidates: list = []
@@ -565,18 +544,15 @@ def load_config(
     yaml_path = yaml_path or DEFAULT_YAML_PATH
     merged = _default_dict()
     merged = _deep_merge(merged, _load_yaml(yaml_path))
-    # 기존 yaml 파일이 깨지지 않도록 legacy ``llm.backend`` 항목은 제거한다.
-    # MCP가 sampling 전용으로 바뀌면서 토글 자체가 사라졌다.
+    # 기존 yaml 파일이 깨지지 않도록 legacy ``llm.backend`` 항목은 제거한다. MCP가 sampling 전용으로 바뀌면서 토글 자체가 사라졌다.
     if isinstance(merged.get("llm"), dict):
         merged["llm"].pop("backend", None)
     merged = _apply_env(merged)
     if cli_overrides:
         merged = _deep_merge(merged, cli_overrides)
-        # CLI가 환경 변수 패스 이후에 ``provider``를 뒤집을 수 있다. 그래서
-        # ``--provider anthropic``이면 ``ANTHROPIC_API_KEY``를,
-        # ``--provider openai``이면 ``OPENAI_API_KEY``를 다시 잡도록 환경
-        # 변수 패스를 한 번 더 돌린다. CLI 자체는 ``api_key``를 넘길 수 없고
-        # (yaml과 CLI 모두 거부) 사용자가 설정한 키는 덮어쓰지 않는다.
+        # CLI가 환경 변수 패스 이후에 ``provider``를 뒤집을 수 있다.
+        # 그래서 ``--provider anthropic``이면 ``ANTHROPIC_API_KEY``를, ``--provider openai``이면 ``OPENAI_API_KEY``를 다시 잡도록 환경 변수 패스를 한 번 더 돌린다.
+        # CLI 자체는 ``api_key``를 넘길 수 없고(yaml과 CLI 모두 거부) 사용자가 설정한 키는 덮어쓰지 않는다.
         merged = _apply_env(merged)
 
     try:
@@ -585,10 +561,8 @@ def load_config(
             str(api_key_raw) if api_key_raw not in (None, "") else None
         )
         provider = str(merged["llm"].get("provider", "openai")).strip().lower()
-        # provider가 기존 기본값과 달라지면 호출자가 ``--provider anthropic``
-        # 한 줄로 바꿀 수 있도록 매칭되는 기본 base_url과 model로 자동 전환
-        # 한다. 사용자가 별도로 지정한 ``base_url``(``api.openai.com`` 기본
-        # 값이 아닌 값)은 그대로 존중한다.
+        # provider가 기존 기본값과 달라지면 호출자가 ``--provider anthropic`` 한 줄로 바꿀 수 있도록 매칭되는 기본 base_url과 model로 자동 전환한다.
+        # 사용자가 별도로 지정한 ``base_url``(``api.openai.com`` 기본값이 아닌 값)은 그대로 존중한다.
         base_url_raw = merged["llm"].get("base_url")
         if (
             provider == "anthropic"

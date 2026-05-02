@@ -2,19 +2,12 @@
 
 두 가지 server-side 백엔드를 노출한다.
 
-- ``OpenAIBackend``: OpenAI Chat Completions API와 모든 OpenAI 호환 엔드포인트
-  (mlx_lm.server, vLLM, llama.cpp)를 다룬다. CLI와 MCP server 모드(`mcp.mode:
-  "server"`)가 사용한다.
-- ``AnthropicBackend``: Anthropic Messages API. ``provider=anthropic``일 때
-  CLI와 MCP server 모드가 사용한다.
+- ``OpenAIBackend``: OpenAI Chat Completions API와 모든 OpenAI 호환 엔드포인트(mlx_lm.server, vLLM, llama.cpp)를 다룬다. CLI와 MCP server 모드(`mcp.mode: "server"`)가 사용한다.
+- ``AnthropicBackend``: Anthropic Messages API. ``provider=anthropic``일 때 CLI와 MCP server 모드가 사용한다.
 
-두 구현 모두 ``LLMBackend`` 프로토콜을 만족하므로 application 계층
-(``run_batch``, ``run_interview``, ``generate_report``)이 의존성 주입으로
-교체 사용할 수 있다.
+두 구현 모두 ``LLMBackend`` 프로토콜을 만족하므로 application 계층(``run_batch``, ``run_interview``, ``generate_report``)이 의존성 주입으로 교체 사용할 수 있다.
 
-v1.2.0(ADR-005)부터 MCP sampling 백엔드는 제거됐다. MCP orchestrator 모드
-(`mcp.mode: "orchestrator"`)는 server-side LLM을 호출하지 않으므로 본 모듈을
-사용하지 않는다(호스트 sub-agent가 자기 LLM으로 인터뷰를 수행한다).
+v1.2.0(ADR-005)부터 MCP sampling 백엔드는 제거됐다. MCP orchestrator 모드(`mcp.mode: "orchestrator"`)는 server-side LLM을 호출하지 않으므로 본 모듈을 사용하지 않는다(호스트 sub-agent가 자기 LLM으로 인터뷰를 수행한다).
 """
 
 from __future__ import annotations
@@ -59,9 +52,7 @@ _INVALID_ANTHROPIC_KEY_MESSAGE = (
 class LLMBackend(Protocol):
     """인터뷰 파이프라인이 사용하는 최소 인터페이스.
 
-    ``LLMClient``와 호환되어, 본 프로토콜을 만족하는 객체는
-    ``run_batch``/``run_interview``/``generate_report`` 어디에서든 교체
-    사용 가능하다. 구현체는 async context manager 프로토콜을 지원해야 한다.
+    ``LLMClient``와 호환되어, 본 프로토콜을 만족하는 객체는 ``run_batch``/``run_interview``/``generate_report`` 어디에서든 교체 사용 가능하다. 구현체는 async context manager 프로토콜을 지원해야 한다.
     """
 
     async def healthcheck(self) -> list:  # pragma: no cover - protocol stub
@@ -85,10 +76,8 @@ class LLMBackend(Protocol):
 class OpenAIBackend:
     """OpenAI Chat Completions와 OpenAI 호환 서버를 감싸는 어댑터.
 
-    ``LLMClient``를 wrapping해 인터뷰 파이프라인이 self-hosted OpenAI 호환
-    엔드포인트(mlx_lm.server, vLLM, llama.cpp)에도 동일하게 동작하도록 한다.
-    ``base_url``과 ``api_key``만 설정하면 된다(로컬 서버는 보통 임의의 문자열을
-    api_key로 받아들인다).
+    ``LLMClient``를 wrapping해 인터뷰 파이프라인이 self-hosted OpenAI 호환 엔드포인트(mlx_lm.server, vLLM, llama.cpp)에도 동일하게 동작하도록 한다.
+    ``base_url``과 ``api_key``만 설정하면 된다(로컬 서버는 보통 임의의 문자열을 api_key로 받아들인다).
     """
 
     def __init__(self, config: LlmConfig) -> None:
@@ -135,11 +124,9 @@ class AnthropicBackend:
     - ``usage.output_tokens`` -> ``TokenUsage.completion_tokens``
     - ``usage.cache_read_input_tokens`` -> ``TokenUsage.cached_tokens``
 
-    Anthropic prompt caching은 시스템 프롬프트에 ``cache_control`` 마커를 박아
-    기본 활성화한다. 마커를 거부하는 예전 Messages API 리비전을 사용하면 yaml
-    에서 ``llm.anthropic_cache_control: false``로 끄면 된다. 캐시가 hit하면
-    ``cache_creation_input_tokens``와 ``cache_read_input_tokens``가 응답 usage에
-    함께 노출된다.
+    Anthropic prompt caching은 시스템 프롬프트에 ``cache_control`` 마커를 박아 기본 활성화한다.
+    마커를 거부하는 예전 Messages API 리비전을 사용하면 yaml에서 ``llm.anthropic_cache_control: false``로 끄면 된다.
+    캐시가 hit하면 ``cache_creation_input_tokens``와 ``cache_read_input_tokens``가 응답 usage에 함께 노출된다.
     """
 
     _ANTHROPIC_VERSION = "2023-06-01"
@@ -160,9 +147,7 @@ class AnthropicBackend:
     async def healthcheck(self) -> list:
         """1-token ping 요청으로 연결성을 검증한다.
 
-        Messages API는 모델 목록 엔드포인트를 노출하지 않으므로, 본 healthcheck는
-        최소 요청을 보내 2xx 응답이면 성공으로 본다. OpenAI 백엔드 계약과 같은
-        모양을 유지하기 위해 설정된 모델 ID를 리스트로 wrapping해 반환한다.
+        Messages API는 모델 목록 엔드포인트를 노출하지 않으므로, 본 healthcheck는 최소 요청을 보내 2xx 응답이면 성공으로 본다. OpenAI 백엔드 계약과 같은 모양을 유지하기 위해 설정된 모델 ID를 리스트로 wrapping해 반환한다.
         """
 
         self._require_api_key()
@@ -232,13 +217,9 @@ class AnthropicBackend:
             ),
         }
         if system_prompt:
-            # Anthropic prompt caching이 켜진 경우, 시스템 프롬프트를
-            # ``cache_control: ephemeral`` 마커가 붙은 단일 text 블록으로
-            # 보낸다. Messages API가 본 마커를 캐시 경계로 인식해, 동일한 시스템
-            # 텍스트를 가진 후속 요청은 정적 prefix를 재사용한다. 캐시가 적중하면
-            # ``cache_creation_input_tokens``와 ``cache_read_input_tokens``가
-            # 응답 usage에 함께 노출되며, ``_extract_usage``가 OpenAI와의 통일성
-            # 유지를 위해 두 값을 합쳐 ``TokenUsage.cached_tokens``로 매핑한다.
+            # Anthropic prompt caching이 켜진 경우, 시스템 프롬프트를 ``cache_control: ephemeral`` 마커가 붙은 단일 text 블록으로 보낸다.
+            # Messages API가 본 마커를 캐시 경계로 인식해, 동일한 시스템 텍스트를 가진 후속 요청은 정적 prefix를 재사용한다.
+            # 캐시가 적중하면 ``cache_creation_input_tokens``와 ``cache_read_input_tokens``가 응답 usage에 함께 노출되며, ``_extract_usage``가 OpenAI와의 통일성 유지를 위해 두 값을 합쳐 ``TokenUsage.cached_tokens``로 매핑한다.
             if self._config.anthropic_cache_control:
                 body["system"] = [
                     {
@@ -398,10 +379,8 @@ class AnthropicBackend:
         output_tokens = _as_int(usage_raw.get("output_tokens"))
         cached_read = _as_int(usage_raw.get("cache_read_input_tokens"))
         cached_creation = _as_int(usage_raw.get("cache_creation_input_tokens"))
-        # ``cached_tokens``는 캐시된 prefix 총 길이(creation + read)를 담는다.
-        # OpenAI의 ``cached_tokens`` 카운트와 like-for-like 비교가 가능하도록
-        # 한다. creation은 캐시를 처음 채운 호출, read는 warm 캐시를 적중한
-        # 후속 호출의 토큰 수다.
+        # ``cached_tokens``는 캐시된 prefix 총 길이(creation + read)를 담는다. OpenAI의 ``cached_tokens`` 카운트와 like-for-like 비교가 가능하도록 한다.
+        # creation은 캐시를 처음 채운 호출, read는 warm 캐시를 적중한 후속 호출의 토큰 수다.
         return TokenUsage(
             prompt_tokens=input_tokens,
             completion_tokens=output_tokens,

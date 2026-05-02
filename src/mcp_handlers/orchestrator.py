@@ -1,20 +1,14 @@
 """MCP orchestrator 모드 전용 핸들러.
 
-본 모드는 server-side LLM을 호출하지 않는다. 호스트 sub-agent(Claude Code의
-Task tool 같은 sub-agent 기능)가 자기 LLM으로 인터뷰를 수행하며, 본 도구는
-데이터/프롬프트 helper만 노출한다.
+본 모드는 server-side LLM을 호출하지 않는다. 호스트 sub-agent(Claude Code의 Task tool 같은 sub-agent 기능)가 자기 LLM으로 인터뷰를 수행하며, 본 도구는 데이터/프롬프트 helper만 노출한다.
 
 도구 흐름은 아래와 같다.
 
-1. ``build_persona_prompt`` 또는 ``build_batch_prompts``로 시스템 프롬프트와
-   페르소나 dict를 받는다
+1. ``build_persona_prompt`` 또는 ``build_batch_prompts``로 시스템 프롬프트와 페르소나 dict를 받는다
 2. 호스트 sub-agent가 받은 프롬프트로 자기 LLM을 호출해 인터뷰를 수행한다
-3. 호스트가 record를 모아 ``aggregate_results``로 정량 집계 + 마크다운
-   리포트 파일을 생성한다
+3. 호스트가 record를 모아 ``aggregate_results``로 정량 집계 + 마크다운 리포트 파일을 생성한다
 
-본 모드의 helper 도구(detect_persona_drift, should_auto_follow_up,
-parse_structured_summary, interview_record_schema)는 ``helpers`` 모듈에
-있으며 호스트가 명시 호출 시 동일 임계값/키워드를 적용한다.
+본 모드의 helper 도구(detect_persona_drift, should_auto_follow_up, parse_structured_summary, interview_record_schema)는 ``helpers`` 모듈에 있으며 호스트가 명시 호출 시 동일 임계값/키워드를 적용한다.
 """
 
 from __future__ import annotations
@@ -73,8 +67,7 @@ _SCHEMA_HINT = (
 async def healthcheck(arguments: dict) -> dict:
     """MCP orchestrator 모드 healthcheck.
 
-    server-side LLM 호출이 없으므로 도구 부팅 자체와 cwd, dataset 가용성을
-    돌려준다. dataset 가용성은 list_personas 도구로 별도 검증할 수 있다.
+    server-side LLM 호출이 없으므로 도구 부팅 자체와 cwd, dataset 가용성을 돌려준다. dataset 가용성은 list_personas 도구로 별도 검증할 수 있다.
     """
 
     try:

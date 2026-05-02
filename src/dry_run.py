@@ -1,13 +1,8 @@
 """``interview --dry-run`` 흐름 전용 dry-run 콘솔 렌더러.
 
-단일 페르소나 인터뷰 실행기다. 시스템 프롬프트, 페르소나 메타, 질문별
-응답, 구조화 요약을 stdout에 찍어 빠른 프롬프트 디버깅 사이클을 지원한다.
-사람이 읽는 콘솔 출력과 ``--json`` 모드 래퍼가 같은 코드 경로를 공유한다
-(``--json`` 모드에서는 사람용 dump를 생략하고 caller가 JSON 페이로드를
-한 번에 출력한다).
+단일 페르소나 인터뷰 실행기다. 시스템 프롬프트, 페르소나 메타, 질문별 응답, 구조화 요약을 stdout에 찍어 빠른 프롬프트 디버깅 사이클을 지원한다. 사람이 읽는 콘솔 출력과 ``--json`` 모드 래퍼가 같은 코드 경로를 공유한다(``--json`` 모드에서는 사람용 dump를 생략하고 caller가 JSON 페이로드를 한 번에 출력한다).
 
-click 진입점이 라우팅 책임에 집중하고 dry-run 렌더 로직은 격리해 단위
-테스트할 수 있도록 ``main.py``에서 분리해 본 모듈에 둔다.
+click 진입점이 라우팅 책임에 집중하고 dry-run 렌더 로직은 격리해 단위 테스트할 수 있도록 ``main.py``에서 분리해 본 모듈에 둔다.
 """
 
 from __future__ import annotations
@@ -39,9 +34,7 @@ async def run_dry_run(
         follow_ups: 공유 follow-up 질문 리스트(선택).
         config: 애플리케이션 설정(llm, batch, dataset, interview, report).
         console: 사람 대상 dump를 위한 콘솔 렌더러.
-        json_mode: ``True``면 사람용 dump 출력을 모두 생략한다. caller가 본
-            코루틴 종료 후 페르소나 메타와 결과 envelope을 단일 JSON 페이로드로
-            출력하는 흐름을 가정한다.
+        json_mode: ``True``면 사람용 dump 출력을 모두 생략한다. caller가 본 코루틴 종료 후 페르소나 메타와 결과 envelope을 단일 JSON 페이로드로 출력하는 흐름을 가정한다.
     """
 
     if not json_mode:
@@ -93,9 +86,7 @@ async def run_dry_run(
     console.echo("--- 구조화 요약 ---")
     if record.structured_summary is not None:
         s = record.structured_summary
-        # ``acceptable_price_signal``은 schema v2에서 도입된 정성 신호 필드라
-        # 본 dump에 함께 포함한다(인터뷰 본문에 명시 숫자가 없어도 정성 가격
-        # 신호로 채워진다).
+        # ``acceptable_price_signal``은 schema v2에서 도입된 정성 신호 필드라 본 dump에 함께 포함한다(인터뷰 본문에 명시 숫자가 없어도 정성 가격 신호로 채워진다).
         console.echo(
             json.dumps(
                 {

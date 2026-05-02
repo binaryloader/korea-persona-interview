@@ -1,12 +1,8 @@
 """OpenAI Chat Completions HTTP 클라이언트.
 
-``httpx.AsyncClient``를 기반으로 retry, timeout, 응답 본문 추출을 묶은 async
-클라이언트다. 공식 ``openai`` SDK는 의존성을 최소화하기 위해 의도적으로
-사용하지 않는다. backoff 로직은 6줄짜리 자체 구현이다.
+``httpx.AsyncClient``를 기반으로 retry, timeout, 응답 본문 추출을 묶은 async 클라이언트다. 공식 ``openai`` SDK는 의존성을 최소화하기 위해 의도적으로 사용하지 않는다. backoff 로직은 6줄짜리 자체 구현이다.
 
-OpenAI 호환 로컬 서버(``mlx_lm.server``, ``vLLM``, ``llama.cpp``)에도 본
-클라이언트를 그대로 사용한다. ``base_url``과 비어 있지 않은 ``api_key``만
-설정하면 동일한 인터페이스로 호출된다.
+OpenAI 호환 로컬 서버(``mlx_lm.server``, ``vLLM``, ``llama.cpp``)에도 본 클라이언트를 그대로 사용한다. ``base_url``과 비어 있지 않은 ``api_key``만 설정하면 동일한 인터페이스로 호출된다.
 """
 
 from __future__ import annotations
@@ -37,11 +33,9 @@ _JITTER_MAX_SECONDS = 0.5
 def _parse_streaming_body(body_text: str) -> tuple:
     """OpenAI Server-Sent Events 스트림 본문을 ``(content, usage)``로 합산한다.
 
-    스트리밍 응답은 ``data: {...}`` 라인 시퀀스이며 ``data: [DONE]``으로
-    끝난다. 각 chunk의 ``choices[0].delta.content``를 이어 붙이고, 마지막
-    chunk의 ``usage`` 블록(요청 시 ``stream_options.include_usage``를 켠 경우)
-    을 응답 usage로 사용한다. JSON 파싱이 실패하거나 기대 필드가 없는 라인은
-    건너뛴다. 부분 chunk가 합산 결과를 오염시키지 못하게 한 안전 장치다.
+    스트리밍 응답은 ``data: {...}`` 라인 시퀀스이며 ``data: [DONE]``으로 끝난다.
+    각 chunk의 ``choices[0].delta.content``를 이어 붙이고, 마지막 chunk의 ``usage`` 블록(요청 시 ``stream_options.include_usage``를 켠 경우)을 응답 usage로 사용한다.
+    JSON 파싱이 실패하거나 기대 필드가 없는 라인은 건너뛴다. 부분 chunk가 합산 결과를 오염시키지 못하게 한 안전 장치다.
     """
 
     import json as _json
@@ -109,10 +103,7 @@ _INVALID_API_KEY_MESSAGE = (
 class LLMClient:
     """OpenAI Chat Completions API와 호환 서버용 async 클라이언트.
 
-    클래스 이름은 provider-agnostic하다(레거시 alias ``MlxLLMClient``는
-    v1.1.0에서 제거됐다). 신규 코드는 본 구체 클래스가 아니라 ``llm_backend``의
-    ``LLMBackend`` 프로토콜에 의존해, 하위 transport(OpenAI / Anthropic /
-    MCP sampling)를 교체 가능하게 유지하는 것이 권장된다.
+    클래스 이름은 provider-agnostic하다(레거시 alias ``MlxLLMClient``는 v1.1.0에서 제거됐다). 신규 코드는 본 구체 클래스가 아니라 ``llm_backend``의 ``LLMBackend`` 프로토콜에 의존해, 하위 transport(OpenAI / Anthropic / MCP sampling)를 교체 가능하게 유지하는 것이 권장된다.
 
     사용 예시는 아래와 같다.
 
@@ -122,10 +113,7 @@ class LLMClient:
             models = await client.healthcheck()
             response = await client.chat(messages, max_tokens=500)
 
-    retry 정책은 다음과 같다. HTTP 5xx, 429, timeout, connect 실패는
-    ``retry_max_attempts``까지 exponential backoff로 재시도한다. 401과 그 외
-    4xx 응답은 fast-fail이다. retry가 모두 소진되면 ``RetryExhaustedError``를
-    raise한다.
+    retry 정책은 다음과 같다. HTTP 5xx, 429, timeout, connect 실패는 ``retry_max_attempts``까지 exponential backoff로 재시도한다. 401과 그 외 4xx 응답은 fast-fail이다. retry가 모두 소진되면 ``RetryExhaustedError``를 raise한다.
 
     API 키가 없으면 HTTP 호출 전에 ``ConfigError``로 차단한다.
     """
@@ -243,24 +231,20 @@ class LLMClient:
         }
         if self._config.streaming:
             body["stream"] = True
-            # OpenAI에 마지막 stream chunk에서 합산 usage 블록을 함께 보내달라고
-            # 요청한다. streaming과 non-streaming 응답이 같은 토큰 카운트를
-            # 노출하게 한다. ``stream_options.include_usage`` 옵션 게이트 뒤에
-            # 있다.
+            # OpenAI에 마지막 stream chunk에서 합산 usage 블록을 함께 보내달라고 요청한다.
+            # streaming과 non-streaming 응답이 같은 토큰 카운트를 노출하게 한다.
+            # ``stream_options.include_usage`` 옵션 게이트 뒤에 있다.
             body["stream_options"] = {"include_usage": True}
-        # ``extra_chat_kwargs``는 OpenAI Chat Completions 스펙 밖에 있는
-        # backend 고유 요청 필드를 그대로 forward한다. 표준 use case는
-        # mlx_lm.server / vLLM의 Qwen3 모델 thinking 토글용
-        # ``chat_template_kwargs``다. 예약 키는 의도적으로 skip해, 사용자가
-        # 표준 body 모양을 실수로 override하지 못하게 한다.
+        # ``extra_chat_kwargs``는 OpenAI Chat Completions 스펙 밖에 있는 backend 고유 요청 필드를 그대로 forward한다.
+        # 표준 use case는 mlx_lm.server / vLLM의 Qwen3 모델 thinking 토글용 ``chat_template_kwargs``다.
+        # 예약 키는 의도적으로 skip해, 사용자가 표준 body 모양을 실수로 override하지 못하게 한다.
         extras = self._config.extra_chat_kwargs_dict()
         for key, value in extras.items():
             if key in body:
                 continue
             body[key] = value
 
-        # 보안 정책상 메시지 본문은 구조화 로그에 남기지 않는다. count와 글자
-        # 합계만 기록한다.
+        # 보안 정책상 메시지 본문은 구조화 로그에 남기지 않는다. count와 글자 합계만 기록한다.
         logger.debug(
             "chat 요청 시작",
             extra={
@@ -396,8 +380,7 @@ class LLMClient:
         """OpenAI ``usage`` 블록에서 ``TokenUsage``를 추출한다.
 
         모킹 응답이나 본 필드를 생략한 호환 서버 응답에는 0으로 채워 반환한다.
-        ``cached_tokens``는 OpenAI 스키마에 따라
-        ``usage.prompt_tokens_details.cached_tokens`` 위치에 있다.
+        ``cached_tokens``는 OpenAI 스키마에 따라 ``usage.prompt_tokens_details.cached_tokens`` 위치에 있다.
         """
 
         try:

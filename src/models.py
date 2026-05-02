@@ -1,11 +1,8 @@
 """도메인 모델과 예외.
 
-본 모듈은 외부 의존이 없는 순수 도메인 계층이다(architecture.md §1).
-인터뷰 결과 record, 페르소나 메타, 구조화 요약, 배치 결과를 담는 frozen dataclass
-와 사용자 노출/내부 도메인 예외 9종을 정의한다.
+본 모듈은 외부 의존이 없는 순수 도메인 계층이다(architecture.md §1). 인터뷰 결과 record, 페르소나 메타, 구조화 요약, 배치 결과를 담는 frozen dataclass와 사용자 노출/내부 도메인 예외 9종을 정의한다.
 
-사용자 노출 예외는 main.py에서 종료 코드로 매핑하고, 내부 예외는 InterviewRecord
-의 status/flags/error로 변환한다(TDD §5).
+사용자 노출 예외는 main.py에서 종료 코드로 매핑하고, 내부 예외는 InterviewRecord의 status/flags/error로 변환한다(TDD §5).
 """
 
 from __future__ import annotations
@@ -23,9 +20,8 @@ ALLOWED_PRICE_SIGNAL = frozenset({"cheap", "fair", "expensive"})
 
 
 # 결과 JSON 스키마 버전. 변경 시 reader가 분기할 수 있도록 RunMeta에 박는다.
-# v2(라운드 G15)에서 ``acceptable_price_signal``을 신설하고 willingness_to_pay
-# 의 의미를 명시 숫자만으로 좁혔다. v1 JSON은 ``load_interview_json``이
-# acceptable_price_signal=None으로 채워 호환 로드한다.
+# v2(라운드 G15)에서 ``acceptable_price_signal``을 신설하고 willingness_to_pay의 의미를 명시 숫자만으로 좁혔다.
+# v1 JSON은 ``load_interview_json``이 acceptable_price_signal=None으로 채워 호환 로드한다.
 SCHEMA_VERSION = 2
 
 
@@ -33,12 +29,9 @@ SCHEMA_VERSION = 2
 class PersonaMeta:
     """페르소나 1명의 인구 통계 + 원본 raw dict.
 
-    데이터셋의 컬럼 매핑 결과(TDD §1.3)를 보존한다. ``name``은 데이터셋에 별도
-    이름 컬럼이 없어 기본 동작은 ``None``이다.
+    데이터셋의 컬럼 매핑 결과(TDD §1.3)를 보존한다. ``name``은 데이터셋에 별도 이름 컬럼이 없어 기본 동작은 ``None``이다.
 
-    ``family_type``/``housing_type``은 1인 가구 여부와 주거 유형을 시스템
-    프롬프트에 그대로 노출하기 위한 필드다. 데이터셋에 해당 컬럼이 없거나
-    비어 있는 경우 ``None``으로 둔다(field_map 매핑 결과 부재 시 동일).
+    ``family_type``/``housing_type``은 1인 가구 여부와 주거 유형을 시스템 프롬프트에 그대로 노출하기 위한 필드다. 데이터셋에 해당 컬럼이 없거나 비어 있는 경우 ``None``으로 둔다(field_map 매핑 결과 부재 시 동일).
     """
 
     persona_id: str
@@ -83,12 +76,9 @@ class MessageEntry:
 class TokenUsage:
     """단일 호출의 토큰 사용량.
 
-    OpenAI 응답의 ``usage`` 필드 매핑이다. ``cached_tokens``는 prompt caching
-    적용 시 입력 토큰 중 캐시에서 재사용된 양으로, prompt prefix가 1024 토큰
-    이상이고 동일 prefix가 반복 호출될 때 자동 적용된다.
+    OpenAI 응답의 ``usage`` 필드 매핑이다. ``cached_tokens``는 prompt caching 적용 시 입력 토큰 중 캐시에서 재사용된 양으로, prompt prefix가 1024 토큰 이상이고 동일 prefix가 반복 호출될 때 자동 적용된다.
 
-    합산은 ``add``로 수행한다. 동일한 frozen dataclass를 누적할 때 새 인스턴스
-    를 만들어 반환한다.
+    합산은 ``add``로 수행한다. 동일한 frozen dataclass를 누적할 때 새 인스턴스를 만들어 반환한다.
     """
 
     prompt_tokens: int = 0
@@ -109,8 +99,7 @@ class TokenUsage:
 class RawResponse:
     """질문 단위 응답 메타. 지연/재시도/토큰 사용량 분석 용도.
 
-    ``usage``는 본 응답을 생성한 단일 chat 호출의 토큰 사용량이다. 인터뷰 종료
-    후 record/배치 단위로 합산해 ``BatchResultEnvelope.usage``로 노출한다.
+    ``usage``는 본 응답을 생성한 단일 chat 호출의 토큰 사용량이다. 인터뷰 종료 후 record/배치 단위로 합산해 ``BatchResultEnvelope.usage``로 노출한다.
     """
 
     question_index: int
@@ -125,13 +114,9 @@ class RawResponse:
 class ChatResponse:
     """LLM chat 호출 결과 컨테이너.
 
-    OpenAI Chat Completions API에는 ``message.reasoning`` 확장 필드가 없으므로
-    ``reasoning_trace``는 항상 ``None``이다. 직렬화 호환을 위해 필드 자체는 보존한다.
-    ``content``가 비면 호출자가 별도 에러 처리를 수행한다.
+    OpenAI Chat Completions API에는 ``message.reasoning`` 확장 필드가 없으므로 ``reasoning_trace``는 항상 ``None``이다. 직렬화 호환을 위해 필드 자체는 보존한다. ``content``가 비면 호출자가 별도 에러 처리를 수행한다.
 
-    ``usage``는 OpenAI 응답의 토큰 사용량이다. 모킹된 응답이나 ``usage`` 필드를
-    돌려주지 않는 호환 서버, MCP sampling 응답에서는 0으로 채운 ``TokenUsage()``가
-    들어간다.
+    ``usage``는 OpenAI 응답의 토큰 사용량이다. 모킹된 응답이나 ``usage`` 필드를 돌려주지 않는 호환 서버, MCP sampling 응답에서는 0으로 채운 ``TokenUsage()``가 들어간다.
     """
 
     content: str
@@ -147,11 +132,8 @@ class StructuredSummary:
 
     스키마 v2(라운드 G15)에서 가격 의향을 두 필드로 분리했다.
 
-    - ``acceptable_price_signal``: ``cheap``/``fair``/``expensive``/``None``의
-      정성 신호. 인터뷰 답변 본문에서 명시 숫자가 없어도 ``비싸다``/``적당하다``/
-      ``저렴하다`` 류 정성 표현을 분류해 모든 record에 가능한 한 채운다
-    - ``willingness_to_pay``: 명시 숫자 정수만 들어간다. 응답에 명확한 ``월 5만원``
-      류 발화가 있을 때만 채워진다. 그렇지 않으면 ``None``
+    - ``acceptable_price_signal``: ``cheap``/``fair``/``expensive``/``None``의 정성 신호. 인터뷰 답변 본문에서 명시 숫자가 없어도 ``비싸다``/``적당하다``/``저렴하다`` 류 정성 표현을 분류해 모든 record에 가능한 한 채운다
+    - ``willingness_to_pay``: 명시 숫자 정수만 들어간다. 응답에 명확한 ``월 5만원`` 류 발화가 있을 때만 채워진다. 그렇지 않으면 ``None``
 
     v1 JSON은 ``acceptable_price_signal``을 ``None``으로 채워 호환 로드한다.
     """
@@ -187,9 +169,7 @@ class StructuredSummary:
 class Flags:
     """record 단위 부가 플래그.
 
-    truncated는 컨텍스트 budget 초과로 가장 오래된 user/assistant 페어를 제거한
-    경우 True가 된다. parse_failed는 단일턴 모드 응답에서 번호 파싱이 실패해
-    fallback으로 마지막 question에 통째 텍스트를 넣은 경우를 표시한다.
+    truncated는 컨텍스트 budget 초과로 가장 오래된 user/assistant 페어를 제거한 경우 True가 된다. parse_failed는 단일턴 모드 응답에서 번호 파싱이 실패해 fallback으로 마지막 question에 통째 텍스트를 넣은 경우를 표시한다.
     """
 
     persona_drift: bool = False
@@ -270,8 +250,7 @@ class FilterMatchedZeroError(Exception):
 class EmptyValidRecordsError(Exception):
     """리포트 정량 집계 가능한 record가 0건일 때. 종료 코드 2.
 
-    PRD §5.9의 ``report`` 명령 종료 코드 2와 매핑된다. ``ConfigError``와 동일
-    계층(사용자 노출 예외)이지만 종료 코드가 다르므로 별도 예외로 분리한다.
+    PRD §5.9의 ``report`` 명령 종료 코드 2와 매핑된다. ``ConfigError``와 동일 계층(사용자 노출 예외)이지만 종료 코드가 다르므로 별도 예외로 분리한다.
     """
 
 
@@ -303,6 +282,5 @@ class StructuredSummaryParseError(Exception):
 class EmptyResponseError(Exception):
     """``message.content``가 비어 있는 응답. retry 대상으로 본다.
 
-    OpenAI 응답에서는 거의 발생하지 않지만 호환 서버나 모델 thinking 토큰
-    폭증 케이스에서 빈 content가 돌아오는 사례를 흡수하기 위한 안전망이다.
+    OpenAI 응답에서는 거의 발생하지 않지만 호환 서버나 모델 thinking 토큰 폭증 케이스에서 빈 content가 돌아오는 사례를 흡수하기 위한 안전망이다.
     """

@@ -1,9 +1,7 @@
 """모든 MCP mode 공통 핸들러: list_personas, report.
 
 list_personas는 LLM 호출이 없으므로 어느 mode에서든 동일하게 동작한다.
-report는 정량 집계는 LLM 무관, 정성 인사이트만 LLM 호출이 필요한데, MCP
-server 모드에서는 server-side LLM을 호출하고 MCP orchestrator 모드에서는
-LLM=None을 넘겨 정성 섹션을 fallback 메시지로 채운다.
+report는 정량 집계는 LLM 무관, 정성 인사이트만 LLM 호출이 필요한데, MCP server 모드에서는 server-side LLM을 호출하고 MCP orchestrator 모드에서는 LLM=None을 넘겨 정성 섹션을 fallback 메시지로 채운다.
 """
 
 from __future__ import annotations
@@ -112,8 +110,7 @@ async def report(arguments: dict) -> dict:
     """결과 JSON으로부터 마크다운 리포트를 생성한다(모든 mode 공통).
 
     MCP server 모드: server-side LLM으로 정성 인사이트까지 채움.
-    MCP orchestrator 모드: LLM=None을 넘겨 정성 섹션 fallback. 호스트가 정성
-    인사이트까지 받으려면 호스트 sub-agent로 직접 인터뷰 흐름을 짜야 한다.
+    MCP orchestrator 모드: LLM=None을 넘겨 정성 섹션 fallback. 호스트가 정성 인사이트까지 받으려면 호스트 sub-agent로 직접 인터뷰 흐름을 짜야 한다.
     """
 
     json_path_raw = arguments.get("json_path")
@@ -157,8 +154,7 @@ async def report(arguments: dict) -> dict:
         output_dir=output_dir,
     )
 
-    # MCP orchestrator 모드는 server-side LLM 호출이 없으므로 정성 인사이트는
-    # fallback 메시지로 채우고 정량 지표만 렌더링한다.
+    # MCP orchestrator 모드는 server-side LLM 호출이 없으므로 정성 인사이트는 fallback 메시지로 채우고 정량 지표만 렌더링한다.
     backend: Optional[LLMBackend] = None
     if config.mcp.mode != "orchestrator":
         try:

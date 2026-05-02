@@ -9,12 +9,9 @@
 - 페르소나 깨짐 감지(영어 비율 + 정면 모순 휴리스틱), 모델 거부 감지(거부 키워드)
 - 인터뷰 종료 후 별도 single-turn 호출로 구조화 요약(JSON) 생성
 
-순수 함수(``build_system_prompt``, ``estimate_tokens``, ``truncate_history``,
-``should_auto_follow_up``, ``detect_persona_drift``, ``detect_refusal``)는 모듈
-함수로 분리해 단위 테스트 용이성을 확보한다(TDD §16).
+순수 함수(``build_system_prompt``, ``estimate_tokens``, ``truncate_history``, ``should_auto_follow_up``, ``detect_persona_drift``, ``detect_refusal``)는 모듈 함수로 분리해 단위 테스트 용이성을 확보한다(TDD §16).
 
-application 계층이며, infrastructure(``LLMClient``, OpenAI 호환 클라이언트)와
-domain(``PersonaMeta``, ``InterviewRecord`` 등)을 조합한다(architecture.md §1, §2).
+application 계층이며, infrastructure(``LLMClient``, OpenAI 호환 클라이언트)와 domain(``PersonaMeta``, ``InterviewRecord`` 등)을 조합한다(architecture.md §1, §2).
 """
 
 from __future__ import annotations
@@ -51,11 +48,9 @@ from .models import (
 logger = logging.getLogger(__name__)
 
 
-# 단일턴 응답 포맷 분리용 정규식. 라인 시작에 숫자와 ``.`` 또는 ``)``가 오는
-# 패턴(예: ``1.``, ``2)``, ``3.``)을 잡고 다음 번호 마커 또는 입력 끝까지를
-# 본문으로 읽는다. MULTILINE + DOTALL 플래그를 함께 사용해 라인 시작 기준으로만
-# 앵커링하면서 줄바꿈을 가로지를 수 있다. 본문 중간에 등장하는 번호 인용이
-# 분리자로 오해되지 않도록 한 안전 장치다.
+# 단일턴 응답 포맷 분리용 정규식. 라인 시작에 숫자와 ``.`` 또는 ``)``가 오는 패턴(예: ``1.``, ``2)``, ``3.``)을 잡고 다음 번호 마커 또는 입력 끝까지를 본문으로 읽는다.
+# MULTILINE + DOTALL 플래그를 함께 사용해 라인 시작 기준으로만 앵커링하면서 줄바꿈을 가로지를 수 있다.
+# 본문 중간에 등장하는 번호 인용이 분리자로 오해되지 않도록 한 안전 장치다.
 _NUMBERED_SEGMENT_RE = re.compile(
     r"^\s*(\d+)[.)]\s*(.+?)(?=^\s*\d+[.)]|\Z)",
     re.MULTILINE | re.DOTALL,
@@ -66,16 +61,11 @@ def _parse_single_turn_response(text: str, expected_count: int) -> tuple:
     """단일턴 응답 텍스트를 질문별 답변 청크로 분리한다.
 
     Args:
-        text: LLM 응답 본문. 시스템 프롬프트가 모델에게 ``1. ... 2. ... 3. ...``
-            번호 segment 형식을 출력하도록 지시한다.
+        text: LLM 응답 본문. 시스템 프롬프트가 모델에게 ``1. ... 2. ... 3. ...`` 번호 segment 형식을 출력하도록 지시한다.
         expected_count: caller가 기대하는 segment 수(메인 질문 + 공유 follow-up).
 
     Returns:
-        ``(answers, parse_failed)``. 성공 시 ``answers``는 ``expected_count``
-        길이 리스트로, 각 슬롯 0..N-1에 trim된 segment 본문이 들어간다. 실패
-        시에는 마지막 슬롯에 전체 응답 텍스트가 들어가고 나머지는 빈 문자열,
-        ``parse_failed``는 True가 된다. 데이터를 잃지 않으면서 사후 분석에서
-        식별 가능하도록 하기 위함이다.
+        ``(answers, parse_failed)``. 성공 시 ``answers``는 ``expected_count`` 길이 리스트로, 각 슬롯 0..N-1에 trim된 segment 본문이 들어간다. 실패 시에는 마지막 슬롯에 전체 응답 텍스트가 들어가고 나머지는 빈 문자열, ``parse_failed``는 True가 된다. 데이터를 잃지 않으면서 사후 분석에서 식별 가능하도록 하기 위함이다.
     """
 
     if expected_count <= 0:
@@ -91,8 +81,7 @@ def _parse_single_turn_response(text: str, expected_count: int) -> tuple:
         # 1-based 번호를 0-based question_index로 변환한다.
         zero_idx = idx - 1
         if 0 <= zero_idx < expected_count:
-            # 같은 번호가 두 번 등장하면 마지막 매칭이 우선이다(LLM이 자가
-            # 정정해 다시 적는 사례를 흡수).
+            # 같은 번호가 두 번 등장하면 마지막 매칭이 우선이다(LLM이 자가 정정해 다시 적는 사례를 흡수).
             found[zero_idx] = m.group(2).strip()
 
     # 모든 인덱스를 채웠는지 확인. 하나라도 빠지면 fallback.
@@ -123,10 +112,8 @@ _SUMMARY_SCHEMA_HINT = (
 )
 
 
-# 17개 시도 짧은 표기. drift 감지가 응답에서 페르소나 거주지가 아닌 다른 시도에
-# 살고 있다고 단언하는 케이스를 잡는 데 사용한다(TDD §8.2). 데이터셋은 짧은
-# 표기만 저장하지만 응답은 짧거나 풀네임을 쓸 수 있으므로 caller가 substring
-# 의미로 본 리스트를 비교한다.
+# 17개 시도 짧은 표기. drift 감지가 응답에서 페르소나 거주지가 아닌 다른 시도에 살고 있다고 단언하는 케이스를 잡는 데 사용한다(TDD §8.2).
+# 데이터셋은 짧은 표기만 저장하지만 응답은 짧거나 풀네임을 쓸 수 있으므로 caller가 substring 의미로 본 리스트를 비교한다.
 _KOREAN_PROVINCES: tuple = (
     "서울",
     "부산",
@@ -148,14 +135,10 @@ _KOREAN_PROVINCES: tuple = (
 )
 
 
-# gender/age/region drift 축이 사용하는 1인칭 주어 토큰 패턴. cohabitation 축은
-# 본 패턴 대신 전용 정밀 정규식(_SOLO_ASSERTION_RE / _COHABIT_ASSERTION_RE)을
-# 사용한다. cohabitation에서 본 광범위 패턴을 재사용하면 라운드 G에서 제거한
-# false positive가 재현된다(응답이 product 키워드로 ``1인 가구용``을 언급하면
-# 단독 거주 체크가 잘못 트리거되는 문제).
+# gender/age/region drift 축이 사용하는 1인칭 주어 토큰 패턴. cohabitation 축은 본 패턴 대신 전용 정밀 정규식(_SOLO_ASSERTION_RE / _COHABIT_ASSERTION_RE)을 사용한다.
+# cohabitation에서 본 광범위 패턴을 재사용하면 라운드 G에서 제거한 false positive가 재현된다(응답이 product 키워드로 ``1인 가구용``을 언급하면 단독 거주 체크가 잘못 트리거되는 문제).
 #
-# 매치 윈도우는 문장 구두점(``.``/``!``/``?``)으로 제한된다. 이전 30자 윈도우는
-# 너무 넓어 문장 경계를 넘어 잘못 매칭되었다.
+# 매치 윈도우는 문장 구두점(``.``/``!``/``?``)으로 제한된다. 이전 30자 윈도우는 너무 넓어 문장 경계를 넘어 잘못 매칭되었다.
 _SELF_INTRO_PATTERN = re.compile(
     r"(?:저는|나는|제가|내가)\s*([^\.\?!\n,]{0,30})"
 )
@@ -181,39 +164,29 @@ _FAMILY_COHABITATION_TOKENS: tuple = (
 )
 
 
-# 거주 형태 모순 감지는 단언 방향(긍정/부정)을 분리해 처리한다. 동일 토큰이
-# 부정문에 들어오면 실제로 페르소나와 정합한 답변일 수 있다(예: 가족 동거
-# 페르소나가 ``1인 가구가 아니라서``라고 답하는 경우 → drift False).
+# 거주 형태 모순 감지는 단언 방향(긍정/부정)을 분리해 처리한다.
+# 동일 토큰이 부정문에 들어오면 실제로 페르소나와 정합한 답변일 수 있다(예: 가족 동거 페르소나가 ``1인 가구가 아니라서``라고 답하는 경우 → drift False).
 #
 # 매칭 분류는 아래와 같다.
 #
-# - solo_assertion: 단독 거주 긍정 단언("저는 혼자 사", "저는 1인 가구라").
-#   가족 동거 페르소나가 본 단언을 보이면 drift True
-# - cohabit_assertion: 가족 동거 긍정 단언("저는 가족과 살아", "남편과 살아").
-#   단독 거주 페르소나가 본 단언을 보이면 drift True
-# - 부정 단언("1인 가구가 아니", "혼자 살지 않")은 두 페르소나 모두에게
-#   정합 또는 무관이라 drift 트리거에서 제외한다.
+# - solo_assertion: 단독 거주 긍정 단언("저는 혼자 사", "저는 1인 가구라"). 가족 동거 페르소나가 본 단언을 보이면 drift True
+# - cohabit_assertion: 가족 동거 긍정 단언("저는 가족과 살아", "남편과 살아"). 단독 거주 페르소나가 본 단언을 보이면 drift True
+# - 부정 단언("1인 가구가 아니", "혼자 살지 않")은 두 페르소나 모두에게 정합 또는 무관이라 drift 트리거에서 제외한다.
 #
 # false positive 방지를 위해 아래 패턴은 trigger에서 제외한다.
 #
 # - 3인칭 언급(예: ``혼자 사시는 분들에겐 좋은 서비스``)
 # - 행동 표현(예: ``혼자서 끼니를 해결할 수 있기 때문에``의 ``혼자서`` + 비-거주 동사)
-# - 응답에 product 키워드만 등장하고 본인 단언 1인칭 동사는 없는 경우
-#   (예: ``저는 부모님과 같이 살고 있어서 1인 가구용 반찬 서비스는``)
+# - 응답에 product 키워드만 등장하고 본인 단언 1인칭 동사는 없는 경우(예: ``저는 부모님과 같이 살고 있어서 1인 가구용 반찬 서비스는``)
 
 
-# 단독 거주 긍정 단언 정규식. 본 패턴이 한 문장 안에서 매칭되면 응답자가 본인을
-# 단독 거주(1인 가구)라고 단언하는 것으로 본다. 가족 동거 페르소나에서 본
-# 매칭이 발견되면 drift다.
+# 단독 거주 긍정 단언 정규식. 본 패턴이 한 문장 안에서 매칭되면 응답자가 본인을 단독 거주(1인 가구)라고 단언하는 것으로 본다.
+# 가족 동거 페르소나에서 본 매칭이 발견되면 drift다.
 #
 # 분기는 두 가지다.
 #
-# 1. ``저는/나는/제가/내가/난`` 류 1인칭 주어 + ``혼자/홀로`` + 거주 동사
-#    (살/사는/사시/사니/살고/살아/지내/거주/지냄). ``혼자 사시는 분들`` 같은
-#    3인칭(``분/사람/이들``)은 ``혼자\s*살``과 인접한 ``분|사람|이들`` 매칭으로
-#    별도 가드한다
-# 2. ``저는/제가/나는/내가/난`` 류 1인칭 주어 + ``1인 가구/일인 가구/독거``
-#    + 단언 동사/계사(``라|이|입|이라|예요|에요|입니다|라서|이라서``)
+# 1. ``저는/나는/제가/내가/난`` 류 1인칭 주어 + ``혼자/홀로`` + 거주 동사(살/사는/사시/사니/살고/살아/지내/거주/지냄). ``혼자 사시는 분들`` 같은 3인칭(``분/사람/이들``)은 ``혼자\s*살``과 인접한 ``분|사람|이들`` 매칭으로 별도 가드한다
+# 2. ``저는/제가/나는/내가/난`` 류 1인칭 주어 + ``1인 가구/일인 가구/독거`` + 단언 동사/계사(``라|이|입|이라|예요|에요|입니다|라서|이라서``)
 _SOLO_ASSERTION_RE = re.compile(
     r"(?:저는|나는|제가|내가|난)\s*"
     r"(?:"
@@ -225,8 +198,7 @@ _SOLO_ASSERTION_RE = re.compile(
 )
 
 
-# 단독 거주 부정 단언 정규식. 본 패턴이 매칭되면 응답자가 단독 거주를 부정하는
-# 것이므로 가족 동거 페르소나와 정합한 답변이라 drift 트리거에서 제외한다.
+# 단독 거주 부정 단언 정규식. 본 패턴이 매칭되면 응답자가 단독 거주를 부정하는 것이므로 가족 동거 페르소나와 정합한 답변이라 drift 트리거에서 제외한다.
 # 예: ``저는 1인 가구가 아니라서``, ``혼자 살지 않아서``.
 _SOLO_NEGATION_RE = re.compile(
     r"(?:저는|나는|제가|내가|난|저희는)?\s*"
@@ -239,12 +211,11 @@ _SOLO_NEGATION_RE = re.compile(
 )
 
 
-# 가족 동거 긍정 단언 정규식. 본 패턴이 매칭되면 응답자가 본인을 가족과 함께
-# 거주한다고 단언하는 것이다. 단독 거주 페르소나에서 매칭되면 drift다.
+# 가족 동거 긍정 단언 정규식. 본 패턴이 매칭되면 응답자가 본인을 가족과 함께 거주한다고 단언하는 것이다.
+# 단독 거주 페르소나에서 매칭되면 drift다.
 #
 # 1인칭 주어 + (가족 토큰)와/이랑 + (같이/함께)? + 거주 동사 형태로 좁힌다.
-# 가족 토큰은 가족/부모(님)/배우자/남편/아내/아이/아이들/어머니/아버지/엄마/
-# 아빠/조부모/형제/자매/친척까지 포함한다.
+# 가족 토큰은 가족/부모(님)/배우자/남편/아내/아이/아이들/어머니/아버지/엄마/아빠/조부모/형제/자매/친척까지 포함한다.
 _COHABIT_ASSERTION_RE = re.compile(
     r"(?:저는|나는|제가|내가|난|저희는|우리는)\s*"
     r"(?:가족|부모님?|배우자|남편|아내|아이|아이들|어머니|아버지|엄마|아빠|"
@@ -255,8 +226,7 @@ _COHABIT_ASSERTION_RE = re.compile(
 )
 
 
-# 가족 동거 부정 단언 정규식. ``저는 가족과 살지 않아``류. 단독 거주 페르소나에서
-# 발견되면 정합이라 drift 트리거에서 제외한다.
+# 가족 동거 부정 단언 정규식. ``저는 가족과 살지 않아``류. 단독 거주 페르소나에서 발견되면 정합이라 drift 트리거에서 제외한다.
 _COHABIT_NEGATION_RE = re.compile(
     r"(?:저는|나는|제가|내가|난|저희는|우리는)\s*"
     r"(?:가족|부모님?|배우자|남편|아내|아이|아이들|어머니|아버지|엄마|아빠|"
@@ -271,24 +241,20 @@ _COHABIT_NEGATION_RE = re.compile(
 # ---------------------------------------------------------------------------
 
 
-# 시스템 프롬프트 템플릿 in-memory 캐시. 프로세스 단위로 디스크 read를 1회만
-# 수행한다(매 인터뷰 호출마다 디스크 I/O 회피). 키는 (resolved_path, mtime_ns)
-# 튜플이라 사용자가 파일을 수정하면 자동으로 캐시가 무효화된다.
+# 시스템 프롬프트 템플릿 in-memory 캐시. 프로세스 단위로 디스크 read를 1회만 수행한다(매 인터뷰 호출마다 디스크 I/O 회피).
+# 키는 (resolved_path, mtime_ns) 튜플이라 사용자가 파일을 수정하면 자동으로 캐시가 무효화된다.
 _SYSTEM_PROMPT_TEMPLATE_CACHE: dict = {}
 
 
-# product/질문 본문 길이 상한. 사용자가 의도치 않게 거대한 본문을 넣어 토큰
-# 폭증을 일으키는 사례를 방지한다(security.md §3 입력 검증). 한도를 넘는 본문은
-# 호출 시점에 ConfigError로 차단해 호출자가 즉시 인지할 수 있게 한다.
+# product/질문 본문 길이 상한. 사용자가 의도치 않게 거대한 본문을 넣어 토큰 폭증을 일으키는 사례를 방지한다(security.md §3 입력 검증).
+# 한도를 넘는 본문은 호출 시점에 ConfigError로 차단해 호출자가 즉시 인지할 수 있게 한다.
 _MAX_PRODUCT_LENGTH = 2000
 _MAX_QUESTION_LENGTH = 2000
 
 
-# 시스템 프롬프트 템플릿이 ``[페르소나 정보]``/``[인터뷰 주제]`` 같은 마커로
-# 가변 본문 영역을 구분한다. product/질문 본문이 동일한 마커 텍스트를 그대로
-# 포함하면 모델이 새 시스템 지시로 잘못 해석할 수 있다(prompt injection).
-# escape는 마커의 첫 글자를 zero-width space로 갈아 끼워 형태는 보존하면서
-# 마커 일치를 깨뜨린다.
+# 시스템 프롬프트 템플릿이 ``[페르소나 정보]``/``[인터뷰 주제]`` 같은 마커로 가변 본문 영역을 구분한다.
+# product/질문 본문이 동일한 마커 텍스트를 그대로 포함하면 모델이 새 시스템 지시로 잘못 해석할 수 있다(prompt injection).
+# escape는 마커의 첫 글자를 zero-width space로 갈아 끼워 형태는 보존하면서 마커 일치를 깨뜨린다.
 _PROMPT_INJECTION_MARKERS: tuple = (
     "[페르소나 정보]",
     "[인터뷰 주제]",
@@ -302,8 +268,7 @@ _ZERO_WIDTH_SPACE = "​"
 def _sanitize_user_text(text: str, *, max_length: int, label: str) -> str:
     """길이 검증 + 시스템 프롬프트 마커 escape를 한 번에 수행한다.
 
-    호출자(InterviewSession.__init__, run_batch 등)에서 product/questions을
-    검증할 때 사용한다.
+    호출자(InterviewSession.__init__, run_batch 등)에서 product/questions을 검증할 때 사용한다.
 
     Raises:
         ConfigError: 본문이 비어 있거나 ``max_length``를 초과하거나 str이 아님.
@@ -326,10 +291,8 @@ def _sanitize_user_text(text: str, *, max_length: int, label: str) -> str:
     return cleaned
 
 
-# 프로젝트 루트(본 모듈이 ``src/interview.py``라 ``parents[1]``이 루트). yaml에
-# 적은 상대 경로(``prompts/system_prompt.txt``)를 프로젝트 루트 기준으로
-# 해석할 때 사용한다. cwd 기반 해석은 작업 디렉토리에 따라 결과가 달라져
-# 테스트/CI 격리를 깬다.
+# 프로젝트 루트(본 모듈이 ``src/interview.py``라 ``parents[1]``이 루트). yaml에 적은 상대 경로(``prompts/system_prompt.txt``)를 프로젝트 루트 기준으로 해석할 때 사용한다.
+# cwd 기반 해석은 작업 디렉토리에 따라 결과가 달라져 테스트/CI 격리를 깬다.
 from pathlib import Path as _Path  # noqa: E402
 
 _PROJECT_ROOT = _Path(__file__).resolve().parents[1]
@@ -339,8 +302,7 @@ def _load_system_prompt_template(path_str: str) -> str:
     """시스템 프롬프트 템플릿 파일을 읽어 캐시한다.
 
     Args:
-        path_str: yaml의 ``interview.system_prompt_path``. 절대 경로 또는 프로젝트
-            루트 기준 상대 경로를 모두 받는다.
+        path_str: yaml의 ``interview.system_prompt_path``. 절대 경로 또는 프로젝트 루트 기준 상대 경로를 모두 받는다.
 
     Returns:
         템플릿 본문 문자열(``{persona_json}``, ``{product}`` placeholder 포함).
@@ -349,12 +311,8 @@ def _load_system_prompt_template(path_str: str) -> str:
         ConfigError: 파일이 없거나 읽기 실패. 사용자에게 친절한 한국어 안내를 단다.
 
     pip-installed 사용자에 대한 fallback:
-        프로젝트 루트 경로에서 파일을 찾지 못하고 본 함수가 default 경로
-        ``prompts/system_prompt.txt``를 받았다면 패키지 내부의
-        ``src._prompts.system_prompt`` 리소스로 fallback한다. 사용자가 명시
-        경로를 지정한 경우(default와 다른 경로)에는 fallback을 사용하지 않고
-        ConfigError로 차단해 의도치 않게 패키지 내부 템플릿이 사용되는 일을
-        막는다.
+        프로젝트 루트 경로에서 파일을 찾지 못하고 본 함수가 default 경로 ``prompts/system_prompt.txt``를 받았다면 패키지 내부의 ``src._prompts.system_prompt`` 리소스로 fallback한다.
+        사용자가 명시 경로를 지정한 경우(default와 다른 경로)에는 fallback을 사용하지 않고 ConfigError로 차단해 의도치 않게 패키지 내부 템플릿이 사용되는 일을 막는다.
     """
 
     candidate = _Path(path_str)
@@ -404,9 +362,7 @@ def _load_system_prompt_template(path_str: str) -> str:
 def _read_packaged_system_prompt() -> Optional[str]:
     """패키지 내부 ``src._prompts.system_prompt`` 리소스를 읽어 반환한다.
 
-    pip-installed 환경에서 프로젝트 루트 경로가 부재할 때 fallback으로
-    사용된다. 캐시 키는 패키지 리소스 경로 한 가지로 고정한다(파일 mtime은
-    importlib.resources 인터페이스가 노출하지 않음).
+    pip-installed 환경에서 프로젝트 루트 경로가 부재할 때 fallback으로 사용된다. 캐시 키는 패키지 리소스 경로 한 가지로 고정한다(파일 mtime은 importlib.resources 인터페이스가 노출하지 않음).
 
     Returns:
         템플릿 본문 또는 placeholder가 누락되었거나 리소스가 없을 때 ``None``.
@@ -449,23 +405,16 @@ def build_system_prompt(
 ) -> str:
     """시스템 프롬프트 템플릿 파일에 페르소나 정보를 주입한다.
 
-    템플릿은 ``prompts/system_prompt.txt``(기본)에서 읽으며, 본문에는
-    ``{persona_json}``과 ``{product}`` 두 개의 str.format placeholder가 들어 있어야
-    한다. 사용자는 본 파일을 직접 편집해 시스템 프롬프트의 톤/지침을 도메인에
-    맞게 조정할 수 있다.
+    템플릿은 ``prompts/system_prompt.txt``(기본)에서 읽으며, 본문에는 ``{persona_json}``과 ``{product}`` 두 개의 str.format placeholder가 들어 있어야 한다. 사용자는 본 파일을 직접 편집해 시스템 프롬프트의 톤/지침을 도메인에 맞게 조정할 수 있다.
 
-    기본 묶음은 인구 통계 7개 필드와 ``persona``(요약 자유 서술)다(TDD §1.4).
-    토글 키워드(``professional``/``sports``/``arts``/``travel``/``culinary``/
-    ``family``)가 ``persona_fields``에 있으면 해당 자유 서술 컬럼을 raw에서
-    꺼내 추가한다.
+    기본 묶음은 인구 통계 7개 필드와 ``persona``(요약 자유 서술)다(TDD §1.4). 토글 키워드(``professional``/``sports``/``arts``/``travel``/``culinary``/``family``)가 ``persona_fields``에 있으면 해당 자유 서술 컬럼을 raw에서 꺼내 추가한다.
 
     Args:
         persona: 페르소나 메타와 raw dict.
         product: 사업 아이템 한 줄 설명. 시스템 프롬프트의 인터뷰 주제로 사용.
         persona_fields: 토글 키워드 튜플. ``("summary",)``가 기본값.
         field_map: ``DatasetConfig.field_map``. 토글 키워드 → 데이터셋 컬럼 매핑.
-        system_prompt_path: 템플릿 파일 경로. 절대 경로 또는 프로젝트 루트 기준
-            상대 경로. ``CommonConfig.persona.system_prompt_path``에서 받는다.
+        system_prompt_path: 템플릿 파일 경로. 절대 경로 또는 프로젝트 루트 기준 상대 경로. ``CommonConfig.persona.system_prompt_path``에서 받는다.
 
     Returns:
         시스템 프롬프트 문자열.
@@ -475,8 +424,7 @@ def build_system_prompt(
     """
 
     # 기본 묶음: 인구 통계 + summary 페르소나(TDD §1.4).
-    # family_type/housing_type은 1인 가구 여부와 주거 유형을 모델이 추론으로
-    # 채우지 않도록 명시적으로 노출한다(거주 형태를 임의로 추측하던 회귀 차단).
+    # family_type/housing_type은 1인 가구 여부와 주거 유형을 모델이 추론으로 채우지 않도록 명시적으로 노출한다(거주 형태를 임의로 추측하던 회귀 차단).
     persona_obj: dict = {
         "name": persona.name,
         "gender": persona.gender,
@@ -513,11 +461,9 @@ def build_system_prompt(
 
     persona_json = json.dumps(persona_obj, ensure_ascii=False, indent=2)
 
-    # HANDOFF.md §시스템 프롬프트 템플릿 + 페르소나 1인칭 일관성 강화 지침을
-    # 외부 파일로 분리했다. OpenAI prompt caching 적합 구조(정적 prefix가 앞쪽,
-    # 가변 부분이 뒤쪽)는 템플릿 파일 자체에 박혀 있다. ``persona_json``과
-    # ``product``만 가변이라 같은 템플릿을 반복 호출하면 OpenAI가 자동으로
-    # 입력 토큰 단가의 50%를 환급한다(prefix 1024 토큰 이상 + 동일 prefix 반복).
+    # HANDOFF.md §시스템 프롬프트 템플릿 + 페르소나 1인칭 일관성 강화 지침을 외부 파일로 분리했다.
+    # OpenAI prompt caching 적합 구조(정적 prefix가 앞쪽, 가변 부분이 뒤쪽)는 템플릿 파일 자체에 박혀 있다.
+    # ``persona_json``과 ``product``만 가변이라 같은 템플릿을 반복 호출하면 OpenAI가 자동으로 입력 토큰 단가의 50%를 환급한다(prefix 1024 토큰 이상 + 동일 prefix 반복).
     template = _load_system_prompt_template(system_prompt_path)
     try:
         return template.format(persona_json=persona_json, product=product).rstrip()
@@ -537,9 +483,7 @@ def build_system_prompt(
 def estimate_tokens(text: str) -> int:
     """한국어/영어 혼합 텍스트의 토큰 수를 휴리스틱으로 추정한다.
 
-    한글 1자 = 1, 영문 1자 = 0.25, 그 외 1자 = 0.5(공백/숫자/기호 등)로 합산한다.
-    절댓값 정확도보다 truncation 트리거의 일관성이 목적이라 실제 토크나이저
-    없이 stdlib만으로 계산한다(TDD §7).
+    한글 1자 = 1, 영문 1자 = 0.25, 그 외 1자 = 0.5(공백/숫자/기호 등)로 합산한다. 절댓값 정확도보다 truncation 트리거의 일관성이 목적이라 실제 토크나이저 없이 stdlib만으로 계산한다(TDD §7).
     """
 
     if not text:
@@ -583,8 +527,7 @@ def truncate_history(
 ) -> tuple:
     """system을 보존하고 누적이 한계를 넘으면 가장 오래된 user/assistant 페어부터 제거한다.
 
-    페어 단위로 제거하는 이유는 user 질문만 남고 assistant 답변이 사라지면
-    모델 컨텍스트가 비대칭이 되기 때문이다(TDD §7).
+    페어 단위로 제거하는 이유는 user 질문만 남고 assistant 답변이 사라지면 모델 컨텍스트가 비대칭이 되기 때문이다(TDD §7).
 
     Args:
         messages: ``MessageEntry`` 리스트. messages[0]는 system이어야 한다.
@@ -597,9 +540,8 @@ def truncate_history(
     if not messages:
         return list(messages), False
 
-    # 진입 시 1회 전체 토큰을 계산하고, 페어 제거 시 제거된 메시지들의 토큰만
-    # 차감한다(O(n) 보장). 기존 구현은 매 iteration마다 ``head + body`` 전체를
-    # 재계산해 O(n²)였다.
+    # 진입 시 1회 전체 토큰을 계산하고, 페어 제거 시 제거된 메시지들의 토큰만 차감한다(O(n) 보장).
+    # 기존 구현은 매 iteration마다 ``head + body`` 전체를 재계산해 O(n²)였다.
     total_tokens = estimate_messages_tokens(messages)
     if total_tokens <= max_tokens:
         return list(messages), False

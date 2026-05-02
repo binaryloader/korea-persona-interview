@@ -8,15 +8,11 @@
 - 시드 고정 샘플링(``random.Random(seed).sample`` 기반)
 - ``PersonaMeta`` 변환
 
-infrastructure 계층(``datasets`` 의존)과 domain 계층(``PersonaFilter``의 결합
-규칙)이 같은 파일에 공존한다(architecture.md §1, §5의 단일 도메인 단순화).
+infrastructure 계층(``datasets`` 의존)과 domain 계층(``PersonaFilter``의 결합 규칙)이 같은 파일에 공존한다(architecture.md §1, §5의 단일 도메인 단순화).
 
-Hugging Face 데이터셋의 컬럼 키와 값 표기는 사전 단계에서 viewer 직접 조회로
-확인했고 TDD §1.1, §1.2, §1.3에 박혀 있다. 게이트 2(PRD §5.10)는 본 모듈의
-``--inspect-columns`` CLI 헬퍼로 수행한다.
+Hugging Face 데이터셋의 컬럼 키와 값 표기는 사전 단계에서 viewer 직접 조회로 확인했고 TDD §1.1, §1.2, §1.3에 박혀 있다. 게이트 2(PRD §5.10)는 본 모듈의 ``--inspect-columns`` CLI 헬퍼로 수행한다.
 
-streaming 옵션과 in-memory 옵션 둘 다 지원한다. 기본 동작은 in-memory + 필터
-적용 후 ``select(indices)``로 메모리 점유를 최소화한다(TDD §10.3 리스크 완화).
+streaming 옵션과 in-memory 옵션 둘 다 지원한다. 기본 동작은 in-memory + 필터 적용 후 ``select(indices)``로 메모리 점유를 최소화한다(TDD §10.3 리스크 완화).
 """
 
 from __future__ import annotations
@@ -67,11 +63,9 @@ class AgeRange:
 class FilterSpec:
     """파싱된 필터 DSL.
 
-    같은 키 반복은 OR 결합이라 각 키의 값이 list 형태다. 다른 키는 AND 결합이라
-    각 키 모두를 만족해야 한다(PRD §5.5).
+    같은 키 반복은 OR 결합이라 각 키의 값이 list 형태다. 다른 키는 AND 결합이라 각 키 모두를 만족해야 한다(PRD §5.5).
 
-    age 필드만 ``AgeRange`` 리스트로 별도 보관해 정수 비교 효율성을 확보한다.
-    문자열 키(gender/region/subregion/occupation_keyword)는 정규화된 값으로 보관한다.
+    age 필드만 ``AgeRange`` 리스트로 별도 보관해 정수 비교 효율성을 확보한다. 문자열 키(gender/region/subregion/occupation_keyword)는 정규화된 값으로 보관한다.
     """
 
     age: tuple
@@ -171,8 +165,7 @@ def parse_filter(
 ) -> FilterSpec:
     """필터 DSL 문자열을 ``FilterSpec``으로 변환한다.
 
-    형식은 ``key1:value1,key2:value2`` 콤마 구분. 같은 키 반복은 OR, 다른 키는
-    AND로 결합한다(PRD §5.5). 빈 문자열 또는 None이면 전체 통과 spec 반환.
+    형식은 ``key1:value1,key2:value2`` 콤마 구분. 같은 키 반복은 OR, 다른 키는 AND로 결합한다(PRD §5.5). 빈 문자열 또는 None이면 전체 통과 spec 반환.
 
     Args:
         filter_str: 필터 DSL 문자열. None 또는 빈 문자열이면 빈 spec.
@@ -252,10 +245,7 @@ def parse_filter(
 def _row_matches(row: dict, spec: FilterSpec, field_map: dict) -> bool:
     """단일 row가 ``FilterSpec``을 만족하는지 판정한다.
 
-    같은 키 내부는 OR, 다른 키 사이는 AND다. 본 함수는 row 단위 ad-hoc
-    호출(테스트 등)을 위해 그대로 유지하며, 매 호출마다 field 키를 dict에서
-    조회한다. 데이터셋 전량 순회 경로는 ``_make_row_predicate``를 사용해 키
-    조회를 사전에 한 번만 수행하도록 한다(N+1 회피).
+    같은 키 내부는 OR, 다른 키 사이는 AND다. 본 함수는 row 단위 ad-hoc 호출(테스트 등)을 위해 그대로 유지하며, 매 호출마다 field 키를 dict에서 조회한다. 데이터셋 전량 순회 경로는 ``_make_row_predicate``를 사용해 키 조회를 사전에 한 번만 수행하도록 한다(N+1 회피).
     """
 
     return _make_row_predicate(spec, field_map)(row)
@@ -264,9 +254,7 @@ def _row_matches(row: dict, spec: FilterSpec, field_map: dict) -> bool:
 def _make_row_predicate(spec: FilterSpec, field_map: dict):
     """row → bool 클로저를 반환한다.
 
-    field_map의 키 resolve를 함수 진입 시 1회만 수행해 클로저 변수로 캡처한다.
-    100만 row 순회 경로에서 매 row마다 dict.get을 4회 반복하던 비용을 제거한다
-    (TDD §10.3 리스크 완화 추가 보강).
+    field_map의 키 resolve를 함수 진입 시 1회만 수행해 클로저 변수로 캡처한다. 100만 row 순회 경로에서 매 row마다 dict.get을 4회 반복하던 비용을 제거한다(TDD §10.3 리스크 완화 추가 보강).
     """
 
     if spec.is_empty():
@@ -326,8 +314,7 @@ def apply_filter(
 ) -> list:
     """필터 spec을 만족하는 row들의 인덱스 리스트를 반환한다.
 
-    원본 데이터셋 인덱스를 보존하기 위해 ``enumerate``를 사용한다. field 키
-    resolve는 ``_make_row_predicate``로 진입 시 1회만 수행한다.
+    원본 데이터셋 인덱스를 보존하기 위해 ``enumerate``를 사용한다. field 키 resolve는 ``_make_row_predicate``로 진입 시 1회만 수행한다.
     """
 
     predicate = _make_row_predicate(spec, field_map)
@@ -342,9 +329,7 @@ def apply_filter(
 def _build_persona_meta(row: dict, field_map: dict) -> PersonaMeta:
     """원본 row를 ``PersonaMeta``로 변환한다.
 
-    ``field_map``은 PRD `persona_meta` 키 → 데이터셋 컬럼 키 매핑이다.
-    ``name``은 데이터셋에 별도 이름 컬럼이 없어 ``field_map["name"] is None``이면
-    ``None``으로 둔다(TDD §1.3). raw dict는 uuid를 제외하고 그대로 보존한다.
+    ``field_map``은 PRD `persona_meta` 키 → 데이터셋 컬럼 키 매핑이다. ``name``은 데이터셋에 별도 이름 컬럼이 없어 ``field_map["name"] is None``이면 ``None``으로 둔다(TDD §1.3). raw dict는 uuid를 제외하고 그대로 보존한다.
     """
 
     persona_id = str(row.get("uuid", ""))
@@ -378,14 +363,11 @@ def _build_persona_meta(row: dict, field_map: dict) -> PersonaMeta:
     )
 
     raw_gender = str(row.get(field_map.get("gender", "sex"), ""))
-    # 데이터셋이 ``남자``/``여자`` 외 표기(``남성``/``여성``/``M``/``F``)로 갱신되어도
-    # PersonaMeta 검증을 통과할 수 있도록 reverse alias를 적용한다(라운드 G16).
-    # gender_aliases는 yaml에 ``F``/``M``/``남성``/``여성`` → ``남자``/``여자`` 매핑이
-    # 들어 있으므로 그대로 활용한다. 함수 인자로 alias dict를 받지 않는 호출
-    # 경로(테스트 등)에서는 본 정규화가 no-op이다.
+    # 데이터셋이 ``남자``/``여자`` 외 표기(``남성``/``여성``/``M``/``F``)로 갱신되어도 PersonaMeta 검증을 통과할 수 있도록 reverse alias를 적용한다(라운드 G16).
+    # gender_aliases는 yaml에 ``F``/``M``/``남성``/``여성`` → ``남자``/``여자`` 매핑이 들어 있으므로 그대로 활용한다.
+    # 함수 인자로 alias dict를 받지 않는 호출 경로(테스트 등)에서는 본 정규화가 no-op이다.
     if raw_gender not in ("남자", "여자"):
-        # field_map과 같은 흐름으로 raw에서 alias를 시도한다. _build_persona_meta
-        # 단계는 alias dict를 직접 받지 않으므로 hard-coded 표준 매핑만 적용한다.
+        # field_map과 같은 흐름으로 raw에서 alias를 시도한다. _build_persona_meta 단계는 alias dict를 직접 받지 않으므로 hard-coded 표준 매핑만 적용한다.
         _gender_normalize = {
             "남성": "남자",
             "여성": "여자",
@@ -425,8 +407,7 @@ def _sample_indices(indices: list, n: int, seed: int) -> list:
             f"필터 결과 {len(indices)}명, 요청 {n}명. 필터를 완화해 주세요"
         )
     rng = random.Random(seed)
-    # sample은 `random.Random` 인스턴스의 시드만 의존하므로 호출자 환경에서도
-    # 재현 가능하다. 순서까지 동일하다.
+    # sample은 `random.Random` 인스턴스의 시드만 의존하므로 호출자 환경에서도 재현 가능하다. 순서까지 동일하다.
     return rng.sample(indices, n)
 
 
@@ -441,8 +422,7 @@ def _load_dataset_inner(
 ):
     """실제 ``datasets.load_dataset`` 호출. 실패 시 도메인 예외로 변환한다.
 
-    streaming 모드는 첫 1샘플만 빠르게 보고 싶을 때(``--inspect-columns``) 사용한다.
-    필터링과 샘플링은 in-memory 경로(streaming=False)에서만 동작한다.
+    streaming 모드는 첫 1샘플만 빠르게 보고 싶을 때(``--inspect-columns``) 사용한다. 필터링과 샘플링은 in-memory 경로(streaming=False)에서만 동작한다.
     """
 
     try:
@@ -460,9 +440,8 @@ def _load_dataset_inner(
             streaming=streaming,
         )
     except (OSError, ValueError, RuntimeError, ImportError) as exc:
-        # datasets 라이브러리는 네트워크/캐시/스키마 오류를 주로 위 4종 또는 그 하위
-        # 클래스로 던진다. 본 명시 분기로 좁히되, 본 라이브러리 새 버전이 다른
-        # Exception 계열을 도입할 가능성을 안전망으로 흡수한다(아래 BLE001).
+        # datasets 라이브러리는 네트워크/캐시/스키마 오류를 주로 위 4종 또는 그 하위 클래스로 던진다.
+        # 본 명시 분기로 좁히되, 본 라이브러리 새 버전이 다른 Exception 계열을 도입할 가능성을 안전망으로 흡수한다(아래 BLE001).
         raise DatasetUnavailableError(
             f"데이터셋을 로드할 수 없습니다: {exc}. "
             "인터넷 연결과 ~/.cache/huggingface 권한을 확인해 주세요"
@@ -488,11 +467,8 @@ def load_and_sample(
 ) -> list:
     """필터 DSL 적용 후 시드 샘플링으로 ``PersonaMeta`` 리스트를 반환한다.
 
-    같은 ``(filter_str, n, seed, field_map, dataset_name, split, persona_ids)``
-    조합으로 다시 호출하면 in-memory 캐시 hit으로 즉시 반환한다.
-    ``list-personas``/``interview``/``dry-run``에서 같은 표본을 반복 조회하는
-    흐름의 중복 비용을 제거한다. 캐시는 프로세스 단위라 다른 프로세스에서는
-    재사용되지 않는다.
+    같은 ``(filter_str, n, seed, field_map, dataset_name, split, persona_ids)`` 조합으로 다시 호출하면 in-memory 캐시 hit으로 즉시 반환한다.
+    ``list-personas``/``interview``/``dry-run``에서 같은 표본을 반복 조회하는 흐름의 중복 비용을 제거한다. 캐시는 프로세스 단위라 다른 프로세스에서는 재사용되지 않는다.
 
     Args:
         filter_str: 필터 DSL 문자열. None이면 전체에서 샘플링.
@@ -503,28 +479,20 @@ def load_and_sample(
         province_aliases: yaml의 ``dataset.province_aliases`` dict.
         dataset_name: 데이터셋 식별자(예: ``nvidia/Nemotron-Personas-Korea``).
         split: 데이터셋 split(예: ``train``).
-        persona_ids: 명시 페르소나 uuid 튜플. 지정 시 ``filter_str``/``seed``는
-            정렬 안정성에만 영향을 주고 표본은 본 인자가 우선한다. 데이터셋
-            row의 ``uuid`` 컬럼과 매칭한다. 일부 ID가 데이터셋에 없으면 누락된
-            ID 목록을 ``ConfigError`` 메시지에 담아 raise한다. ``filter_str``과
-            함께 지정되면 ID 매칭 후 추가로 필터를 통과한 row만 남긴다(교집합).
+        persona_ids: 명시 페르소나 uuid 튜플. 지정 시 ``filter_str``/``seed``는 정렬 안정성에만 영향을 주고 표본은 본 인자가 우선한다. 데이터셋 row의 ``uuid`` 컬럼과 매칭한다. 일부 ID가 데이터셋에 없으면 누락된 ID 목록을 ``ConfigError`` 메시지에 담아 raise한다. ``filter_str``과 함께 지정되면 ID 매칭 후 추가로 필터를 통과한 row만 남긴다(교집합).
 
     Returns:
-        ``persona_ids`` 미지정 시 길이 n의 ``PersonaMeta`` 리스트(시드 동일 시
-        동일 표본 보장). ``persona_ids`` 지정 시 입력 ID 순서와 동일한 길이의
-        리스트.
+        ``persona_ids`` 미지정 시 길이 n의 ``PersonaMeta`` 리스트(시드 동일 시 동일 표본 보장). ``persona_ids`` 지정 시 입력 ID 순서와 동일한 길이의 리스트.
 
     Raises:
-        ConfigError: 필터 DSL 파싱 실패, n <= 0, 또는 ``persona_ids``의 일부
-            ID가 데이터셋에 없는 경우.
+        ConfigError: 필터 DSL 파싱 실패, n <= 0, 또는 ``persona_ids``의 일부 ID가 데이터셋에 없는 경우.
         DatasetUnavailableError: 데이터셋 로드 실패.
         FilterMatchedZeroError: 필터 결과가 n보다 적음.
     """
 
     if persona_ids:
-        # ``persona_ids``가 지정된 경로는 시드 샘플링과 무관하게 명시 ID로 행을
-        # 추출한다. 본 분기는 사용자가 ``--persona-id``로 같은 페르소나 표본에
-        # 대해 다른 product/questions로 비교 인터뷰를 돌릴 때 사용한다.
+        # ``persona_ids``가 지정된 경로는 시드 샘플링과 무관하게 명시 ID로 행을 추출한다.
+        # 본 분기는 사용자가 ``--persona-id``로 같은 페르소나 표본에 대해 다른 product/questions로 비교 인터뷰를 돌릴 때 사용한다.
         return _load_by_persona_ids(
             persona_ids=persona_ids,
             filter_str=filter_str,
@@ -556,8 +524,7 @@ def load_and_sample(
                 "cached_count": len(cached),
             },
         )
-        # frozen dataclass 리스트라 얕은 복사로 호출자가 누적/수정해도 캐시
-        # 원본을 오염시키지 않게 한다.
+        # frozen dataclass 리스트라 얕은 복사로 호출자가 누적/수정해도 캐시 원본을 오염시키지 않게 한다.
         return list(cached)
 
     spec = parse_filter(filter_str, gender_aliases, province_aliases)
@@ -576,15 +543,10 @@ def load_and_sample(
     )
     ds = _load_dataset_inner(cfg_for_load, streaming=False)
 
-    # in-memory 경로. datasets는 디스크 기반 메모리 매핑이라 100만 행을 한 번에
-    # 파이썬 dict로 변환하지 않도록 분기한다(TDD §10.3 리스크 완화).
+    # in-memory 경로. datasets는 디스크 기반 메모리 매핑이라 100만 행을 한 번에 파이썬 dict로 변환하지 않도록 분기한다(TDD §10.3 리스크 완화).
     #
-    # - 빈 spec(필터 없음): 전체에서 시드 고정 샘플 추출만 필요하므로
-    #   ``Dataset.shuffle(seed).select(range(n))`` 단축 경로를 사용한다. 100만
-    #   row를 dict로 변환하지 않는다.
-    # - 필터 있음: ``Dataset.filter(predicate, batched=False)``로 column 메모리
-    #   매핑 위에서 평가한 뒤 ``select`` 인덱스를 만든다. predicate는
-    #   ``_make_row_predicate``로 field 키 resolve를 진입 시 1회만 수행한다.
+    # - 빈 spec(필터 없음): 전체에서 시드 고정 샘플 추출만 필요하므로 ``Dataset.shuffle(seed).select(range(n))`` 단축 경로를 사용한다. 100만 row를 dict로 변환하지 않는다.
+    # - 필터 있음: ``Dataset.filter(predicate, batched=False)``로 column 메모리 매핑 위에서 평가한 뒤 ``select`` 인덱스를 만든다. predicate는 ``_make_row_predicate``로 field 키 resolve를 진입 시 1회만 수행한다.
     try:
         if spec.is_empty():
             sampled_subset = _select_random_subset(ds, n=n, seed=seed)
@@ -595,8 +557,7 @@ def load_and_sample(
     except FilterMatchedZeroError:
         raise
     except (KeyError, IndexError, ValueError, RuntimeError) as exc:
-        # datasets의 row 순회/select는 컬럼 누락(KeyError), 인덱스 범위 오류,
-        # 매개변수 검증 실패(ValueError), 내부 RuntimeError를 던진다.
+        # datasets의 row 순회/select는 컬럼 누락(KeyError), 인덱스 범위 오류, 매개변수 검증 실패(ValueError), 내부 RuntimeError를 던진다.
         raise DatasetUnavailableError(
             f"데이터셋 row 순회 또는 select 실패: {exc}"
         ) from exc
@@ -619,10 +580,9 @@ def load_and_sample(
 # ---------------------------------------------------------------------------
 
 
-# key는 ``_build_cache_key``가 반환하는 hashable 튜플, value는 ``PersonaMeta``
-# 리스트다. CLI 단일 프로세스 한 번 실행 안에서 ``list-personas``/``interview``/
-# ``dry-run``이 같은 spec으로 반복 호출되는 흐름을 단축한다. 프로세스 종료 시
-# 함께 사라진다.
+# key는 ``_build_cache_key``가 반환하는 hashable 튜플, value는 ``PersonaMeta`` 리스트다.
+# CLI 단일 프로세스 한 번 실행 안에서 ``list-personas``/``interview``/``dry-run``이 같은 spec으로 반복 호출되는 흐름을 단축한다.
+# 프로세스 종료 시 함께 사라진다.
 _PERSONA_POOL_CACHE: dict = {}
 
 
@@ -639,10 +599,8 @@ def _build_cache_key(
 ) -> tuple:
     """샘플링 입력 전체를 hashable 튜플 키로 만든다.
 
-    field_map/gender_aliases/province_aliases 같은 dict는 정렬된 항목 튜플로
-    동결해 키에 포함한다. dict 순서가 같아도 파이썬 dict는 hashable이 아니라
-    캐시 키로 직접 쓸 수 없다. 같은 데이터셋 컬럼 매핑/별칭 변경이 캐시 무효화
-    조건에 정확히 들어가도록 한다.
+    field_map/gender_aliases/province_aliases 같은 dict는 정렬된 항목 튜플로 동결해 키에 포함한다. dict 순서가 같아도 파이썬 dict는 hashable이 아니라 캐시 키로 직접 쓸 수 없다.
+    같은 데이터셋 컬럼 매핑/별칭 변경이 캐시 무효화 조건에 정확히 들어가도록 한다.
     """
 
     def _freeze(d: dict) -> tuple:
@@ -669,8 +627,7 @@ def clear_persona_pool_cache() -> None:
 def _select_random_subset(ds, *, n: int, seed: int):
     """필터가 비었을 때 전체에서 시드 고정 n행을 골라 ``Dataset`` 슬라이스를 반환한다.
 
-    ``Dataset.shuffle(seed)``는 결정적(determinstic) 셔플이라 같은 seed면 같은
-    순서를 반환한다. ``select(range(n))``으로 메모리 점유를 최소화한다.
+    ``Dataset.shuffle(seed)``는 결정적(determinstic) 셔플이라 같은 seed면 같은 순서를 반환한다. ``select(range(n))``으로 메모리 점유를 최소화한다.
     """
 
     total = len(ds)
@@ -700,13 +657,9 @@ def _load_by_persona_ids(
 ) -> list:
     """명시 ``persona_ids`` 매칭으로 ``PersonaMeta`` 리스트를 반환한다.
 
-    ``filter_str``이 함께 지정되면 ID 매칭 후 필터를 추가로 적용한다(교집합).
-    누락된 ID가 있으면 ``ConfigError``로 차단해 사용자가 정확히 어떤 ID가
-    데이터셋에 없는지 즉시 알 수 있게 한다.
+    ``filter_str``이 함께 지정되면 ID 매칭 후 필터를 추가로 적용한다(교집합). 누락된 ID가 있으면 ``ConfigError``로 차단해 사용자가 정확히 어떤 ID가 데이터셋에 없는지 즉시 알 수 있게 한다.
 
-    캐시는 사용하지 않는다. ID 직접 지정 경로는 빈도가 낮고, 같은 프로세스
-    안에서도 ID 부분 집합을 바꿔 가며 호출되는 사례가 흔해 캐시 hit 효과가
-    낮기 때문이다.
+    캐시는 사용하지 않는다. ID 직접 지정 경로는 빈도가 낮고, 같은 프로세스 안에서도 ID 부분 집합을 바꿔 가며 호출되는 사례가 흔해 캐시 hit 효과가 낮기 때문이다.
     """
 
     spec = parse_filter(filter_str, gender_aliases, province_aliases)
@@ -777,20 +730,15 @@ def _load_by_persona_ids(
 def _filter_and_sample(ds, *, spec: FilterSpec, field_map: dict, n: int, seed: int):
     """필터를 ``Dataset.filter``로 평가한 뒤 시드 고정 샘플을 ``select``로 반환한다.
 
-    ``Dataset.filter``는 디스크 기반 메모리 매핑 위에서 column을 읽으며 매칭
-    인덱스만 수집한다. ``apply_filter`` 같은 dict 변환 순회를 우회한다(O(n)
-    유지, 메모리 점유 최소화).
+    ``Dataset.filter``는 디스크 기반 메모리 매핑 위에서 column을 읽으며 매칭 인덱스만 수집한다. ``apply_filter`` 같은 dict 변환 순회를 우회한다(O(n) 유지, 메모리 점유 최소화).
 
-    인덱스 보존을 위해 ``with_indices=True``로 호출하고, 매칭된 부분
-    ``filtered_ds``의 길이로 ``_sample_indices``를 만들어 ``select``한다.
-    같은 seed/같은 spec/같은 데이터셋 버전이면 동일한 결과를 보장한다.
+    인덱스 보존을 위해 ``with_indices=True``로 호출하고, 매칭된 부분 ``filtered_ds``의 길이로 ``_sample_indices``를 만들어 ``select``한다. 같은 seed/같은 spec/같은 데이터셋 버전이면 동일한 결과를 보장한다.
     """
 
     predicate = _make_row_predicate(spec, field_map)
 
-    # ``filter``는 새 ``Dataset`` 객체를 반환한다(원본 인덱스가 아니라 매칭된
-    # row만 0..M-1로 재배열된다). 본 도구는 필터 후 시드 샘플링만 보장하면
-    # 충분하므로 원본 인덱스 보존은 요구하지 않는다.
+    # ``filter``는 새 ``Dataset`` 객체를 반환한다(원본 인덱스가 아니라 매칭된 row만 0..M-1로 재배열된다).
+    # 본 도구는 필터 후 시드 샘플링만 보장하면 충분하므로 원본 인덱스 보존은 요구하지 않는다.
     filtered = ds.filter(predicate)
 
     matched = len(filtered)
@@ -824,12 +772,9 @@ def inspect_columns(
 ) -> dict:
     """데이터셋의 컬럼 이름과 1샘플을 dict로 반환한다(GATE-2).
 
-    streaming 모드를 default로 사용한다. 100만 레코드 전량 로드를 회피하면서
-    첫 1샘플과 컬럼 키만 확인할 수 있다(PRD §5.10, TDD §10.3 리스크 완화).
+    streaming 모드를 default로 사용한다. 100만 레코드 전량 로드를 회피하면서 첫 1샘플과 컬럼 키만 확인할 수 있다(PRD §5.10, TDD §10.3 리스크 완화).
 
-    streaming 모드에서는 ``len(ds)``가 동작하지 않을 수 있어 첫 row를 ``next``로
-    꺼낸 뒤 ``row.keys()``로 컬럼명을 확인한다. in-memory 경로(streaming=False)는
-    ``ds.column_names``를 그대로 사용한다.
+    streaming 모드에서는 ``len(ds)``가 동작하지 않을 수 있어 첫 row를 ``next``로 꺼낸 뒤 ``row.keys()``로 컬럼명을 확인한다. in-memory 경로(streaming=False)는 ``ds.column_names``를 그대로 사용한다.
 
     Args:
         dataset_name: 데이터셋 식별자.
@@ -901,8 +846,7 @@ def _main(argv: Optional[list] = None) -> int:
         python -m src.load_personas --inspect-columns
         python -m src.load_personas --inspect-columns --no-streaming
 
-    config.yaml의 ``dataset.name``/``dataset.split``을 사용한다. 환경변수와 yaml
-    경로는 ``load_config``를 그대로 거친다(우선순위 default → yaml → env → CLI).
+    config.yaml의 ``common.dataset.name``/``common.dataset.split``을 사용한다. 환경변수와 yaml 경로는 ``load_config``를 그대로 거친다(우선순위 default → yaml → env → CLI).
     """
 
     parser = argparse.ArgumentParser(
@@ -932,8 +876,8 @@ def _main(argv: Optional[list] = None) -> int:
 
     try:
         result = inspect_columns(
-            dataset_name=cfg.dataset.name,
-            split=cfg.dataset.split,
+            dataset_name=cfg.common.dataset.name,
+            split=cfg.common.dataset.split,
             use_streaming=not args.no_streaming,
         )
     except DatasetUnavailableError as exc:

@@ -1,7 +1,6 @@
 """click 기반 CLI 엔트리 포인트.
 
-네 개의 서브커맨드(``healthcheck``, ``list-personas``, ``interview``,
-``report``)를 노출하고 종료 코드와 매핑한다.
+네 개의 서브커맨드(``healthcheck``, ``list-personas``, ``interview``, ``report``)를 노출하고 종료 코드와 매핑한다.
 
 - 0: 성공
 - 1: 서버, 입력, 설정 오류
@@ -9,8 +8,7 @@
 - 3: 부분 실패(완료 비율이 설정된 임계값 이하)
 - 130: 사용자 인터럽트(SIGINT)
 
-각 커맨드는 ``asyncio.run``으로 자체 asyncio 이벤트 루프를 만든다. ``click``
-이 반환되면 프로세스도 깔끔하게 종료된다.
+각 커맨드는 ``asyncio.run``으로 자체 asyncio 이벤트 루프를 만든다. ``click``이 반환되면 프로세스도 깔끔하게 종료된다.
 """
 
 from __future__ import annotations
@@ -63,8 +61,7 @@ def _common_setup(
     """모든 서브커맨드에서 호출하는 공통 초기화.
 
     Args:
-        cli_overrides: 호출자가 미리 박아 둔 부분 갱신 dict. ``--model``처럼
-            명령별로 다른 일회성 override를 본 함수가 그대로 깊은 병합한다.
+        cli_overrides: 호출자가 미리 박아 둔 부분 갱신 dict. ``--model``처럼 명령별로 다른 일회성 override를 본 함수가 그대로 깊은 병합한다.
 
     Returns:
         (config, console). config 로드 실패 시 ConfigError를 그대로 raise한다.
@@ -126,10 +123,7 @@ def _emit_json(payload: dict) -> None:
 def _emit_json_error(code: str, message: str, *, exit_code: int) -> None:
     """``--json`` 모드 에러 응답. stdout JSON + non-zero exit.
 
-    페이로드 형태는 ``{"ok": false, "error": {"code": ..., "message": ...,
-    "exit_code": N}}``로 고정한다. ``ok`` 필드는 healthcheck/interview/report 정상
-    응답과 같은 위치에 놓여 외부 에이전트가 단일 키로 성공/실패를 분기할 수
-    있다. 호출 후 ``sys.exit(exit_code)``는 호출자가 수행한다.
+    페이로드 형태는 ``{"ok": false, "error": {"code": ..., "message": ..., "exit_code": N}}``로 고정한다. ``ok`` 필드는 healthcheck/interview/report 정상 응답과 같은 위치에 놓여 외부 에이전트가 단일 키로 성공/실패를 분기할 수 있다. 호출 후 ``sys.exit(exit_code)``는 호출자가 수행한다.
     """
 
     _emit_json(
@@ -151,9 +145,7 @@ def _warn_if_output_outside_cwd(
 ) -> None:
     """``--output``/``--output-dir``가 현재 작업 디렉토리 외부면 경고를 찍는다.
 
-    경로 정규화 결과 cwd 트리 외부에 결과/리포트가 떨어지면 일부 호스트
-    환경에서 권한/sandbox 문제가 발생할 수 있다. 경로 자체를 막지는 않고 사람용
-    모드에서만 한 번 안내한다(json_mode는 묵음).
+    경로 정규화 결과 cwd 트리 외부에 결과/리포트가 떨어지면 일부 호스트 환경에서 권한/sandbox 문제가 발생할 수 있다. 경로 자체를 막지는 않고 사람용 모드에서만 한 번 안내한다(json_mode는 묵음).
     """
 
     if path is None:
@@ -185,9 +177,7 @@ def _exit_with_error(
 ) -> None:
     """``--json`` 모드와 사람용 모드를 한 번에 분기 처리하는 종료 헬퍼.
 
-    json 모드는 stdout JSON + ``sys.exit(exit_code)``, 사람용 모드는
-    ``console.err(message)`` + ``console.hint(hint)``들 + ``종료 코드: N`` 라인을
-    출력한다. 모든 호출 지점이 같은 형태를 유지하도록 본 헬퍼 한 곳에서 모은다.
+    json 모드는 stdout JSON + ``sys.exit(exit_code)``, 사람용 모드는 ``console.err(message)`` + ``console.hint(hint)``들 + ``종료 코드: N`` 라인을 출력한다. 모든 호출 지점이 같은 형태를 유지하도록 본 헬퍼 한 곳에서 모은다.
     """
 
     if json_mode:
@@ -1376,10 +1366,7 @@ async def _run_report_async(
 ) -> Path:
     """리포트는 LLM 호출 1회를 포함한다. 호출 실패는 ``generate_report``에서 흡수.
 
-    ``config.common.report.insight_model``이 지정되면 정성 인사이트 호출 한정으로
-    ``LlmConfig.model``만 갈아끼운 별도 backend를 만든다. 인터뷰 단계는 mini,
-    인사이트는 4o/sonnet 류 더 깊은 모델로 분리하는 흐름을 yaml/CLI에서 단일
-    옵션으로 지원한다.
+    ``config.common.report.insight_model``이 지정되면 정성 인사이트 호출 한정으로 ``LlmConfig.model``만 갈아끼운 별도 backend를 만든다. 인터뷰 단계는 mini, 인사이트는 4o/sonnet 류 더 깊은 모델로 분리하는 흐름을 yaml/CLI에서 단일 옵션으로 지원한다.
     """
 
     insight_model = (

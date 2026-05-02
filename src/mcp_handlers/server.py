@@ -1,8 +1,6 @@
 """MCP server 모드 전용 핸들러: healthcheck, interview.
 
-본 모드는 server-side ``OpenAIBackend``/``AnthropicBackend``로 LLM을 직접
-호출한다. CLI와 동일한 ``LlmConfig``를 그대로 활용하므로 사용자가 mcp.json의
-``env``에 ``OPENAI_API_KEY``/``ANTHROPIC_API_KEY``를 박아 주어야 한다.
+본 모드는 server-side ``OpenAIBackend``/``AnthropicBackend``로 LLM을 직접 호출한다. CLI와 동일한 ``LlmConfig``를 그대로 활용하므로 사용자가 mcp.json의 ``env`` 또는 `.env`에 ``OPENAI_API_KEY``/``ANTHROPIC_API_KEY``를 박아 주어야 한다.
 """
 
 from __future__ import annotations
@@ -31,8 +29,7 @@ logger = logging.getLogger(__name__)
 async def healthcheck(arguments: dict) -> dict:
     """MCP server 모드 healthcheck.
 
-    CLI healthcheck와 동일하게 provider 엔드포인트에 ping 요청을 보낸다.
-    OpenAI는 ``/models``, Anthropic은 1-token messages 호출.
+    CLI healthcheck와 동일하게 provider 엔드포인트에 ping 요청을 보낸다. OpenAI는 ``/models``, Anthropic은 1-token messages 호출.
     """
 
     try:
@@ -74,9 +71,7 @@ async def healthcheck(arguments: dict) -> dict:
 async def interview(arguments: dict) -> dict:
     """배치 인터뷰를 server-side에서 실행한다.
 
-    MCP orchestrator 모드에서는 본 도구가 노출되지 않으며, 호스트 sub-agent가
-    build_batch_prompts로 시스템 프롬프트를 받아 자기 LLM으로 인터뷰를 수행한
-    다음 aggregate_results로 리포트를 생성하는 흐름을 사용한다.
+    MCP orchestrator 모드에서는 본 도구가 노출되지 않으며, 호스트 sub-agent가 build_batch_prompts로 시스템 프롬프트를 받아 자기 LLM으로 인터뷰를 수행한 다음 aggregate_results로 리포트를 생성하는 흐름을 사용한다.
     """
 
     product = arguments.get("product")
@@ -125,8 +120,10 @@ async def interview(arguments: dict) -> dict:
             "concurrency": concurrency,
             "single_turn": single_turn,
         },
-        "common": {"persona": {"fields": [str(f) for f in persona_fields]}},
-        "output": {"output_dir": str(output_dir)},
+        "common": {
+            "persona": {"fields": [str(f) for f in persona_fields]},
+            "output": {"output_dir": str(output_dir)},
+        },
     }
 
     try:
