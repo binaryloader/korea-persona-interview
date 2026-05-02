@@ -39,7 +39,7 @@ def test_load_config_default_사용가능_yaml_없을때(
     assert cfg.llm.base_url == "https://api.openai.com/v1"
     assert cfg.llm.model == "gpt-4o-mini"
     assert cfg.llm.api_key is None
-    assert cfg.batch.concurrency == 2
+    assert cfg.batch.concurrency == 4
     assert cfg.dataset.name == "nvidia/Nemotron-Personas-Korea"
 
 
@@ -228,24 +228,33 @@ def test_load_config_API_KEY_누락_None(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("c", [1, 2, 3])
+@pytest.mark.parametrize("c", [1, 2, 3, 4, 5, 8, 10])
 def test_batch_config_동시성_허용범위_생성_성공(c: int) -> None:
     BatchConfig(concurrency=c, persona_fields=("summary",))
 
 
-@pytest.mark.parametrize("c", [0, 4, 8, -1])
+@pytest.mark.parametrize("c", [0, 11, 16, -1])
 def test_batch_config_동시성_범위외_ConfigError(c: int) -> None:
     with pytest.raises(ConfigError):
         BatchConfig(concurrency=c, persona_fields=("summary",))
 
 
-def test_load_config_동시성_4_ConfigError(
+def test_load_config_동시성_11_ConfigError(
     tmp_path: Path,
 ) -> None:
     yaml_path = tmp_path / "config.yaml"
-    yaml_path.write_text("batch:\n  concurrency: 4\n", encoding="utf-8")
+    yaml_path.write_text("batch:\n  concurrency: 11\n", encoding="utf-8")
     with pytest.raises(ConfigError):
         load_config(yaml_path=yaml_path)
+
+
+def test_load_config_동시성_10_허용(tmp_path: Path) -> None:
+    """OpenAI 백엔드 전환 후 동시성 10은 허용 범위 내다."""
+
+    yaml_path = tmp_path / "config.yaml"
+    yaml_path.write_text("batch:\n  concurrency: 10\n", encoding="utf-8")
+    cfg = load_config(yaml_path=yaml_path)
+    assert cfg.batch.concurrency == 10
 
 
 # ---------------------------------------------------------------------------

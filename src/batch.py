@@ -473,10 +473,10 @@ async def run_batch(
         raise ConfigError("questions가 비어 있다. 1개 이상 지정해 주세요")
 
     concurrency = int(config.batch.concurrency)
-    if not (1 <= concurrency <= 3):
+    if not (1 <= concurrency <= 10):
         # BatchConfig가 이미 검증하지만 방어적으로 한 번 더 차단.
         raise ConfigError(
-            f"동시성은 1-3 범위만 허용한다. 입력값: {concurrency}"
+            f"동시성은 1-10 범위만 허용한다. 입력값: {concurrency}"
         )
 
     # 시작 직전 헬스체크. 서버 다운이면 즉시 실패시켜 사용자가 빠르게 조치할 수

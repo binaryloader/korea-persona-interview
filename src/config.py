@@ -96,15 +96,22 @@ class LlmConfig:
 
 @dataclass(frozen=True)
 class BatchConfig:
-    """배치 인터뷰 동시성/페르소나 토글 설정."""
+    """배치 인터뷰 동시성/페르소나 토글 설정.
+
+    동시성 상한은 v1.0 시절 로컬 MLX 메모리 가드(Apple Silicon 단일 모델
+    인스턴스에서 1-3 동시 호출만 안정적이었음) 때문에 1-3으로 묶여 있었다.
+    OpenAI 백엔드 전환 이후 메모리 가드가 무관해 1-10으로 상향한다. 동시성
+    10은 OpenAI rate limit(tier별 분당 요청 수)을 한 번에 다 쓰지 않도록 둔
+    완만한 상한이며, 그 이상은 비용 폭증과 rate limit 회귀를 동반한다.
+    """
 
     concurrency: int
     persona_fields: tuple
 
     def __post_init__(self) -> None:
-        if not (1 <= self.concurrency <= 3):
+        if not (1 <= self.concurrency <= 10):
             raise ConfigError(
-                f"동시성은 1-3 범위만 허용한다. 입력값: {self.concurrency}"
+                f"동시성은 1-10 범위만 허용한다. 입력값: {self.concurrency}"
             )
 
 
@@ -170,7 +177,9 @@ def _default_dict() -> dict:
             "api_key": None,
         },
         "batch": {
-            "concurrency": 2,
+            # 기본 동시성. OpenAI 백엔드는 동시성 4-5에서 안정적 처리량과
+            # rate limit 여유의 균형이 좋다(MLX 시절 2 → OpenAI 4).
+            "concurrency": 4,
             "persona_fields": ["summary"],
         },
         "dataset": {

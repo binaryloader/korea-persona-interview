@@ -111,12 +111,15 @@ def test_InvalidFilterError_의도_필터_DSL_파싱() -> None:
 
 
 def test_ConcurrencyOutOfRangeError_메시지() -> None:
-    """9번: ``동시성은 1-3 범위만 허용합니다`` + ``입력값``."""
+    """9번: ``동시성은 1-10 범위만 허용한다`` + ``입력값``.
+
+    OpenAI 백엔드 전환 후 상한이 1-10으로 상향되어 11이 범위 밖 케이스다.
+    """
 
     with pytest.raises(ConfigError) as exc_info:
-        BatchConfig(concurrency=4, persona_fields=("summary",))
+        BatchConfig(concurrency=11, persona_fields=("summary",))
     msg = str(exc_info.value)
-    assert "1-3" in msg
+    assert "1-10" in msg
     assert "입력값" in msg
 
 

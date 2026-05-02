@@ -507,10 +507,10 @@ def _render_persona_table(personas: list, console: Console) -> None:
 )
 @click.option(
     "--concurrency",
-    default=2,
-    type=click.IntRange(1, 3),
+    default=4,
+    type=click.IntRange(1, 10),
     show_default=True,
-    help="동시성 1-3(기본 2).",
+    help="동시성 1-10(기본 4). OpenAI 백엔드 기준 안정 동시성.",
 )
 @click.option(
     "--persona-fields",
