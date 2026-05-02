@@ -18,6 +18,7 @@ Documentation patch release. After the multi-provider rollout (v1.1.0) and the `
 
 - External transmission disclaimer rephrased to multi-provider phrasing across PRD sections 1, 6.3, and 10.6, TDD section 13, UI spec section 4.5, the task spec T10 row, the SECURITY summary, and the `examples/sample-interview/sample-report.md` artifact. ADR-002 and the v1.0 INDEX revision-log entry are left as-is because they are point-in-time records of when the OpenAI-only assumption was actually true
 - v1.0.0 changelog Security entry stating `--product` was "sent to OpenAI servers as part of the Chat Completions request" is left unchanged. That statement was correct as of v1.0.0 and rewriting historical changelog rows would erase the audit trail. This v1.1.2 entry is the canonical correction for current versions
+- Standardized on `.env` as the single recommended source for API keys; example mcp.json files no longer ship `env` fields to avoid plaintext storage. Code behavior is unchanged (the secret resolver still reads OS environment variables first, then `.env`, then mcp.json `env`); only the documentation, the `examples/mcp/*.mcp.json` snippets, the README MCP integration section, and the SECURITY summary now point to `.env` as the recommended single source. The INDEX section 3.4 backend/secrets summary picks up the same line
 
 ## [1.1.1] - 2026-05-02
 

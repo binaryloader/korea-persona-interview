@@ -13,34 +13,25 @@ Both examples assume Python 3.12 and a `uv`-managed virtual environment at `.ven
 
 The MCP server runs in one of two modes, selected in `config.yaml` under `mcp.mode`. ADR-004 captures the rationale.
 
-- `mcp.mode: "server"` (default). The server invokes OpenAI or Anthropic directly from its own process, using the same `LlmConfig` the CLI uses. mcp.json must include `OPENAI_API_KEY` (or `ANTHROPIC_API_KEY` if you set `llm.provider: "anthropic"`) in the `env` block. The example files in this directory ship with this layout
-- `mcp.mode: "sampling"`. The server delegates inference to the host agent through `sampling/createMessage`. No server-side API key needed, but the host must advertise the sampling capability. As of 2026-04 mainstream Claude Code Desktop release builds and cmux do not advertise it; some Cursor builds do. When you opt in, drop the `env` block from the mcp.json snippet and edit `config.yaml` to set `mcp.mode: "sampling"`
+- `mcp.mode: "server"` (default). The server invokes OpenAI or Anthropic directly from its own process, using the same `LlmConfig` the CLI uses. The provider API key must be reachable from the server process. The recommended pattern is a project-root `.env` file that the tool auto-loads. See section 3 for where to put the key
+- `mcp.mode: "sampling"`. The server delegates inference to the host agent through `sampling/createMessage`. No server-side API key needed, but the host must advertise the sampling capability. As of 2026-04 mainstream Claude Code Desktop release builds and cmux do not advertise it; some Cursor builds do. To opt in, edit `config.yaml` to set `mcp.mode: "sampling"`. The example mcp.json files in this directory work for both modes because they only declare `cwd` and let the tool source the key from `.env` when needed
 
 There is no automatic fallback between modes. Every tool response carries an explicit `"backend": "mcp_server"` or `"backend": "mcp_sampling"` label so you can confirm which path handled the call.
 
-## 3. Installation
+## 3. Where to keep the API key
 
-Replace every `/absolute/path/to/korea-persona-interview` with the real project path on your machine, and replace `sk-replace-with-your-key` with your provider API key. Then copy the file content into the agent's MCP config location and restart the agent.
+The recommended pattern is a `.env` file at the project root. Server mode needs `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`; sampling mode needs no server-side key at all. Pick exactly one of the options below.
+
+- Recommended. Create `.env` at the project root with `OPENAI_API_KEY=sk-...` (or `ANTHROPIC_API_KEY=sk-ant-...`). The tool's stdlib `.env` loader uses `setdefault` semantics, so the key is promoted into the process environment when the MCP server boots. `.env` is gitignored, kept out of backups by default, and isolated per project. The example mcp.json files in this directory rely on this path
+- Possible but not recommended. Export the key in your shell (`export OPENAI_API_KEY=sk-...`) before launching the MCP host, or add an `env` block to mcp.json (`"env": {"OPENAI_API_KEY": "sk-..."}`). Both still work because the tool's secret resolver reads OS environment variables first. The mcp.json `env` block in particular stores the key in plaintext inside the agent's config, which is more likely to leak through git, dotfile sync, or screenshots. Avoid unless you have a specific reason to override `.env`
+
+Sampling mode does not need a key in any of these locations because inference runs on the host agent's plan.
+
+## 4. Installation
+
+Replace every `/absolute/path/to/korea-persona-interview` with the real project path on your machine. Then copy the file content into the agent's MCP config location and restart the agent. Drop your provider API key into a `.env` at the project root before the first run.
 
 For Claude Code, the merged config lives at `~/.claude/mcp.json`. For Cursor, the project-local config lives at `<repo>/.cursor/mcp.json` and is picked up when you open the workspace.
-
-## 4. Sampling-mode mcp.json example
-
-If you switched `config.yaml` to `mcp.mode: "sampling"`, the snippet drops the API key entirely.
-
-```json
-{
-  "mcpServers": {
-    "korea-persona-interview": {
-      "command": "/absolute/path/to/.venv/bin/python",
-      "args": ["-m", "src.mcp_server"],
-      "cwd": "/absolute/path/to/korea-persona-interview"
-    }
-  }
-}
-```
-
-The Cursor variant mirrors the same shape (`"command": "uv"`, `"args": ["run", "--", "python", "-m", "src.mcp_server"]`) without the `env` block.
 
 ## 5. Available tools
 

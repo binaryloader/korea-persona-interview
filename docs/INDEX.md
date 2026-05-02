@@ -78,7 +78,7 @@
 - 모델 ID는 provider에 따라 자동 결정된다. openai 기본은 `gpt-4o-mini`, anthropic 기본은 `claude-haiku-4-5`다. `config.yaml`의 `llm.model` 또는 CLI `--model` 옵션으로 변경 가능하다
 - MCP 서버 진입점은 sampling 전용이다. host agent의 LLM에 `sampling/createMessage`로 위임하며 server-side에는 키가 필요 없다. host가 sampling capability를 노출하지 않으면 ConfigError + CLI fallback 안내로 차단된다
 - 환경변수는 비밀과 출력 디렉토리만 받는다. `OPENAI_API_KEY`/`KPI_OPENAI_API_KEY`(provider=openai), `ANTHROPIC_API_KEY`(provider=anthropic), `KPI_OUTPUT_DIR`(테스트/CI 격리용)이다. 비밀은 코드/yaml/CLI에 하드코딩 금지(security.md §1)다
-- `.env` 파일은 stdlib 파서로 비밀만 환경에 승격한다. setdefault 의미라 이미 set된 환경변수는 덮지 않는다
+- `.env` 파일은 stdlib 파서로 비밀만 환경에 승격한다. setdefault 의미라 이미 set된 환경변수는 덮지 않는다. 프로젝트 루트의 `.env` 단일 창구가 권장 패턴이다. mcp.json `env` 필드도 코드상 동작하지만 평문 저장 노출 위험이 있어 README/예시에서는 권장하지 않는다
 - 기존 `LlmConfig.backend` 토글은 제거됐다. yaml에 잔존해도 graceful하게 무시된다(ADR-003)
 
 ### 3.5. 토큰 사용량(라운드 A + multi-provider + v1.1.0 cache_control)
