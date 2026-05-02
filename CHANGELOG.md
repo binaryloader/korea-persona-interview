@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-05-02
+
+Patch release that adds the MCP `mcp.mode` toggle. The MCP server entry point now picks between server-side OpenAI/Anthropic calls (default, immediate usability with mainstream MCP clients) and host-LLM delegation through `sampling/createMessage` (opt-in, no server-side API key). There is no automatic fallback. Test count climbs from 555 to 571.
+
+### Added
+
+- `mcp.mode` config option in `config.yaml`. Two values are accepted and validated against a whitelist: `server` (default) and `sampling`. ADR-004 captures the rationale and supersedes the sampling-only clause of ADR-003. Wraps `_build_backend(config)` in mode dispatch and exposes the new `_backend_label` helper
+- `McpConfig` dataclass on `AppConfig`. Frozen, range-checked in `__post_init__`, exposed at `config.mcp.mode`. Conftest `make_app_config` grows an `mcp_mode` parameter for tests
+- `backend` field on every MCP tool response envelope. Successful responses carry `"backend": "mcp_server"` or `"backend": "mcp_sampling"`; error envelopes carry the same field whenever the mode is known by the time the error is raised. `load_config` failures (which precede mode resolution) still emit error envelopes without the field
+- ADR-004 (`docs/adr/2026-05-02-mcp-mode-toggle.md`) records the decision, the rejected alternatives (automatic fallback, sampling default, deferring MCP entirely), and the follow-up trigger for revisiting the default once sampling-capable clients hit majority share
+
+### Changed
+
+- The MCP server now invokes server-side OpenAI/Anthropic backends by default. Existing mcp.json snippets that include `OPENAI_API_KEY` in their `env` block continue to work without changes. Users who relied on sampling delegation must set `mcp.mode: "sampling"` in `config.yaml` explicitly
+- ADR-003 is annotated as superseded for the sampling-only clause only; the multi-provider backend decision (provider toggle, AnthropicBackend, `build_cli_backend` factory) remains in force
+- README Integration section rewritten around the toggle. Adds the trade-off matrix split for the two MCP rows, the why-default paragraph, and a sampling-mode mcp.json variant alongside the server-mode example. Configuration table grows the `mcp.mode` row
+
+### Tests
+
+- 571 regression tests (up from 555). New coverage: `mcp.mode` whitelist validation in `McpConfig.__post_init__`, default `server` value, sampling override, server-mode `_build_backend` dispatch (OpenAI and Anthropic), sampling-mode `_build_backend` dispatch (with and without an active session), `_backend_label` helper for both modes, and the response `backend` label invariant on healthcheck, list_personas, interview, and report tool calls in both modes
+
+### Documentation
+
+- README, `docs/INDEX.md`, `docs/prd/korea-persona-interview.md`, `docs/tdd/korea-persona-interview.md` updated for the mode toggle. INDEX revision log gains the v1.1.1 entry
+- `examples/mcp/README.md` rewritten with two-mode guidance, a sampling-mode mcp.json snippet, and the backend label invariant
+
 ## [1.1.0] - 2026-05-02
 
 Feature release that consumes the entire v1.1.0 backlog (27 items across UX, security, and observability) plus the four LLM-as-judge / streaming / insight-model / structured-summary refactors that were carried over from earlier rounds. Test count climbs from 509 to 555.
@@ -108,6 +134,7 @@ First stable release. The previous `0.1.0` line is folded into `1.0.0` because t
 - Default model: `gpt-4o-mini` (configurable)
 - License: MIT (see [LICENSE](LICENSE))
 
-[Unreleased]: https://github.com/binaryloader/korea-persona-interview/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/binaryloader/korea-persona-interview/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/binaryloader/korea-persona-interview/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/binaryloader/korea-persona-interview/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/binaryloader/korea-persona-interview/releases/tag/v1.0.0

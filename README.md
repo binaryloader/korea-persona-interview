@@ -627,7 +627,7 @@ korea-persona-interview/
 │   └── report.py              # Quantitative aggregation, qualitative insight via LLM
 ├── tests/
 │   ├── conftest.py            # Shared fixtures, env isolation, dataset mock
-│   ├── test_*.py              # 555 tests (rounds A-G regression: backends, persona id pinning, resume, streaming, drift judge)
+│   ├── test_*.py              # 571 tests (rounds A-G regression + v1.1.1 mcp.mode toggle: backends, persona id pinning, resume, streaming, drift judge, mcp dispatch in server/sampling modes)
 │   └── manual/smoke_e2e.py    # Live OpenAI smoke test (excluded from default run)
 ├── examples/
 │   └── mcp/                   # Drop-in mcp.json snippets for Claude Code and Cursor
@@ -661,7 +661,7 @@ Run the full test suite with pytest. The suite mocks the OpenAI API with `pytest
 pytest tests/ -v
 ```
 
-The current regression covers 555 tests including OpenAI, Anthropic Claude, and MCP sampling backend coverage (config, filter DSL, persona loader, LLM client, LLM backend selection, interview session, persona drift, batch runner, report quant, MCP dispatch, error messages, logging, and CLI integration).
+The current regression covers 571 tests including OpenAI, Anthropic Claude, MCP sampling, and MCP server-mode backend coverage (config, filter DSL, persona loader, LLM client, LLM backend selection, interview session, persona drift, batch runner, report quant, MCP dispatch in both modes, error messages, logging, and CLI integration).
 
 Manual smoke tests that exercise a real LLM API call live under `tests/manual/` and are excluded from the default run. They expect `OPENAI_API_KEY` (or `ANTHROPIC_API_KEY`) in the environment.
 
@@ -723,7 +723,7 @@ The OpenAI Chat Completions API does not require attribution. The default model 
 
 Pull requests are welcome. Before opening one.
 
-- Run `pytest tests/ -v` and confirm all 555 tests pass
+- Run `pytest tests/ -v` and confirm all 571 tests pass
 - Use Conventional Commits
 - For substantive changes, open an issue first to discuss the approach
 

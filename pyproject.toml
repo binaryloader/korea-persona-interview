@@ -4,7 +4,7 @@
 # 트리는 ``requirements.lock``에 그대로 동결되어 있다.
 [project]
 name = "korea-persona-interview"
-version = "1.1.0"
+version = "1.1.1"
 description = "Synthetic Korean persona interview CLI on top of OpenAI Chat Completions API and the NVIDIA Nemotron-Personas-Korea dataset (CC BY 4.0)."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"

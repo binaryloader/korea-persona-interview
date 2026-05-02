@@ -36,7 +36,7 @@ Edit `.env` and set `OPENAI_API_KEY=sk-...`. The project root `.env` file is aut
 pytest tests/ -v
 ```
 
-The current regression covers 555 tests across rounds A through G (config, filter DSL, persona loader, LLM client, interview session, persona drift, batch runner, report quant, MCP dispatch, error messages, logging, CLI integration, --persona-id, --resume, streaming, LLM-as-judge drift, and structured-summary v2 backward compatibility). All 555 tests must pass before opening a pull request.
+The current regression covers 571 tests across rounds A through G plus the v1.1.1 mcp.mode toggle (config, filter DSL, persona loader, LLM client, interview session, persona drift, batch runner, report quant, MCP dispatch in both server and sampling modes, error messages, logging, CLI integration, --persona-id, --resume, streaming, LLM-as-judge drift, structured-summary v2 backward compatibility, and the McpConfig whitelist). All 571 tests must pass before opening a pull request.
 
 Manual smoke tests that exercise a real OpenAI API call live under `tests/manual/` and are excluded from the default run.
 
