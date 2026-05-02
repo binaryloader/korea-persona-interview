@@ -9,7 +9,8 @@
 - [adr/2026-05-02-multiturn-strategy.md](adr/2026-05-02-multiturn-strategy.md) - 멀티턴 + 단일턴 구조화 요약 채택 결정
 - [adr/2026-05-02-openai-backend-migration.md](adr/2026-05-02-openai-backend-migration.md) - 로컬 MLX → OpenAI Chat Completions API 백엔드 전환 결정(ADR-003에 의해 supersede)
 - [adr/2026-05-02-multi-provider-backend.md](adr/2026-05-02-multi-provider-backend.md) - multi-provider 백엔드(OpenAI / Anthropic / 로컬 LLM / MCP sampling) 결정. ADR-002 supersede. MCP sampling-only 결정 부분만 ADR-004로 supersede
-- [adr/2026-05-02-mcp-mode-toggle.md](adr/2026-05-02-mcp-mode-toggle.md) - MCP 동작 모드 토글(server default, sampling opt-in) 도입. ADR-003 §2의 sampling-only 결정 supersede
+- [adr/2026-05-02-mcp-mode-toggle.md](adr/2026-05-02-mcp-mode-toggle.md) - MCP 동작 모드 토글(server default, sampling opt-in) 도입. ADR-003 §2의 sampling-only 결정 supersede. sampling 부분은 ADR-005에서 다시 supersede(server default 결정은 유효)
+- [adr/2026-05-02-orchestrator-mode-and-sampling-removal.md](adr/2026-05-02-orchestrator-mode-and-sampling-removal.md) - MCP orchestrator 모드 신설과 sampling 모드 제거. ADR-004의 sampling 부분 supersede. server default 결정은 유효
 - [ui/korea-persona-interview.md](ui/korea-persona-interview.md) - CLI 사용자 흐름과 콘솔 출력 명세, 한국어 에러 메시지 사전, 리포트 마크다운 섹션 트리
 - [tasks/korea-persona-interview.md](tasks/korea-persona-interview.md) - 작업 표(T1-T11 + GATE-1/2), 의존성 그래프, 마일스톤
 - [backlog/v1.2.0.md](backlog/v1.2.0.md) - v1.2.0으로 미룬 백로그 항목과 동기
@@ -71,17 +72,30 @@
 - 직업명 영문 화이트리스트 옵션은 `interview.occupation_english_whitelist`(기본 ON)다. 페르소나 직업명에 등장하는 영문 토큰을 영어 비율 분모에서 제외한다
 - LLM-as-judge drift 옵션은 `interview.llm_drift_review`(기본 OFF)다. 휴리스틱 trigger record에 한해 1-token LLM 호출로 재판정한다
 
-### 3.4. 백엔드/시크릿/환경변수
+### 3.4. 진입점 매트릭스(v1.2.0, ADR-005)
 
-- CLI 진입점은 `LlmConfig.provider`로 백엔드를 결정한다. `provider=openai`는 OpenAI 호환(공식 API + 로컬 mlx_lm.server/vLLM/llama.cpp)에 모두 사용한다. `provider=anthropic`은 Anthropic Messages API 직접 호출이다(httpx)
+본 도구는 진입점이 셋이다. 어느 진입점이 선택되었는지에 따라 LLM 호출 위치, API 키 필요 여부, 노출되는 도구가 달라진다.
+
+| 진입점 | mode (yaml) | server-side LLM 호출 | 호스트 LLM 호출 | API 키 |
+| --- | --- | --- | --- | --- |
+| CLI(`kpi`) | n/a | 적용 | 미적용 | provider에 따라 |
+| MCP server | `mcp.mode: "server"`(default) | 적용 | 미적용 | provider에 따라 |
+| MCP orchestrator | `mcp.mode: "orchestrator"` | 미적용 | 적용(sub-agent) | 불필요 |
+
+용어 정책은 아래와 같다. docs/주석/사용자 메시지에 "CLI", "MCP server", "MCP orchestrator" 풀 표기를 사용한다. 단독 "server" 또는 "orchestrator" 사용은 혼동 방지를 위해 금지한다. yaml의 `mcp.mode` 값만 짧은 식별자(`"server"`, `"orchestrator"`)를 허용한다.
+
+### 3.5. 백엔드/시크릿/환경변수
+
+- CLI 진입점은 `LlmConfig.provider`로 백엔드를 결정한다. `provider=openai`는 OpenAI 호환(공식 API와 로컬 mlx_lm.server/vLLM/llama.cpp)에 모두 사용한다. `provider=anthropic`은 Anthropic Messages API 직접 호출이다(httpx)
 - base_url은 provider에 따라 자동 결정된다. `provider=openai`이면 `https://api.openai.com/v1`, `provider=anthropic`이면 `https://api.anthropic.com/v1`이 기본값이다. 로컬 LLM은 `--base-url http://localhost:PORT/v1`로 명시 override한다
 - 모델 ID는 provider에 따라 자동 결정된다. openai 기본은 `gpt-4o-mini`, anthropic 기본은 `claude-haiku-4-5`다. `config.yaml`의 `llm.model` 또는 CLI `--model` 옵션으로 변경 가능하다
-- MCP 서버 진입점은 sampling 전용이다. host agent의 LLM에 `sampling/createMessage`로 위임하며 server-side에는 키가 필요 없다. host가 sampling capability를 노출하지 않으면 ConfigError + CLI fallback 안내로 차단된다
+- MCP server 모드는 server-side에서 OpenAI/Anthropic을 직접 호출한다. CLI와 동일한 LlmConfig를 사용하므로 mcp.json env 또는 `.env`에 `OPENAI_API_KEY`/`ANTHROPIC_API_KEY`가 필요하다. 응답 backend 라벨은 `mcp_server`다
+- MCP orchestrator 모드는 server-side LLM 호출이 없다. 호스트 sub-agent가 자기 LLM으로 인터뷰를 수행하므로 server-side 키가 불필요하다. 응답 backend 라벨은 `mcp_orchestrator`다
 - 환경변수는 비밀과 출력 디렉토리만 받는다. `OPENAI_API_KEY`/`KPI_OPENAI_API_KEY`(provider=openai), `ANTHROPIC_API_KEY`(provider=anthropic), `KPI_OUTPUT_DIR`(테스트/CI 격리용)이다. 비밀은 코드/yaml/CLI에 하드코딩 금지(security.md §1)다
 - `.env` 파일은 stdlib 파서로 비밀만 환경에 승격한다. setdefault 의미라 이미 set된 환경변수는 덮지 않는다. 프로젝트 루트의 `.env` 단일 창구가 권장 패턴이다. mcp.json `env` 필드도 코드상 동작하지만 평문 저장 노출 위험이 있어 README/예시에서는 권장하지 않는다
 - 기존 `LlmConfig.backend` 토글은 제거됐다. yaml에 잔존해도 graceful하게 무시된다(ADR-003)
 
-### 3.5. 토큰 사용량(라운드 A + multi-provider + v1.1.0 cache_control)
+### 3.6. 토큰 사용량(라운드 A + multi-provider + v1.1.0 cache_control)
 
 - OpenAI 응답: `usage.prompt_tokens_details.cached_tokens`를 `TokenUsage.cached_tokens`로 매핑한다
 - Anthropic 응답: `usage.input_tokens`/`output_tokens`/`cache_read_input_tokens` + `cache_creation_input_tokens`를 `TokenUsage` 같은 모양으로 매핑한다(creation + read 합산이 cached_tokens)
@@ -92,35 +106,39 @@
 - prompt caching은 양 provider 모두 활성화된다. OpenAI는 prefix 1024 토큰 이상 자동 적용 구조다(TDD §9.1). Anthropic은 v1.1.0부터 `llm.anthropic_cache_control: true`(기본 ON)로 system 메시지에 `cache_control: ephemeral` 마커를 박아 활성화한다
 - v1.1.0부터 OpenAI streaming(`llm.streaming: true`, 기본 OFF) 지원. SSE 응답을 `_parse_streaming_body`가 chunk별로 합치고 마지막 chunk의 usage 블록을 그대로 매핑한다(`stream_options.include_usage`)
 
-### 3.6. 시스템 프롬프트와 페르소나 풀(라운드 B4, B5)
+### 3.7. 시스템 프롬프트와 페르소나 풀(라운드 B4, B5)
 
 - 시스템 프롬프트 본문은 `prompts/system_prompt.txt` 외부 파일에 있다. `{persona_json}`/`{product}` placeholder가 누락되면 ConfigError로 차단한다
 - 프로세스 단위 mtime 기반 in-memory 캐시로 디스크 I/O를 최소화한다. 파일 편집 후 다음 호출에서 자동 반영된다
 - 페르소나 풀은 `(filter_str, n, seed, field_map, gender_aliases, province_aliases, dataset_name, split)` 키로 in-memory 캐싱된다. `clear_persona_pool_cache()`로 무효화 가능하다
 
-### 3.7. MCP 서버(ADR-004 mode toggle)
+### 3.8. MCP 진입점(ADR-005 mode toggle)
 
 - 진입점은 두 가지다. 모듈 단위는 `python -m src.mcp_server`이고 console script는 `kpi-mcp-server`다
-- 4개 도구는 `healthcheck`, `list_personas`, `interview`, `report`다. MCP 관례 snake_case 표기를 따른다
-- 추론 경로는 `mcp.mode` 토글로 명시 선택한다. ADR-004에 결정값이 박혀 있다. 자동 fallback은 없다
-  - `mode: "server"`는 기본값이다. server-side `OpenAIBackend`나 `AnthropicBackend`를 사용한다. CLI와 동일한 `LlmConfig` 필드를 그대로 적용한다. 적용 필드는 provider, base_url, model, api_key, timeout, retry, anthropic_cache_control, extra_chat_kwargs, streaming이다. mcp.json env에 `OPENAI_API_KEY` 또는 `ANTHROPIC_API_KEY`가 필요하다. 응답 라벨은 `"backend": "mcp_server"`다
-  - `mode: "sampling"`은 명시 opt-in이다. 호스트 LLM에 `sampling/createMessage`로 위임한다. server-side 키가 필요 없다. host가 sampling capability를 노출하지 않거나 MCP 호스트가 attach되지 않으면 ConfigError와 CLI fallback 안내를 돌려준다. fallback 안내 메시지에 `python main.py interview ...`가 포함된다. 응답 라벨은 `"backend": "mcp_sampling"`이다
+- 추론 경로는 `mcp.mode` 토글로 명시 선택한다. ADR-005에 결정값이 박혀 있다. 자동 fallback은 없다
+  - `mode: "server"`는 기본값이다. server-side `OpenAIBackend`나 `AnthropicBackend`를 사용한다. CLI와 동일한 `LlmConfig` 필드를 그대로 적용한다. mcp.json env에 `OPENAI_API_KEY` 또는 `ANTHROPIC_API_KEY`가 필요하다. 응답 라벨은 `"backend": "mcp_server"`다
+  - `mode: "orchestrator"`는 server-side LLM 호출을 하지 않는다. 호스트 sub-agent가 자기 LLM으로 인터뷰를 수행한다. server-side 키 불필요. 응답 라벨은 `"backend": "mcp_orchestrator"`다
+- 도구 노출은 모드별로 다르다. 코드 정본은 `src/mcp_handlers/__init__.py`의 `TOOLS_BY_MODE`이다
+  - 모든 mode 공통: `healthcheck`, `list_personas`, `report`, helper 4종(`detect_persona_drift`, `should_auto_follow_up`, `parse_structured_summary`, `interview_record_schema`)
+  - MCP server 전용: `interview`
+  - MCP orchestrator 전용: `build_persona_prompt`, `build_batch_prompts`, `aggregate_results`
 - 도구 응답 형태는 정상이면 `{"ok": true, "backend": "...", ...}`이고 에러면 `{"ok": false, "backend": "...", "error": {"code", "message", "exit_code"}}`로 통일한다
 - 진행률 표시는 `progress_disable=True`로 끈다. 로그는 stderr와 `outputs/logs/run_*.jsonl`에 그대로 흘려 stdio JSON-RPC 채널을 오염시키지 않는다
 - `mcp` SDK import는 `_serve_stdio()` 안에서 lazy하게 수행한다. SDK 부재 시 친절한 한국어 안내와 exit 1로 종료한다
 
-### 3.8. 환경 도구
+### 3.9. 환경 도구
 
 - uv(가상 환경은 .venv, Python 3.12 고정)다
 - `pyproject.toml`(라운드 C4)이 PEP 621 메타와 console script(`kpi`, `kpi-mcp-server`)를 등록한다. requirements 계열을 정본으로 두고 pyproject는 동기화 상태를 유지한다
-- 회귀 테스트는 555개로 multi-provider, MCP sampling 전용, AnthropicBackend, --persona-id, --resume, streaming 응답, LLM-as-judge drift, structured_summary v2까지 포함한다
+- 회귀 테스트는 v1.2.0에서 569개로, multi-provider, MCP server, MCP orchestrator, AnthropicBackend, --persona-id, --resume, streaming 응답, LLM-as-judge drift, structured_summary v2, orchestrator 7개 신규 도구까지 포함한다
 
 ## 4. ADR 인덱스
 
 - [ADR-001 (2026-05-02)](adr/2026-05-02-multiturn-strategy.md) - 멀티턴 + 단일턴 구조화 요약 채택. 후속 supersede 후보: 단일턴 + 사후 요약(100명 30분 SLO 위반 시)
 - [ADR-002 (2026-05-02)](adr/2026-05-02-openai-backend-migration.md) - 로컬 MLX → OpenAI Chat Completions API(`gpt-4o-mini`) 백엔드 전환. ADR-003에 의해 supersede(multi-provider로 확장)
 - [ADR-003 (2026-05-02)](adr/2026-05-02-multi-provider-backend.md) - multi-provider 백엔드 채택. CLI는 `provider=openai|anthropic` + 로컬 LLM via base_url override, MCP는 sampling 전용. MCP sampling-only 결정은 ADR-004로 supersede(multi-provider 결정 자체는 유효). 후속 supersede 후보: provider별 페르소나 품질 검증 결과에 따른 default 모델 변경
-- [ADR-004 (2026-05-02)](adr/2026-05-02-mcp-mode-toggle.md) - MCP 동작 모드 토글 도입. `mcp.mode: "server"`(기본)는 server-side OpenAI/Anthropic 호출, `mcp.mode: "sampling"`은 호스트 LLM 위임. 자동 fallback 없음. ADR-003 §2의 sampling-only 결정 supersede. 후속 supersede 후보: sampling 호환 클라이언트 보급률 50%+ 도달 시 default를 sampling으로 전환
+- [ADR-004 (2026-05-02)](adr/2026-05-02-mcp-mode-toggle.md) - MCP 동작 모드 토글 도입. `mcp.mode: "server"`(기본)는 server-side OpenAI/Anthropic 호출, `mcp.mode: "sampling"`은 호스트 LLM 위임. 자동 fallback 없음. ADR-003 §2의 sampling-only 결정 supersede. sampling 부분은 ADR-005에서 다시 supersede됨(server default 결정은 유효)
+- [ADR-005 (2026-05-02)](adr/2026-05-02-orchestrator-mode-and-sampling-removal.md) - MCP orchestrator 모드 신설과 sampling 모드 제거. `mcp.mode: "orchestrator"`는 server-side LLM 호출 없이 호스트 sub-agent 위임 흐름을 지원한다. ADR-004의 sampling 부분 supersede. 후속 supersede 후보: sampling 호환 클라이언트 보급률 50%+ 도달 시 sampling 재도입 검토
 
 ## 5. 갱신 이력
 
@@ -163,3 +181,4 @@
 - 2026-05-02 v1.1.0 push 직전 최종 정리. config.yaml line 43 dangling 주석 제거, llm 섹션 헤더에 진입점별 적용 범위 명시(CLI 전용 / MCP sampling 전달 / 양쪽 적용 분리). batch/dataset/interview/report/output 섹션 주석을 SDK 공개 수준으로 다듬음. McpSamplingBackend 적용 범위를 코드 검증으로 확정(messages/max_tokens/system_prompt/temperature 4개만 host에 전달, 나머지는 호스트가 소유)하고 README/TDD §12에 동기 반영. src/batch.py 모듈 docstring과 run_batch docstring을 영어 SDK 수준으로 재작성, src/dry_run.py에 누락되었던 acceptable_price_signal 필드 dump 추가, src/interview.py와 src/llm_client.py의 일부 한국어 주석을 일관성 있는 영어 주석으로 정리. README Features/Configuration/Usage Examples/Output Format/Limitations/Roadmap을 v1.1.0 신기능 전체로 갱신. PRD §5.1, §5.2, §5.4, §5.8, §5.9, §6.1, §6.6 갱신. TDD §1, §8, §12.2, §13, §16 갱신. UI 콘솔 출력 샘플을 v1.1.0 형식으로 갱신. 회귀 555 통과 유지
 - 2026-05-02 v1.1.1 patch 릴리즈, MCP 동작 모드 토글 도입. ADR-004 신규 채택으로 ADR-003 §2의 sampling-only 결정 supersede. `mcp.mode` 토글 추가(server default + sampling opt-in). server mode는 server-side OpenAI/Anthropic 백엔드를 CLI와 동일한 LlmConfig로 호출하고 응답 라벨은 mcp_server, sampling mode는 기존 sampling/createMessage 위임을 유지하고 응답 라벨은 mcp_sampling. 자동 fallback은 두지 않음. McpConfig dataclass와 화이트리스트 검증, _build_backend(config) mode 분기, _backend_label 헬퍼 추가. 모든 도구 응답 envelope에 backend 라벨 일관 박힘(정상/에러). examples/mcp/ 두 변형 mcp.json 갱신. README Integration 섹션 두 모드 안내 + 트레이드오프 비교. INDEX §3.7, PRD §5.10, TDD §2.10/§12 동기 갱신. 회귀 555 → 571개
 - 2026-05-02 v1.1.2 patch 릴리즈, 외부 송신 disclaimer 다중 provider화. v1.1.0 multi-provider 전환과 v1.1.1 mcp.mode 토글 도입 이후에도 리포트 footer, PRD §1/§6.3/§10.6, TDD §13, UI §4.5, tasks T10, SECURITY 요약에 "OpenAI 서버로 송신" 단정 표현이 잔여하던 것을 정정. `src/report.py` `_render_footer`의 disclaimer 단락을 "사용자가 설정한 LLM 백엔드(OpenAI / Anthropic / 로컬 LLM / MCP 호스트 에이전트)로 송신" 표현으로 갱신하고 추론 모델 행에서 "(OpenAI Chat Completions API)" suffix 제거. examples/sample-interview/sample-report.md 동기 갱신. ADR-002 본문과 본 INDEX의 v1.0 시점 갱신 이력 라인은 historical artifact로 보존(시점별 의사결정 기록 가치). v1.0.0 CHANGELOG Security 항목도 v1.0 시점 정확 사실이라 보존하고 v1.1.2 Documentation 절에서 정정 명시. 코드 동작 변경 없음, 회귀 571 유지
+- 2026-05-02 v1.2.0 minor 릴리즈, ADR-005 채택. config.yaml을 카테고리별 섹션(common/llm/batch/heuristics/mcp/output)으로 재구조화(BREAKING). `mcp.mode: "sampling"` 제거하고 `mcp.mode: "orchestrator"` 신설(BREAKING). `McpSamplingBackend`와 sampling capability check, `_convert_to_sampling_messages`, `_extract_sampling_text` 제거. MCP orchestrator 모드는 server-side LLM 호출 없이 호스트 sub-agent에 인터뷰를 위임한다. 신규 도구 7개 추가: `build_persona_prompt`, `build_batch_prompts`, `aggregate_results`(orchestrator 전용), `detect_persona_drift`, `should_auto_follow_up`, `parse_structured_summary`, `interview_record_schema`(모든 mode 공통 helper). 도구 핸들러를 `src/mcp_handlers/`로 분리해 mode별 정책을 독립적으로 관리한다. 회귀 571 → 569개로 sampling 테스트 21개 제거하고 orchestrator 테스트 18개 추가

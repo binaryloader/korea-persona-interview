@@ -4,7 +4,7 @@
 
 A field-ready CLI for running synthetic Korean persona interviews on top of OpenAI, Anthropic Claude, or any OpenAI-compatible local LLM (mlx_lm.server, vLLM, llama.cpp). Pair the NVIDIA Nemotron-Personas-Korea dataset (CC BY 4.0, about 1M Korean synthetic personas) with the model of your choice to pressure-test product ideas, interview guides, and persona hypotheses before recruiting real participants.
 
-The tool ships four CLI subcommands (`healthcheck`, `list-personas`, `interview`, `report`), a JSON output mode for machine-to-machine use, and a Model Context Protocol (MCP) server that delegates inference to the host agent (Claude Code, Cursor, Codex) via the sampling capability.
+The tool ships four CLI subcommands (`healthcheck`, `list-personas`, `interview`, `report`), a JSON output mode for machine-to-machine use, and a Model Context Protocol (MCP) entry point that runs in either MCP server mode (server-side OpenAI/Anthropic calls) or MCP orchestrator mode (the host agent's sub-agent does the LLM work).
 
 ## Features
 
@@ -18,7 +18,7 @@ The tool ships four CLI subcommands (`healthcheck`, `list-personas`, `interview`
 - `llm.extra_chat_kwargs` free-form dict forwarded into the OpenAI request body for backend-specific extensions (e.g. `chat_template_kwargs.enable_thinking` on mlx_lm.server / vLLM Qwen3)
 - LLM-as-judge drift refinement (`interview.llm_drift_review: true`, opt-in default off) that revisits heuristic drift detections with a single 1-token verdict call to clear false positives
 - `acceptable_price_signal` (`cheap`/`fair`/`expensive`/`null`) on every structured summary so price sentiment lands on every record even when the persona never names a number; `report.estimate_wtp_from_signal` opts into a recommendation prompt that uses the signal distribution alongside explicit numbers
-- MCP server (`python -m src.mcp_server`) that exposes the four CLI commands as tools to Claude Code, Cursor, and Codex. The `mcp.mode` toggle picks between two inference paths: `server` (default) calls OpenAI/Anthropic directly server-side using the same `LlmConfig` the CLI uses, and `sampling` delegates to the host agent via `sampling/createMessage`
+- MCP entry point (`python -m src.mcp_server`) that exposes interview-pipeline tools to Claude Code, Cursor, and Codex. The `mcp.mode` toggle picks between two inference paths: `server` (default) calls OpenAI/Anthropic directly server-side using the same `LlmConfig` the CLI uses, and `orchestrator` exposes data and prompt helpers that the host agent's sub-agent uses to run interviews with its own LLM (no server-side API key required)
 - Automatic markdown report after every interview run (toggle off with `--no-report` for JSON-only pipelines)
 - `--json` root mode that emits a single JSON document on stdout for shell scripts and external agents; every JSON envelope (CLI and MCP) carries an explicit `ok: true|false` field for one-key branching
 - Single-turn mode (`--single-turn`) that bundles every question into one chat call to cut tokens at scale
@@ -404,7 +404,7 @@ Notable yaml keys.
 - `report.cohort_min_cell` - cohort cell sample-size mask threshold (default 3, raise to 5 for more conservative reporting)
 - `report.histogram_bins` - price histogram bin count (default 10)
 - `report.bar_width` - text bar chart width (default 30, lower for narrow terminals)
-- `mcp.mode` - MCP entry point inference path. `server` (default) calls OpenAI/Anthropic server-side using the same `LlmConfig` the CLI uses. `sampling` delegates to the host agent's LLM via `sampling/createMessage` and does not require a server-side API key. No automatic fallback. See ADR-004 for the rationale and the MCP integration guide for mcp.json examples per mode
+- `mcp.mode` - MCP entry point inference path. `server` (default) calls OpenAI/Anthropic server-side using the same `LlmConfig` the CLI uses. `orchestrator` exposes data and prompt helpers and lets the host agent's sub-agent do the LLM work; no server-side API key required. No automatic fallback. See ADR-005 for the rationale (sampling mode was removed in v1.2.0)
 
 Knobs added in v1.1.
 
@@ -459,52 +459,62 @@ The drift detector and the auto follow-up trigger are tuned via `config.yaml` `i
 
 ## Integration with External Agents
 
-There are two ways to drive this tool from external agents like Claude Code, Cursor, or Codex. Pick the one that matches the agent.
+There are three entry points for driving this tool: CLI, MCP server, and MCP orchestrator. They are not interchangeable - the choice depends on whether you want server-side LLM calls (CLI, MCP server) or whether you want the host agent's sub-agent to do the LLM work (MCP orchestrator).
 
-### Choosing an inference backend
+### Entry point matrix
 
-The matrix below covers every supported entry point and inference target. Pick the column that matches how you plan to run the tool.
+| Entry point | mode (yaml) | Server-side LLM call | Host LLM call | API key required |
+| --- | --- | --- | --- | --- |
+| CLI (`kpi`) | n/a | yes | no | provider-dependent |
+| MCP server | `mcp.mode: "server"` (default) | yes | no | provider-dependent |
+| MCP orchestrator | `mcp.mode: "orchestrator"` | no | yes (host sub-agent) | none |
 
-| Entry point | Inference target | Who pays | Requires API key | Model | When to use |
-| --- | --- | --- | --- | --- | --- |
-| CLI | OpenAI | Your OpenAI account | `OPENAI_API_KEY` | `gpt-4o-mini` (default) or any OpenAI model | Reproducible defaults, validated persona quality |
-| CLI | Anthropic Claude | Your Anthropic account | `ANTHROPIC_API_KEY` | `claude-haiku-4-5` (default), Sonnet, Opus | When you already have Anthropic credits or want a Claude baseline |
-| CLI | Local OpenAI-compatible (mlx_lm.server, vLLM, llama.cpp) | None | any non-empty | The local server's loaded model | Offline runs, custom fine-tunes, hardware you control |
-| MCP server (`mcp.mode: "server"`, default) | OpenAI or Anthropic via the same `LlmConfig` the CLI uses | Your provider account | `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` on the MCP server | Same as CLI (`gpt-4o-mini` or `claude-haiku-4-5` by default) | One-tool registration that works in any MCP client today; reuses CLI defaults and prompt caching |
-| MCP server (`mcp.mode: "sampling"`, opt-in) | Host agent's LLM via `sampling/createMessage` | The host agent's plan | None on the server | Whatever the host picks | When the host already advertises sampling capability and you do not want a second bill |
+Choose by these rules.
 
-The MCP server picks the backend at startup based on `mcp.mode` in `config.yaml`. There is no automatic fallback between modes, so the response always carries an explicit `"backend": "mcp_server"` or `"backend": "mcp_sampling"` label that tells you which path handled the call. ADR-004 captures the rationale.
+- CLI: shell scripts, automation, reproducible defaults. Validated persona quality on `gpt-4o-mini`. Token usage is tracked
+- MCP server: external agents (Claude Code, Cursor, Codex) call the tool with their own LLM-free MCP client. The tool itself calls OpenAI or Anthropic server-side. Recommended for one-tool registration that works in any MCP client today; mcp.json `env` block must carry `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`
+- MCP orchestrator: the host agent already has its own LLM (Claude Code's task tool, Cursor's sub-agent) and you want the interviews to be run by that LLM rather than paying for a second backend. The tool exposes data and prompt helpers; the host sub-agent does the LLM calls. No server-side API key is needed
 
-Why the default is `server`. As of 2026-04 most mainstream MCP clients (Claude Code Desktop release builds, Cursor stable, cmux) do not advertise the sampling capability yet, so the previous sampling-only policy returned a config error on every tool call out of the box. Server mode boots immediately at the cost of one server-side API key. Switch to `sampling` once your host advertises the capability.
+There is no automatic fallback between modes. The chosen path is reflected on every response as `"backend": "mcp_server"` or `"backend": "mcp_orchestrator"`. ADR-005 captures the rationale (sampling mode was removed in v1.2.0 because mainstream MCP clients did not advertise the capability).
 
-If you run `python -m src.mcp_server` outside an MCP host with `mcp.mode: "sampling"`, every tool returns a config error pointing back at the CLI or suggesting `mcp.mode: "server"`. The CLI itself never opens an MCP session.
+If you run `python -m src.mcp_server` outside an MCP host with `mcp.mode: "orchestrator"`, the helper tools still work but `interview` is blocked with a clear hint to use `build_batch_prompts` + sub-agent + `aggregate_results` instead.
 
-Which `llm.*` yaml fields apply on each entry point.
+### Which yaml fields apply on each entry point
 
-- CLI entry point: every `llm.*` field is honored (provider, base_url, model, api_key, max_tokens, temperature, timeout, context_budget, retry_max_attempts, retry_backoff_seconds, anthropic_cache_control, extra_chat_kwargs, streaming).
-- MCP server entry point with `mcp.mode: "server"`: every `llm.*` field is honored, identical to the CLI. The OpenAI/Anthropic backend runs server-side on the MCP host process.
-- MCP server entry point with `mcp.mode: "sampling"`: backend identity is owned by the host agent, so provider, base_url, model, api_key, streaming, extra_chat_kwargs, anthropic_cache_control, timeout, retry_max_attempts, retry_backoff_seconds are all ignored. Only `max_tokens` and `temperature` are forwarded into the host's `sampling/createMessage` call. `context_budget` is applied by the message-history truncator on both paths so it is honored regardless.
+The yaml is split into category sections. Each section lists which entry points read it.
 
-Trade-offs to keep in mind.
+- `common` (dataset, persona, report) is read by every entry point
+- `llm` (provider, base_url, model, max_tokens, temperature, timeout, context_budget, retry_max_attempts, retry_backoff_seconds, anthropic_cache_control, extra_chat_kwargs, streaming) is read only by CLI and MCP server. MCP orchestrator never calls a server-side LLM, so this section is ignored
+- `batch` (concurrency, partial_failure_threshold) is read only by CLI and MCP server. MCP orchestrator follows the host's sub-agent policy
+- `heuristics` (short_answer_threshold, english_ratio_threshold, ambiguous_keywords, refusal_keywords, auto_follow_up_text, auto_follow_up_max, occupation_english_whitelist, llm_drift_review) is auto-applied on CLI and MCP server. MCP orchestrator surfaces the same thresholds via the helper tools (`detect_persona_drift`, `should_auto_follow_up`) and only takes effect when the host explicitly calls them
+- `mcp` (mode) is read only by the MCP entry point. CLI ignores it
+- `output` (output_dir, log_level, no_color) is read by every entry point
 
-- Quality. Persona drift is calibrated against `gpt-4o-mini`; other targets may need tuned thresholds. Validate on a small batch first
-- Privacy. The `--product` text and persona metadata are sent to whichever endpoint you configure. Do not put unreleased IP or PII into `--product` (see Limitations)
-- Token tracking. OpenAI and Anthropic responses include token usage and the tool tracks both. Local servers that do not return `usage` and the MCP sampling path both report zero usage
+### Tool exposure by mode
 
-### Option A: MCP server (recommended)
+The MCP entry point exposes a different tool set in each mode.
 
-The project ships a Model Context Protocol (MCP) server that exposes the four CLI commands as tools. Once registered in the agent's `mcp.json`, the agent can call them by name from natural-language prompts (for example "1인 가구 대상 반찬 정기배송 30명 인터뷰 돌려줘").
+| Tool | MCP server | MCP orchestrator | Notes |
+| --- | --- | --- | --- |
+| `healthcheck` | yes | yes | server mode pings the provider; orchestrator mode returns ok + cwd |
+| `list_personas` | yes | yes | preview personas matching a filter |
+| `interview` | yes | no (blocked) | server-side batch interview. orchestrator mode points the caller at `build_batch_prompts` instead |
+| `report` | yes | yes | server mode runs the qualitative-insight LLM call; orchestrator mode skips it (fallback message) |
+| `build_persona_prompt` | no | yes | returns system prompt + persona dict for one persona |
+| `build_batch_prompts` | no | yes | returns system prompts for N personas (host sub-agent fan-out) |
+| `aggregate_results` | no | yes | takes records from the host and emits the markdown report |
+| `detect_persona_drift` | yes | yes | helper. CLI and MCP server auto-apply; MCP orchestrator must invoke explicitly |
+| `should_auto_follow_up` | yes | yes | helper. same applies |
+| `parse_structured_summary` | yes | yes | helper. parses the LLM's structured-summary JSON |
+| `interview_record_schema` | yes | yes | helper. returns the record schema and an example for the host |
 
-The server speaks JSON-RPC over stdio. Logs flow to stderr and `outputs/logs/run_*.jsonl`, so they do not pollute the stdio channel that the agent reads.
+Every response (success and error) carries `"backend": "mcp_server"` or `"backend": "mcp_orchestrator"`. On failure the envelope has the shape `{"ok": false, "backend": "...", "error": {"code": "...", "message": "...", "exit_code": N}}`.
 
-Pick a mode before you register the server. The toggle lives in `config.yaml` under `mcp.mode`.
+### Where to keep the API key
 
-- `mcp.mode: "server"` (default). Server-side OpenAI or Anthropic calls. The provider API key (`OPENAI_API_KEY` or `ANTHROPIC_API_KEY`) must be reachable from the server process. Recommended path is a project-root `.env` file (see "Where to keep the API key" below). Works in any MCP client today, including hosts that do not advertise the sampling capability
-- `mcp.mode: "sampling"`. Inference is delegated to the host agent via `sampling/createMessage`. No server-side API key required, but the host must advertise the sampling capability. As of 2026-04 only some Cursor builds advertise it; Claude Code Desktop release builds and cmux do not yet
+In MCP server mode, the recommended pattern is a `.env` file at the project root. The tool's stdlib `.env` loader uses `setdefault` semantics, so a key already exported in the shell wins, and otherwise `.env` populates the process environment when the MCP server boots. `.env` is gitignored, isolated per project, and stays out of the agent's mcp.json file. Adding an `env` block to mcp.json still works (the secret resolver reads OS environment variables first) but the key ends up in plaintext inside the agent's config and is more likely to leak through git, dotfile sync, or screenshots. The example mcp.json files below ship without an `env` block for this reason. MCP orchestrator mode does not need a key in either location.
 
-There is no automatic fallback between modes. The chosen path is reflected on every response as `"backend": "mcp_server"` or `"backend": "mcp_sampling"`. ADR-004 captures the rationale.
-
-Where to keep the API key. The recommended pattern is a `.env` file at the project root. The tool's stdlib `.env` loader uses `setdefault` semantics, so a key already exported in the shell wins, and otherwise `.env` populates the process environment when the MCP server boots. `.env` is gitignored, isolated per project, and stays out of the agent's mcp.json file. Adding an `env` block to mcp.json still works (the secret resolver reads OS environment variables first) but the key ends up in plaintext inside the agent's config and is more likely to leak through git, dotfile sync, or screenshots. The example mcp.json files below ship without an `env` block for this reason. Sampling mode does not need a key in either location.
+### Registering the MCP entry point
 
 Run the server manually to verify it starts.
 
@@ -512,7 +522,7 @@ Run the server manually to verify it starts.
 python -m src.mcp_server
 ```
 
-Register it in Claude Code by adding the snippet below to `~/.claude/mcp.json` (create the file if it does not exist). The `cwd` must point at the project root so that `config.yaml`, `prompts/system_prompt.txt`, `.env`, and `outputs/` resolve correctly.
+Register it in Claude Code by adding the snippet below to `~/.claude/mcp.json` (create the file if it does not exist). The `cwd` must point at the project root so that `config.yaml`, `prompts/system_prompt.txt`, `.env`, and `outputs/` resolve correctly. The same shape covers both `mcp.mode` values - the mode is decided at startup from `config.yaml`.
 
 ```json
 {
@@ -540,20 +550,40 @@ Register it in Cursor by adding the snippet below to `.cursor/mcp.json` at the p
 }
 ```
 
-The same shape covers both `mcp.mode` values. In server mode, drop your `OPENAI_API_KEY` (or `ANTHROPIC_API_KEY`) into the project's `.env` before the first run; in sampling mode no key is needed. Drop-in copies of both files live under [examples/mcp/](examples/mcp/).
+In MCP server mode, drop your `OPENAI_API_KEY` (or `ANTHROPIC_API_KEY`) into the project's `.env` before the first run; in MCP orchestrator mode no key is needed. Drop-in copies live under [examples/mcp/](examples/mcp/).
 
-The four tools exposed are below. Each tool returns a single JSON document. Every successful and error response carries a `backend` field (`"mcp_server"` or `"mcp_sampling"`). On failure the envelope has the shape `{"ok": false, "backend": "...", "error": {"code": "...", "message": "...", "exit_code": N}}`.
+### MCP server mode (default) usage
 
-| Tool | Purpose | Required arguments |
-| --- | --- | --- |
-| `healthcheck` | Verify provider reachability (server mode) or sampling capability (sampling mode) | (none) |
-| `list_personas` | Preview personas matching a filter | (none) |
-| `interview` | Run a batch interview, write the result JSON, return summary | `product`, `questions` |
-| `report` | Generate a markdown report from a result JSON | `json_path` |
+A natural-language example: ask the agent "1인 가구 대상 반찬 정기배송 (월 39,900원)을 25-39세 서울 30명에게 인터뷰 돌리고 리포트까지 만들어 줘" and it will call `interview` then `report` back-to-back, returning the markdown path. The interview tool runs the batch on the server side using your `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`.
 
-A natural-language example: ask the agent "1인 가구 대상 반찬 정기배송 (월 39,900원)을 25-39세 서울 30명에게 인터뷰 돌리고 리포트까지 만들어 줘" and it will call `interview` then `report` back-to-back, returning the markdown path.
+### MCP orchestrator mode usage
 
-### Option B: --json mode (one-shot calls)
+The host agent owns the LLM. The flow is below.
+
+1. Call `build_batch_prompts` with `product`, `questions`, `n` (and optionally `filter`, `seed`, `persona_ids`). The tool returns N system prompts plus persona dicts
+2. The host fan-outs N sub-agents (one per persona). Each sub-agent uses its own LLM with the returned system prompt as the system message and the questions as user turns. The host can also call `should_auto_follow_up` and `detect_persona_drift` between turns to keep behavior parity with the CLI heuristic
+3. After the LLM call the host calls `parse_structured_summary` on the LLM's structured-summary text to get a normalized dict, then assembles a record per `interview_record_schema`
+4. The host calls `aggregate_results` with the assembled `records`. The tool runs the quantitative aggregation and writes the markdown report to disk. Qualitative insights default to a fallback message; if the host already produced its own qualitative summary it can pass it as `insights` to be embedded in the report
+
+Pseudocode for the host workflow.
+
+```text
+prompts = mcp.call("build_batch_prompts", {
+  "product": "...", "questions": [...], "n": 30, "seed": 42,
+})
+records = []
+for p in prompts.prompts:
+  llm_responses = host_sub_agent.run(p.system_prompt, p.questions)
+  for response in llm_responses:
+    if mcp.call("should_auto_follow_up", {"text": response}).should_follow_up:
+      llm_responses += host_sub_agent.follow_up(...)
+    drift = mcp.call("detect_persona_drift", {"text": response, "persona_meta": p.persona_meta}).is_drift
+    summary = mcp.call("parse_structured_summary", {"raw_response": last_summary_call}).structured_summary
+    records.append({...})  # see interview_record_schema for shape
+mcp.call("aggregate_results", {"records": records, "product": "...", "output_dir": "outputs/"})
+```
+
+### --json mode for shell scripts
 
 For agents that drive a CLI directly (or for shell scripts), pass `--json` at the root group. The mode disables tqdm progress, ANSI color, and the Korean `[OK]/[INFO]/[ERR]` labels, and emits a single JSON document on stdout. Logs continue to flow to stderr and `outputs/logs/run_*.jsonl`.
 
@@ -598,7 +628,8 @@ korea-persona-interview/
 │   ├── config.py              # AppConfig dataclass, yaml + env layered loader
 │   ├── console.py             # Korean message bank, ANSI color helper
 │   ├── interview.py           # Multi-turn session, drift/refusal detection, structured summary
-│   ├── llm_backend.py         # LLMBackend protocol, OpenAIBackend, McpSamplingBackend
+│   ├── llm_backend.py         # LLMBackend protocol, OpenAIBackend, AnthropicBackend
+│   ├── mcp_handlers/          # Per-mode MCP tool handlers (common, server, orchestrator, helpers)
 │   ├── llm_client.py          # Async OpenAI Chat Completions client (httpx)
 │   ├── load_personas.py       # Dataset loader, filter DSL, seeded sampler, persona-pool cache
 │   ├── logging_setup.py       # JSON Lines logger, request_id, masking
@@ -607,7 +638,7 @@ korea-persona-interview/
 │   └── report.py              # Quantitative aggregation, qualitative insight via LLM
 ├── tests/
 │   ├── conftest.py            # Shared fixtures, env isolation, dataset mock
-│   ├── test_*.py              # 571 tests (rounds A-G regression + v1.1.1 mcp.mode toggle: backends, persona id pinning, resume, streaming, drift judge, mcp dispatch in server/sampling modes)
+│   ├── test_*.py              # regression suite (rounds A-G + v1.1.1 mcp.mode toggle + v1.2.0 orchestrator/sampling-removal: backends, persona id pinning, resume, streaming, drift judge, mcp dispatch in server/orchestrator modes)
 │   └── manual/smoke_e2e.py    # Live OpenAI smoke test (excluded from default run)
 ├── examples/
 │   └── mcp/                   # Drop-in mcp.json snippets for Claude Code and Cursor
@@ -641,7 +672,7 @@ Run the full test suite with pytest. The suite mocks the OpenAI API with `pytest
 pytest tests/ -v
 ```
 
-The current regression covers 571 tests including OpenAI, Anthropic Claude, MCP sampling, and MCP server-mode backend coverage (config, filter DSL, persona loader, LLM client, LLM backend selection, interview session, persona drift, batch runner, report quant, MCP dispatch in both modes, error messages, logging, and CLI integration).
+The current regression covers OpenAI, Anthropic Claude, MCP server, and MCP orchestrator coverage (config, filter DSL, persona loader, LLM client, LLM backend selection, interview session, persona drift, batch runner, report quant, MCP dispatch in both modes, MCP orchestrator helper tools, error messages, logging, and CLI integration). See `tests/test_mcp_orchestrator.py` for the v1.2.0 orchestrator dispatch coverage.
 
 Manual smoke tests that exercise a real LLM API call live under `tests/manual/` and are excluded from the default run. They expect `OPENAI_API_KEY` (or `ANTHROPIC_API_KEY`) in the environment.
 
@@ -667,7 +698,7 @@ Legal and ethical review of the output is the user's responsibility. The tool do
 
 Specific limitations to note for v1.1.
 
-- Streaming responses (`llm.streaming: true`) cover the OpenAI provider only. The Anthropic provider and the MCP sampling path do not stream
+- Streaming responses (`llm.streaming: true`) cover the OpenAI provider only. The Anthropic provider does not stream (MCP orchestrator mode does not use this setting because the host agent owns the LLM call)
 - LLM-as-judge drift refinement (`interview.llm_drift_review: true`) is opt-in because it adds a small extra LLM call per drift candidate. The default heuristic-only path keeps the cost predictable
 - Schema bumped from v1 to v2 in v1.1.0 with the new `acceptable_price_signal` field. v1 result JSONs still load on v1.1.0+ (the loader fills `acceptable_price_signal=null`), but v1.1.0+ result JSONs cannot be read by older v1.0.x consumers
 - The `--persona-id` flag re-fetches the dataset to filter by uuid, so the persona-pool cache does not help on that path. Repeated calls with the same id list will still re-read the parquet files
@@ -679,7 +710,7 @@ A short list of v1.2.0 candidates, full details in [docs/backlog/v1.2.0.md](docs
 - FastAPI REST API on top of the same application layer
 - OpenAI Batch API path for offline runs
 - Multi-model A/B routing (run the same persona sample on two different models and diff the outputs)
-- Provider quality validation report (golden-dataset drift measurement for OpenAI, Anthropic, local LLM, MCP sampling)
+- Provider quality validation report (golden-dataset drift measurement for OpenAI, Anthropic, local LLM)
 - macOS Keychain / Linux libsecret / Windows Credential Manager integration for API keys
 - Per-record streaming write to disk so OOM/crash mid-batch loses fewer records than the SIGINT partial save
 

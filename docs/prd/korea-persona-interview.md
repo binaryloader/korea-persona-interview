@@ -268,7 +268,7 @@ CLI는 4개 서브커맨드를 제공한다. 매크로 명령(예: `run-all`)은
 - 100명 인터뷰 1회를 5-10분 이내에 완료한다(질문 5개, 동시성 4 가정). gpt-4o-mini 기준 한 턴 응답이 약 1-3초로 추정되며 동시성 4-10 구간은 OpenAI rate limit 여유 안에서 처리량을 크게 끌어올린다. v1.0의 30분 SLO는 로컬 MLX 시절 보수 추정치였고 v1.x OpenAI 백엔드에서는 5-10분 SLO로 갱신한다
 - 데이터셋 첫 로드는 5분 이내에 완료한다(`~/.cache/huggingface` 캐시 활용). 두 번째 실행부터는 30초 이내에 시작한다
 - 동시성 기본값은 4로 둔다. `asyncio.Semaphore(4)` 기준이다. 사용자가 `--concurrency` 옵션으로 1-10 범위에서 조정할 수 있다. 11 이상은 차단한다(OpenAI rate limit 부하 방지). v1.0 시절 1-3 범위는 로컬 MLX 메모리 가드였고, OpenAI 백엔드에서는 메모리 가드가 무관해 1-10으로 상향했다
-- v1.1.0부터 OpenAI 호환 streaming 응답을 옵션(`llm.streaming: true`, 기본 OFF)으로 지원한다. 첫 토큰 시간이 빨라지지만 일부 호환 서버는 SSE 형식이 미묘하게 다르므로 default OFF를 유지한다. provider=anthropic이나 MCP sampling 경로에서는 무시된다
+- v1.1.0부터 OpenAI 호환 streaming 응답을 옵션(`llm.streaming: true`, 기본 OFF)으로 지원한다. 첫 토큰 시간이 빨라지지만 일부 호환 서버는 SSE 형식이 미묘하게 다르므로 default OFF를 유지한다. provider=anthropic 또는 MCP orchestrator 모드에서는 무시된다(MCP orchestrator는 호스트 sub-agent가 LLM 호출을 소유하므로 본 옵션과 무관하다)
 
 ### 6.2. 신뢰성
 
@@ -302,10 +302,11 @@ CLI는 4개 서브커맨드를 제공한다. 매크로 명령(예: `run-all`)은
   - OpenAI Chat Completions API(기본)
   - Anthropic Messages API(`provider=anthropic`)
   - OpenAI 호환 로컬 서버(mlx_lm.server, vLLM, llama.cpp 등). `provider=openai` + `--base-url` override
-- MCP 서버 진입점은 `mcp.mode` 토글로 두 경로를 노출한다(ADR-004). 자동 fallback은 두지 않는다
+- MCP 진입점은 `mcp.mode` 토글로 두 경로를 노출한다(ADR-005). 자동 fallback은 두지 않는다. v1.2.0(ADR-005)에서 `mcp.mode: "sampling"`은 제거됐고 `mcp.mode: "orchestrator"`가 신설됐다
   - `mcp.mode: "server"`(기본)는 server-side OpenAI/Anthropic 백엔드를 사용한다. CLI와 동일한 `LlmConfig`를 그대로 활용하므로 mcp.json env에 `OPENAI_API_KEY` 또는 `ANTHROPIC_API_KEY`가 필요하다. 응답 라벨은 `mcp_server`다
-  - `mcp.mode: "sampling"`은 호스트 LLM에 `sampling/createMessage`로 위임한다. server-side 키가 필요 없다. 응답 라벨은 `mcp_sampling`이다
-- 인터넷 접근은 직접 호출 provider(OpenAI/Anthropic)와 데이터셋 첫 로드 시 Hugging Face Hub에 한해 필요하다. 로컬 LLM 또는 MCP sampling 경로는 인터넷 없이도 인터뷰가 가능하다(데이터셋 캐시 필요)
+  - `mcp.mode: "orchestrator"`는 server-side에서 LLM을 호출하지 않는다. 호스트 sub-agent가 자기 LLM으로 인터뷰를 수행하고, 본 도구는 데이터/프롬프트 helper만 노출한다. server-side 키 불필요. 응답 라벨은 `mcp_orchestrator`다
+- 진입점은 셋이다. CLI, MCP server, MCP orchestrator. 어떤 진입점이 사용되었는지에 따라 노출되는 도구 집합과 LLM 호출 위치가 달라진다(상세 매트릭스는 README와 INDEX §3.4)
+- 인터넷 접근은 직접 호출 provider(OpenAI/Anthropic)와 데이터셋 첫 로드 시 Hugging Face Hub에 한해 필요하다. 로컬 LLM 또는 MCP orchestrator 경로는 server-side에서 인터넷 없이도 동작 가능하다(데이터셋 캐시 필요. 호스트 sub-agent가 호출하는 LLM은 호스트 정책을 따른다)
 - 의존성은 `httpx`, `datasets`, `pyyaml`, `tqdm`, `click`, `mcp`로 한정한다. `openai`/`anthropic` SDK는 도입하지 않는다(`dependency.md` §1 leftpad 안티패턴 회피와 직접 통제 목적). `mlx-lm` 의존도 v1에서 제거했다
 - 모든 의존성 버전은 `requirements.txt`에 안정 버전으로 고정하고 lock 파일을 함께 커밋한다(`dependency.md` §2)
 
@@ -435,8 +436,8 @@ CLI는 4개 서브커맨드를 제공한다. 매크로 명령(예: `run-all`)은
 
 ### 10.9. provider별 응답 품질 차이
 
-- 위험: ADR-003 채택으로 OpenAI/Anthropic/로컬 LLM/MCP sampling 네 경로가 활성화되었지만 페르소나 일관성과 drift 비율은 `gpt-4o-mini` 기준으로만 검증된 상태다. 다른 provider 또는 모델로 전환했을 때 페르소나 추종력이 달라질 수 있다
-- 완화: README "Choosing a model" 섹션에 검증 기준을 명시하고, 새 provider 도입 시 작은 표본(10-20명)으로 drift 비율을 먼저 측정하도록 안내한다. v1.2.0 백로그에 provider별 검증 보고서 작업을 등록한다
+- 위험: ADR-003 채택으로 OpenAI/Anthropic/로컬 LLM 진입점이 활성화되었고 ADR-005에서 MCP orchestrator 모드가 추가되었다. 페르소나 일관성과 drift 비율은 `gpt-4o-mini` 기준으로만 검증된 상태다. 다른 provider 또는 모델, 호스트 sub-agent의 LLM(MCP orchestrator)으로 전환했을 때 페르소나 추종력이 달라질 수 있다. MCP orchestrator 모드에서는 휴리스틱이 자동 적용되지 않으므로 호스트가 helper 도구(`detect_persona_drift`, `should_auto_follow_up`)를 명시 호출하지 않으면 drift/follow-up 정책이 누락될 수 있다는 위험이 추가된다
+- 완화: README "Choosing a model" 섹션에 검증 기준을 명시하고, 새 provider 도입 시 작은 표본(10-20명)으로 drift 비율을 먼저 측정하도록 안내한다. MCP orchestrator 사용자에게는 README "Integration with External Agents" 섹션의 의사코드와 `interview_record_schema` 도구로 helper 호출 흐름을 명시 안내한다. v1.2.0 백로그에 provider별 검증 보고서 작업을 등록한다
 
 데이터셋 실제 컬럼명 확정은 dev-planner가 TDD 작성 전에 `datasets.load_dataset(..., streaming=True)`로 1샘플만 로드해 컬럼 키와 값 표기를 직접 확인한 뒤 TDD에 매핑값(예: `gender_field: sex`, `region_field: residence_region`)까지 박는 방식으로 처리한다. 게이트 2(§5.10)는 구현 단계 휴먼 검증으로 그대로 유지하며, 두 단계가 중복되어도 비용이 거의 없으므로 안전망으로 둘 다 운영한다.
 

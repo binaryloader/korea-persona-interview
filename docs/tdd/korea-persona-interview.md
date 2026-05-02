@@ -154,7 +154,7 @@ architecture.md §1의 계층 분리 원칙을 단일 도메인 CLI에 맞춰 4�
 - presentation 계층은 click 기반 CLI인 main.py와 src/cli_views.py(페르소나 표 렌더, --json dict 변환), src/console.py(메시지 사전, ANSI 컬러 헬퍼), src/dry_run.py(--dry-run 콘솔 덤프)다. main.py는 click 라우팅에 집중하고 dry-run/표 렌더 같은 presentation 보조는 별도 모듈로 분리한다(라운드 G, B6 결과)
 - application 계층은 src/interview.py, src/batch.py, src/report.py 세 파일이며 유스케이스를 오케스트레이션한다
 - domain 계층은 src/models.py에 정의된 dataclass와 도메인 예외, 그리고 src/load_personas.py 안의 PersonaFilter 클래스(도메인 규칙)다. v1.1.0에서 schema_version을 1에서 2로 올리고 `StructuredSummary.acceptable_price_signal` 필드를 신설했다
-- infrastructure 계층은 외부 LLM HTTP를 다루는 src/llm_client.py(LLMClient. v1.0의 MlxLLMClient → LLMClient 리네임)와 src/llm_backend.py(LLMBackend protocol, OpenAIBackend, AnthropicBackend, McpSamplingBackend), HF datasets를 다루는 src/load_personas.py의 데이터셋 로더, 그리고 src/logging_setup.py와 src/config.py다. src/_prompts/ 패키지는 시스템 프롬프트 템플릿을 패키지 리소스로 fallback 제공한다(pip-installed 환경 호환)
+- infrastructure 계층은 외부 LLM HTTP를 다루는 src/llm_client.py(LLMClient. v1.0의 MlxLLMClient → LLMClient 리네임)와 src/llm_backend.py(LLMBackend protocol, OpenAIBackend, AnthropicBackend), HF datasets를 다루는 src/load_personas.py의 데이터셋 로더, 그리고 src/logging_setup.py와 src/config.py다. src/_prompts/ 패키지는 시스템 프롬프트 템플릿을 패키지 리소스로 fallback 제공한다(pip-installed 환경 호환). v1.2.0(ADR-005)부터 MCP 도구 핸들러는 src/mcp_handlers/ 패키지에 mode별로 분리되어 있다. common(list_personas, report) / server(healthcheck, interview) / orchestrator(healthcheck, build_persona_prompt, build_batch_prompts, aggregate_results) / helpers(detect_persona_drift, should_auto_follow_up, parse_structured_summary, interview_record_schema) 4개 모듈로 나뉘며 _payloads.py와 _setup.py가 공통 봉투/setup helper를 둔다. McpSamplingBackend는 v1.2.0에서 제거됐다(ADR-005)
 
 의존성 방향은 main → batch/report → interview → llm_backend → llm_client → models 한 방향이다. 순환 의존을 두지 않는다.
 
@@ -254,7 +254,7 @@ MCP(Model Context Protocol) 서버 진입점이다. 라운드 C1에서 추가했
 
 - 공식 `mcp` Python SDK(1.27.0) 위에 stdio JSON-RPC 서버를 띄운다. 직접 JSON-RPC 구현 대신 표준 호환성과 SDK lifecycle 처리에 의존하기 위함이다(dependency.md §1, leftpad 회피)
 - 4개 도구를 노출한다. 도구명은 MCP 관례인 snake_case다. 도구 이름은 `healthcheck`, `list_personas`, `interview`, `report`다. `list-personas` CLI와 표기가 다른 것은 도구 호출 명세가 식별자이기 때문이다
-- 추론 경로는 `config.yaml`의 `mcp.mode`로 명시 선택한다. `_build_backend(config)` 함수가 mode 분기를 처리하며 자동 fallback은 없다(ADR-004)
+- 추론 경로는 `config.yaml`의 `mcp.mode`로 명시 선택한다. `dispatch_tool` 함수가 mode와 도구 이름 튜플로 핸들러를 분기하며 자동 fallback은 두지 않는다(ADR-005)
   - `mode == "server"`(기본): `build_cli_backend(config.llm)`로 `OpenAIBackend`나 `AnthropicBackend`를 만든다. server-side에 `OPENAI_API_KEY` 또는 `ANTHROPIC_API_KEY`가 필요하다
   - `mode == "sampling"`: 활성 MCP 세션을 `McpSamplingBackend`에 감싼다. 세션 부재 시 ConfigError + CLI fallback 안내(`python main.py interview ...` 또는 `mcp.mode: "server"` 전환 안내)로 차단된다
 - 각 도구는 application 계층(`run_batch`, `generate_report`, `LLMClient`)을 그대로 재사용한다. 도구 응답은 `{"ok": true, "backend": "...", ...}` 또는 `{"ok": false, "backend": "...", "error": {"code", "message", "exit_code"}}` 두 형태 중 하나로 통일하며, 한국어를 보존한 JSON 텍스트로 `TextContent`에 담는다. `backend` 라벨은 정상/에러 응답 모두에 일관 박힌다(`mcp_server` 또는 `mcp_sampling`). 단 `load_config` 자체가 실패해 모드 결정 전에 차단되면 `backend` 필드는 빠진다
@@ -754,9 +754,9 @@ dependency.md §1 leftpad 안티패턴 회피와 직접 통제 목적으로 아�
 | --- | --- | --- | --- |
 | `openai` (공식 + 호환 로컬 서버) | `POST {base_url}/chat/completions` | `Authorization: Bearer ${OPENAI_API_KEY}` | OpenAI 표준 messages 배열, system은 messages 안에 둠 |
 | `anthropic` | `POST {base_url}/messages` | `x-api-key: ${ANTHROPIC_API_KEY}` + `anthropic-version: 2023-06-01` | top-level `system` 필드, messages는 user/assistant만 |
-| MCP sampling (host 위임, `mcp.mode: "sampling"`) | host agent의 `sampling/createMessage` | 없음(MCP 세션에 의존) | OpenAI messages → SamplingMessage 변환, system은 system_prompt 인자 분리 |
+| MCP orchestrator (host 위임, `mcp.mode: "orchestrator"`) | host sub-agent의 자기 LLM | 없음(server-side 호출 없음) | 본 도구는 시스템 프롬프트와 페르소나 dict만 build_persona_prompt/build_batch_prompts로 넘기고, 호스트가 record를 모아 aggregate_results로 리포트 생성 |
 
-MCP 서버 진입점은 두 모드를 노출한다(ADR-004). `mcp.mode: "server"`(기본)는 위 표의 OpenAI 또는 Anthropic 계약을 server-side에서 그대로 호출한다. `mcp.mode: "sampling"`은 표의 마지막 행을 사용한다.
+MCP 진입점은 두 모드를 노출한다(ADR-005). `mcp.mode: "server"`(기본)는 위 표의 OpenAI 또는 Anthropic 계약을 server-side에서 그대로 호출한다. `mcp.mode: "orchestrator"`는 server-side LLM 호출 없이 표의 마지막 행처럼 호스트 sub-agent에 인터뷰를 위임한다.
 
 §12.1, §12.2는 OpenAI 계약을 구체적으로 기술한다. Anthropic 계약 차이는 `src/llm_backend.py`의 `AnthropicBackend`에 구현되어 있다.
 
@@ -764,7 +764,7 @@ MCP 서버 진입점은 두 모드를 노출한다(ADR-004). `mcp.mode: "server"
 
 - CLI 진입점은 모든 `llm.*` 필드를 그대로 HTTP 요청에 반영한다. provider, base_url, model, api_key, streaming, extra_chat_kwargs, anthropic_cache_control, timeout, retry_max_attempts, retry_backoff_seconds 모두 적용된다
 - MCP 서버 진입점에서 `mcp.mode: "server"`이면 모든 `llm.*` 필드가 CLI와 동일하게 적용된다. server-side `OpenAIBackend`나 `AnthropicBackend`가 같은 코드 경로로 호출되기 때문이다
-- MCP 서버 진입점에서 `mcp.mode: "sampling"`이면 백엔드 식별과 transport를 호스트 에이전트가 소유한다. 따라서 provider, base_url, model, api_key, streaming, extra_chat_kwargs, anthropic_cache_control, timeout, retry_max_attempts, retry_backoff_seconds는 모두 무시된다. `McpSamplingBackend.chat`이 호스트의 `sampling/createMessage`에 전달하는 파라미터는 4개뿐이다. messages를 SamplingMessage로 변환한 결과, max_tokens, system_prompt, temperature가 그것이다. 따라서 max_tokens와 temperature만 양쪽 모드에서 동일하게 적용된다
+- MCP 진입점에서 `mcp.mode: "orchestrator"`이면 server-side에서 LLM을 호출하지 않으므로 `llm.*` 섹션 전체가 본 모드에서는 무시된다(provider, base_url, model, api_key, streaming, extra_chat_kwargs, anthropic_cache_control, timeout, retry_max_attempts, retry_backoff_seconds, max_tokens, temperature 모두). 본 도구는 build_persona_prompt와 build_batch_prompts로 시스템 프롬프트와 페르소나 dict만 호스트에게 넘기고, 호스트 sub-agent가 자기 LLM으로 인터뷰를 수행한 뒤 record를 aggregate_results로 도로 넘긴다. context_budget도 호스트 sub-agent가 자체 truncation을 적용하므로 본 모드에서는 server-side에서 적용되지 않는다(필요 시 호스트가 직접 처리)
 - context_budget은 `truncate_history`에서 messages 배열을 자르기 전에 모든 진입점과 모드에서 평가된다. system 메시지는 절대 truncate되지 않으며 가장 오래된 user/assistant 페어부터 제거된다
 
 #### 12.1. 헬스체크
@@ -837,7 +837,7 @@ OpenAI gpt-4o-mini는 EOS 토큰 인식이 안정적이라 토큰 루프 사례(
 
 security.md §1(시크릿), §3(입력 검증), §4(데이터 보호)와 PRD §6.3(보안과 개인정보), ADR-002, ADR-003을 따른다.
 
-- API 키는 provider에 따라 두 가지 환경변수에서 로드한다. provider가 openai면 `OPENAI_API_KEY`를 쓰고 fallback은 `KPI_OPENAI_API_KEY`다. provider가 anthropic이면 `ANTHROPIC_API_KEY`다. 코드/설정/.env 파일/로그에 하드코딩하지 않는다(security.md §1). MCP 서버 진입점은 `mcp.mode`에 따라 다르다. `mcp.mode: "server"`(기본)는 server-side 키가 필요하고 mcp.json env에 박아 주어야 한다. `mcp.mode: "sampling"`은 server-side 키가 불필요하다(호스트 LLM 위임). 두 경로 모두 yaml/CLI에 키를 적지 않는 정책은 동일하다
+- API 키는 provider에 따라 두 가지 환경변수에서 로드한다. provider가 openai면 `OPENAI_API_KEY`를 쓰고 fallback은 `KPI_OPENAI_API_KEY`다. provider가 anthropic이면 `ANTHROPIC_API_KEY`다. 코드/설정/.env 파일/로그에 하드코딩하지 않는다(security.md §1). MCP 진입점은 `mcp.mode`에 따라 다르다. `mcp.mode: "server"` 모드(기본)는 server-side 키가 필요하고 mcp.json env 또는 `.env`에 박아 주어야 한다. `mcp.mode: "orchestrator"` 모드는 server-side 키가 불필요하다(호스트 sub-agent가 자기 LLM 호출). 두 경로 모두 yaml/CLI에 키를 적지 않는 정책은 동일하다
 - 인증 헤더는 provider에 따라 다르다. OpenAI는 `Authorization: Bearer ${OPENAI_API_KEY}`이고 Anthropic은 `x-api-key: ${ANTHROPIC_API_KEY}` + `anthropic-version: 2023-06-01`이다. 로그 출력 시 둘 다 마스킹한다(logging.md §2)
 - `base_url`은 OpenAI 엔드포인트(`https://api.openai.com/v1`)를 기본 허용한다. ADR-002 이전의 localhost-only chat 가드는 OpenAI 백엔드 전환과 함께 제거한다. 다만 잘못된 base_url(예: 오타로 다른 도메인 지정)에 키와 사업 아이템이 송신되는 사고를 막기 위해 base_url을 INFO 로그에 명시 출력하여 사용자가 실행 직후 검증할 수 있게 한다. 향후 사용자 정의 OpenAI 호환 엔드포인트(예: Azure OpenAI, 사내 프록시) 지원이 필요하면 별도 ADR로 도입한다
 - product 본문 마스킹은 로그에 `mask_product()`를 적용한다(첫 30자 + 길이). 결과 JSON에는 원문 그대로 저장한다(로컬 파일이므로 외부 노출 위험 없음). 단 product 본문은 사용자가 설정한 LLM 백엔드(OpenAI / Anthropic / 로컬 LLM / MCP 호스트 에이전트)로 송신되므로 사용자가 실행 전 인지해야 한다(README와 도구 첫 실행 메시지에서 명시)

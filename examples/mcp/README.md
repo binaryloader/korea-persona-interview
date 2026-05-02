@@ -11,44 +11,73 @@ Both examples assume Python 3.12 and a `uv`-managed virtual environment at `.ven
 
 ## 2. Pick a mode
 
-The MCP server runs in one of two modes, selected in `config.yaml` under `mcp.mode`. ADR-004 captures the rationale.
+The MCP entry point runs in one of two modes, selected in `config.yaml` under `mcp.mode`. ADR-005 captures the rationale (sampling mode was removed in v1.2.0 because mainstream MCP clients do not advertise the capability).
 
-- `mcp.mode: "server"` (default). The server invokes OpenAI or Anthropic directly from its own process, using the same `LlmConfig` the CLI uses. The provider API key must be reachable from the server process. The recommended pattern is a project-root `.env` file that the tool auto-loads. See section 3 for where to put the key
-- `mcp.mode: "sampling"`. The server delegates inference to the host agent through `sampling/createMessage`. No server-side API key needed, but the host must advertise the sampling capability. As of 2026-04 mainstream Claude Code Desktop release builds and cmux do not advertise it; some Cursor builds do. To opt in, edit `config.yaml` to set `mcp.mode: "sampling"`. The example mcp.json files in this directory work for both modes because they only declare `cwd` and let the tool source the key from `.env` when needed
+- `mcp.mode: "server"` (default). The MCP server invokes OpenAI or Anthropic directly from its own process, using the same `LlmConfig` the CLI uses. The provider API key must be reachable from the server process. The recommended pattern is a project-root `.env` file that the tool auto-loads. See section 3 for where to put the key
+- `mcp.mode: "orchestrator"`. The MCP entry point runs in orchestrator mode and exposes data and prompt helpers (`build_persona_prompt`, `build_batch_prompts`, `aggregate_results`) plus heuristic helpers (`detect_persona_drift`, `should_auto_follow_up`, `parse_structured_summary`, `interview_record_schema`). The host agent's sub-agent does the LLM work using its own LLM. No server-side API key is required. The `interview` tool is not exposed in this mode (use `build_batch_prompts` plus host sub-agent plus `aggregate_results` instead)
 
-There is no automatic fallback between modes. Every tool response carries an explicit `"backend": "mcp_server"` or `"backend": "mcp_sampling"` label so you can confirm which path handled the call.
+There is no automatic fallback between modes. Every tool response carries an explicit `"backend": "mcp_server"` or `"backend": "mcp_orchestrator"` label so you can confirm which path handled the call.
+
+The example mcp.json files in this directory work for both modes because they only declare `cwd` and let the tool source the API key from `.env` when MCP server mode needs one.
 
 ## 3. Where to keep the API key
 
-The recommended pattern is a `.env` file at the project root. Server mode needs `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`; sampling mode needs no server-side key at all. Pick exactly one of the options below.
+The recommended pattern is a `.env` file at the project root. MCP server mode needs `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`; MCP orchestrator mode needs no server-side key at all. Pick exactly one of the options below.
 
 - Recommended. Create `.env` at the project root with `OPENAI_API_KEY=sk-...` (or `ANTHROPIC_API_KEY=sk-ant-...`). The tool's stdlib `.env` loader uses `setdefault` semantics, so the key is promoted into the process environment when the MCP server boots. `.env` is gitignored, kept out of backups by default, and isolated per project. The example mcp.json files in this directory rely on this path
 - Possible but not recommended. Export the key in your shell (`export OPENAI_API_KEY=sk-...`) before launching the MCP host, or add an `env` block to mcp.json (`"env": {"OPENAI_API_KEY": "sk-..."}`). Both still work because the tool's secret resolver reads OS environment variables first. The mcp.json `env` block in particular stores the key in plaintext inside the agent's config, which is more likely to leak through git, dotfile sync, or screenshots. Avoid unless you have a specific reason to override `.env`
 
-Sampling mode does not need a key in any of these locations because inference runs on the host agent's plan.
+MCP orchestrator mode does not need a key in any of these locations because inference runs on the host agent's plan.
 
 ## 4. Installation
 
-Replace every `/absolute/path/to/korea-persona-interview` with the real project path on your machine. Then copy the file content into the agent's MCP config location and restart the agent. Drop your provider API key into a `.env` at the project root before the first run.
+Replace every `/absolute/path/to/korea-persona-interview` with the real project path on your machine. Then copy the file content into the agent's MCP config location and restart the agent. Drop your provider API key into a `.env` at the project root before the first run if you are using MCP server mode.
 
 For Claude Code, the merged config lives at `~/.claude/mcp.json`. For Cursor, the project-local config lives at `<repo>/.cursor/mcp.json` and is picked up when you open the workspace.
 
 ## 5. Available tools
 
-Once registered, the agent can call four tools by name. Each tool returns a single JSON document with an explicit `backend` label and `ok: true|false` field.
+Once registered, the agent can call the tools listed below. Each tool returns a single JSON document with an explicit `backend` label and `ok: true|false` field. The set of tools depends on the mode you chose.
 
-- `healthcheck` - in server mode, ping the configured provider; in sampling mode, verify the host's sampling capability
+Common to both MCP server and MCP orchestrator modes.
+
+- `healthcheck` - in MCP server mode, ping the configured provider. In MCP orchestrator mode, return ok plus cwd plus dataset name (no LLM call)
 - `list_personas` - preview personas matching a filter (`filter`, `limit`, `seed`)
-- `interview` - run a batch interview (`product`, `questions`, `filter`, `n`, `seed`, `concurrency`, `persona_fields`, `follow_ups`, `single_turn`, `output_dir`)
-- `report` - generate a markdown report from a result JSON (`json_path`, `top_n`, `include_drift`, `output_dir`)
+- `report` - generate a markdown report from a result JSON (`json_path`, `top_n`, `include_drift`, `output_dir`). MCP server mode runs the qualitative-insight LLM call. MCP orchestrator mode skips it (fallback message in the report)
+- `detect_persona_drift` - heuristic helper. Returns `is_drift` for a given response/persona pair using the same thresholds as the CLI
+- `should_auto_follow_up` - heuristic helper. Returns `should_follow_up` for a short or ambiguous answer
+- `parse_structured_summary` - parse the LLM's structured-summary JSON into a normalized dict
+- `interview_record_schema` - return the record schema and example for the host to follow when assembling records
 
-A natural-language prompt that exercises the full pipeline is below.
+MCP server mode only.
+
+- `interview` - run a batch interview server-side (`product`, `questions`, `filter`, `n`, `seed`, `concurrency`, `persona_fields`, `follow_ups`, `single_turn`, `output_dir`)
+
+MCP orchestrator mode only.
+
+- `build_persona_prompt` - return one persona's system prompt and persona dict (`product`, `questions`, `persona_id` or `filter`/`n`/`seed`, optional `follow_ups`, `persona_fields`)
+- `build_batch_prompts` - return N personas worth of system prompts (`product`, `questions`, `n` or `persona_ids`, optional `seed`, `filter`, `follow_ups`, `persona_fields`)
+- `aggregate_results` - take records assembled by the host and emit the markdown report (`records`, `product`, `questions`, optional `output_dir`, `top_n`, `include_drift`, `insights`)
+
+A natural-language prompt for MCP server mode that exercises the full pipeline is below.
 
 ```
 1인 가구 대상 반찬 정기배송 (월 39,900원)을 25-39세 서울 30명에게 인터뷰 돌리고 리포트까지 만들어 줘. seed는 42로 고정해 주세요.
 ```
 
 The agent will call `interview` then `report` back-to-back and return the markdown path.
+
+For MCP orchestrator mode the host workflow is shaped like below.
+
+```text
+prompts = mcp.call("build_batch_prompts", {"product": ..., "questions": [...], "n": 30, "seed": 42})
+records = []
+for p in prompts.prompts:
+  llm_responses = host_sub_agent.run(p.system_prompt, p.questions)
+  summary = mcp.call("parse_structured_summary", {"raw_response": last_summary_text}).structured_summary
+  records.append({...})  # see interview_record_schema for shape
+mcp.call("aggregate_results", {"records": records, "product": ..., "output_dir": "outputs/"})
+```
 
 ## 6. Logs and output
 
