@@ -421,6 +421,11 @@ The matrix below covers every supported entry point and inference target. Pick t
 
 The MCP server is sampling-only: there is no OpenAI/Anthropic fallback inside the MCP entry point. If you run `python -m src.mcp_server` outside an MCP host, every tool returns a config error pointing back at the CLI. The reverse is also true: the CLI never opens an MCP session.
 
+Which `llm.*` yaml fields apply on each entry point.
+
+- CLI entry point: every `llm.*` field is honored (provider, base_url, model, api_key, max_tokens, temperature, timeout, context_budget, retry_max_attempts, retry_backoff_seconds, anthropic_cache_control, extra_chat_kwargs, streaming).
+- MCP server entry point: backend identity is owned by the host agent, so provider, base_url, model, api_key, streaming, extra_chat_kwargs, anthropic_cache_control, timeout, retry_max_attempts, retry_backoff_seconds are all ignored. Only `max_tokens` and `temperature` are forwarded into the host's `sampling/createMessage` call. `context_budget` is applied by the message-history truncator on both paths so it is honored regardless.
+
 Trade-offs to keep in mind.
 
 - Quality. Persona drift is calibrated against `gpt-4o-mini`; other targets may need tuned thresholds. Validate on a small batch first

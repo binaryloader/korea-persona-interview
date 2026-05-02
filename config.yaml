@@ -5,51 +5,83 @@
 # - API keys come only from environment variables, never from this file or CLI.
 #   provider=openai uses OPENAI_API_KEY (KPI_OPENAI_API_KEY fallback).
 #   provider=anthropic uses ANTHROPIC_API_KEY.
+# - The yaml/CLI api_key field is intentionally not honored, so secrets never
+#   land on disk or in shell history.
 # - Output directory honors KPI_OUTPUT_DIR for test/CI isolation.
 #
 # Local LLM tip:
 # Keep provider=openai and override --base-url to http://localhost:PORT/v1.
 # mlx_lm.server, vLLM, and llama.cpp all expose an OpenAI-compatible interface.
 
+# llm: HTTP transport and request shape for the LLM call.
+#
+# Most fields here apply to the CLI entry point only. The MCP server entry
+# point (`python -m src.mcp_server`) delegates inference to the host agent via
+# `sampling/createMessage`, so the host picks the model, the endpoint, and the
+# transport. The MCP path therefore IGNORES every backend-identity field
+# (provider, base_url, model, api_key, streaming, extra_chat_kwargs,
+# anthropic_cache_control, timeout, retry_max_attempts, retry_backoff_seconds).
+# Only max_tokens and temperature reach the host (forwarded as sampling
+# arguments). context_budget is applied by the message-history truncator on
+# both paths, so it is honored regardless of entry point.
 llm:
   # provider: "openai" | "anthropic". Local OpenAI-compatible servers stay on
-  # provider=openai; only the base_url changes.
+  # provider=openai; only the base_url changes. CLI-only.
   provider: "openai"
   # Default base_url and model are picked to match the provider when both are
   # left at the historical openai defaults. Override either explicitly to pin.
+  # CLI-only (the MCP host owns its own endpoint).
   base_url: "https://api.openai.com/v1"
   model: "gpt-4o-mini"
+  # max_tokens / temperature reach the MCP sampling host as well as the CLI
+  # backends (forwarded into the sampling/createMessage call).
   max_tokens: 500
   temperature: 0.8
+  # timeout / retry_* are CLI-only. The MCP host owns its retry policy.
   timeout: 120
-  context_budget: 32000
   retry_max_attempts: 3
   retry_backoff_seconds: [1, 2, 4]
+  # context_budget caps the multi-turn message history before it is sent to
+  # any backend, so the value is honored on both CLI and MCP paths. The system
+  # prompt is preserved; the oldest user/assistant pairs are dropped first.
+  context_budget: 32000
   # provider=anthropic 호출에서 system 메시지에 cache_control: ephemeral 마커를
   # 박아 prompt caching을 활성화한다. 예전 Messages API 리비전이 마커를 거부하면
-  # false로 두어 끈다.
+  # false로 두어 끈다. CLI-only(provider=anthropic 한정).
   anthropic_cache_control: true
   # OpenAI Chat Completions request body에 그대로 머지되는 확장 필드 dict.
   # 예: 로컬 mlx_lm.server/vLLM의 Qwen3 thinking 토글을 끄려면
   #   extra_chat_kwargs:
   #     chat_template_kwargs:
   #       enable_thinking: false
-  # provider=anthropic에서는 무시된다.
+  # CLI + provider=openai 한정. provider=anthropic이나 MCP sampling 경로에서는
+  # 무시된다.
   extra_chat_kwargs: {}
   # OpenAI 호환 streaming(SSE) 응답을 사용한다. true로 두면 첫 토큰 시간이
   # 빨라지지만 일부 호환 서버는 SSE 형식이 미묘하게 다르므로 default false로
-  # 둔다. provider=anthropic에서는 무시된다.
+  # 둔다. CLI + provider=openai 한정. provider=anthropic이나 MCP sampling
+  # 경로에서는 무시된다.
   streaming: false
-  # api_key 항목은 의도적으로 비워둔다. 환경변수 또는 .env에서만 받는다.
 
+# batch: 배치 인터뷰 동시성과 페르소나 필드 토글, 부분 실패 임계값.
 batch:
-  concurrency: 4              # 1-10 허용
+  # 1-10 범위만 허용한다. CLI ``--concurrency``로 일회성 override 가능.
+  concurrency: 4
+  # 시스템 프롬프트에 추가 주입할 페르소나 토글 키워드. 기본값 ``summary``는
+  # 항상 주입되며, ``professional``/``sports``/``arts``/``travel``/``culinary``/
+  # ``family``를 추가하면 해당 자유 서술 컬럼이 페르소나 객체에 합쳐진다.
   persona_fields: ["summary"]
+  # success 비율(completed + refused + drift)이 본 값 미만이면
+  # ``BatchResultEnvelope.partial_failure``가 True가 되어 CLI exit 3으로 끝난다.
   partial_failure_threshold: 0.5
 
+# dataset: Hugging Face 데이터셋 식별자와 컬럼/값 별칭. 데이터셋 갱신 시
+# field_map과 alias dict만 yaml에서 갱신하면 코드 변경 없이 호환 가능하다.
 dataset:
   name: "nvidia/Nemotron-Personas-Korea"
   split: "train"
+  # field_map: 코드의 페르소나 슬롯명 → 데이터셋 컬럼명 매핑. 데이터셋이 컬럼을
+  # 갈아끼우면 본 매핑만 갱신하면 된다.
   field_map:
     name: null
     gender: "sex"
@@ -68,11 +100,15 @@ dataset:
     travel: "travel_persona"
     culinary: "culinary_persona"
     family: "family_persona"
+  # gender_aliases: ``--filter gender:F`` 류 사용자 친화 표기를 데이터셋 표기로
+  # 정규화한다. 데이터셋 표기 ``남자``/``여자`` 직접 입력도 그대로 통과한다.
   gender_aliases:
     F: "여자"
     M: "남자"
     여성: "여자"
     남성: "남자"
+  # province_aliases: ``서울특별시`` → ``서울``류 17개 시도 풀네임을 데이터셋의
+  # 짧은 표기로 정규화한다. 데이터셋 표기 직접 입력도 그대로 통과한다.
   province_aliases:
     서울특별시: "서울"
     부산광역시: "부산"
@@ -94,9 +130,14 @@ dataset:
     경상남도: "경상남"
     제주특별자치도: "제주"
 
+# interview: 인터뷰 휴리스틱 임계값과 키워드 묶음. 자동 follow-up 트리거,
+# 페르소나 깨짐(drift) 감지, 모델 거부 감지의 정본이다.
 interview:
+  # 답변 글자 수(공백 제외)가 본 값 미만이면 자동 follow-up trigger.
   short_answer_threshold: 20
+  # 응답의 영문 단어 비율이 본 값을 초과하면 drift trigger(0.0-1.0).
   english_ratio_threshold: 0.30
+  # 답변 본문에 본 키워드 중 하나가 부분 매칭되면 자동 follow-up trigger.
   ambiguous_keywords:
     - "글쎄요"
     - "잘 모르겠습니다"
@@ -104,6 +145,8 @@ interview:
     - "딱히"
     - "별로 생각 안 해봤"
     - "모르겠"
+  # 응답 본문에 본 키워드 중 하나가 부분 매칭되면 status=refused로 처리한다.
+  # 같은 거부가 반복될 가능성이 높아 retry는 시도하지 않는다.
   refusal_keywords:
     - "답변할 수 없습니다"
     - "답변하기 어렵"
@@ -112,8 +155,13 @@ interview:
     - "As an AI"
     - "저는 인공지능"
     - "AI 모델"
+  # 자동 follow-up이 trigger되었을 때 모델에 추가로 보내는 user 발화.
   auto_follow_up_text: "조금만 더 자세히 말씀해 주실 수 있을까요?"
+  # 한 페르소나당 자동 follow-up 최대 횟수. 0으로 두면 자동 follow-up이 꺼진다.
   auto_follow_up_max: 1
+  # 시스템 프롬프트 템플릿 파일 경로(절대 경로 또는 프로젝트 루트 기준 상대
+  # 경로). pip-installed 환경에서 본 경로가 부재하고 default 경로면 패키지
+  # 내부 ``src._prompts.system_prompt.txt``로 fallback한다.
   system_prompt_path: "prompts/system_prompt.txt"
   # 페르소나 직업명에 등장하는 영문 토큰을 _english_ratio 분모에서 제외한다.
   # IT 컨설턴트/UX 디자이너 같은 페르소나가 본인 직업명을 자연스럽게 언급해도
@@ -124,10 +172,15 @@ interview:
   # 들어가 비용/지연이 늘어난다. 기본 OFF.
   llm_drift_review: false
 
+# report: 마크다운 리포트 렌더링 임계값과 정성 인사이트 모델.
 report:
+  # 코호트 셀 표본이 본 값 미만이면 ``표본 부족``으로 마스킹한다(1 이상).
   cohort_min_cell: 3
+  # 거절 사유 빈도 표의 기본 상위 N. CLI ``--top-n``으로 일회성 override.
   top_n_default: 10
+  # 가격 수용가 히스토그램 구간 수.
   histogram_bins: 10
+  # 텍스트 막대 차트 폭(셀 단위).
   bar_width: 30
   # 정성 인사이트 호출에만 사용할 별도 모델 ID. null이면 인터뷰와 같은
   # llm.model을 사용한다. 인터뷰는 gpt-4o-mini로 돌리고 인사이트 한 번만
@@ -138,7 +191,13 @@ report:
   # 정성 신호와 product 단가만으로 추정한 값이 리포트 헤더에 별도 표시된다.
   estimate_wtp_from_signal: false
 
+# output: 결과 JSON/마크다운/JSONL 로그가 저장되는 디렉토리와 콘솔/로그 옵션.
 output:
+  # 결과 디렉토리. 생성 시 0700, 결과 파일은 0600 권한으로 저장된다.
+  # 환경변수 ``KPI_OUTPUT_DIR``이 설정되면 이쪽이 우선한다(테스트/CI 격리용).
   output_dir: "outputs/"
+  # 루트 로거 레벨. ``DEBUG``/``INFO``/``WARNING``/``ERROR``.
   log_level: "INFO"
+  # true면 ANSI 컬러를 끈다. 환경변수 ``NO_COLOR`` 또는 stdout이 TTY가 아닐
+  # 때도 자동으로 꺼진다(no-color.org 표준).
   no_color: false

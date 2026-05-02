@@ -756,6 +756,12 @@ dependency.md §1 leftpad 안티패턴 회피와 직접 통제 목적으로 아�
 
 §12.1, §12.2는 OpenAI 계약을 구체적으로 기술한다. Anthropic 계약 차이는 `src/llm_backend.py`의 `AnthropicBackend`에 구현되어 있다.
 
+`llm.*` yaml 필드의 적용 범위는 진입점에 따라 다르다.
+
+- CLI 진입점은 모든 `llm.*` 필드를 그대로 HTTP 요청에 반영한다. provider, base_url, model, api_key, streaming, extra_chat_kwargs, anthropic_cache_control, timeout, retry_max_attempts, retry_backoff_seconds 모두 적용된다
+- MCP 서버 진입점은 백엔드 식별과 transport를 호스트 에이전트가 소유한다. 따라서 provider, base_url, model, api_key, streaming, extra_chat_kwargs, anthropic_cache_control, timeout, retry_max_attempts, retry_backoff_seconds는 모두 무시된다. `McpSamplingBackend.chat`이 호스트의 `sampling/createMessage`에 전달하는 파라미터는 4개뿐이다. messages를 SamplingMessage로 변환한 결과, max_tokens, system_prompt, temperature가 그것이다. 따라서 max_tokens와 temperature만 양쪽 진입점에서 동일하게 적용된다
+- context_budget은 `truncate_history`에서 messages 배열을 자르기 전에 양쪽 진입점 모두에서 평가된다. system 메시지는 절대 truncate되지 않으며 가장 오래된 user/assistant 페어부터 제거된다
+
 #### 12.1. 헬스체크
 
 ```
