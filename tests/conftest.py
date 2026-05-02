@@ -282,6 +282,7 @@ def make_app_config():
         DatasetConfig,
         InterviewConfig,
         LlmConfig,
+        McpConfig,
         ReportConfig,
     )
 
@@ -327,6 +328,7 @@ def make_app_config():
         bar_width: int = 30,
         insight_model: str | None = None,
         estimate_wtp_from_signal: bool = False,
+        mcp_mode: str = "server",
     ) -> AppConfig:
         llm = LlmConfig(
             base_url=base_url,
@@ -400,12 +402,14 @@ def make_app_config():
             insight_model=insight_model,
             estimate_wtp_from_signal=estimate_wtp_from_signal,
         )
+        mcp = McpConfig(mode=mcp_mode)
         return AppConfig(
             llm=llm,
             batch=batch,
             dataset=dataset,
             interview=interview,
             report=report,
+            mcp=mcp,
             output_dir=output_dir,
             log_level=log_level,
             no_color=no_color,

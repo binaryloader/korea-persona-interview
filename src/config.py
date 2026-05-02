@@ -27,6 +27,8 @@ DEFAULT_YAML_PATH = Path("config.yaml")
 
 _VALID_PROVIDERS = frozenset({"openai", "anthropic"})
 
+_VALID_MCP_MODES = frozenset({"server", "sampling"})
+
 
 @dataclass(frozen=True)
 class LlmConfig:
@@ -216,6 +218,34 @@ class ReportConfig:
 
 
 @dataclass(frozen=True)
+class McpConfig:
+    """MCP 서버 진입점의 동작 모드 토글.
+
+    ``mode``는 ``server``와 ``sampling`` 두 값만 허용한다(ADR-004).
+
+    - ``server`` (기본): MCP 도구 호출이 server-side ``OpenAIBackend``/
+      ``AnthropicBackend``를 사용한다. CLI와 동일한 ``LlmConfig``(provider,
+      base_url, model, api_key, ...)를 그대로 활용한다. 사용자가 mcp.json의
+      ``env``에 ``OPENAI_API_KEY``/``ANTHROPIC_API_KEY``를 박아 주어야 한다
+    - ``sampling``: MCP 도구 호출이 호스트 에이전트의 ``sampling/createMessage``
+      에 위임한다. server-side에 키가 필요 없는 대신 호스트가 sampling
+      capability를 노출해야 한다(2026 현재 보급률이 낮음)
+
+    자동 fallback은 하지 않는다. 모드 전환은 명시 토글로만 가능하다(ADR-004
+    §3 결정 근거).
+    """
+
+    mode: str = "server"
+
+    def __post_init__(self) -> None:
+        if self.mode not in _VALID_MCP_MODES:
+            raise ConfigError(
+                f"mcp.mode는 {sorted(_VALID_MCP_MODES)} 중 하나여야 한다. "
+                f"입력값: {self.mode!r}"
+            )
+
+
+@dataclass(frozen=True)
 class AppConfig:
     """최상위 애플리케이션 설정."""
 
@@ -224,6 +254,7 @@ class AppConfig:
     dataset: DatasetConfig
     interview: InterviewConfig
     report: ReportConfig
+    mcp: McpConfig
     output_dir: Path
     log_level: str
     no_color: bool
@@ -317,6 +348,9 @@ def _default_dict() -> dict:
             "bar_width": 30,
             "insight_model": None,
             "estimate_wtp_from_signal": False,
+        },
+        "mcp": {
+            "mode": "server",
         },
         "output": {
             "output_dir": "outputs/",
@@ -600,6 +634,10 @@ def load_config(
                 report_raw.get("estimate_wtp_from_signal", False)
             ),
         )
+        mcp_raw = merged.get("mcp") or {}
+        mcp_cfg = McpConfig(
+            mode=str(mcp_raw.get("mode", "server")).strip().lower(),
+        )
     except (KeyError, TypeError, ValueError) as exc:
         raise ConfigError(f"설정 필드 변환 실패: {exc}") from exc
 
@@ -609,6 +647,7 @@ def load_config(
         dataset=dataset_cfg,
         interview=interview_cfg,
         report=report_cfg,
+        mcp=mcp_cfg,
         output_dir=Path(str(merged["output"]["output_dir"])),
         log_level=str(merged["output"]["log_level"]),
         no_color=bool(merged["output"]["no_color"]),

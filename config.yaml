@@ -190,6 +190,29 @@ report:
   # 정성 신호와 product 단가만으로 추정한 값이 리포트 헤더에 별도 표시된다.
   estimate_wtp_from_signal: false
 
+# mcp: MCP 서버 진입점(`python -m src.mcp_server` / `kpi-mcp-server`)의 동작
+# 모드 토글이다. v1.1.1에서 ADR-004로 도입했다. CLI 진입점은 본 섹션과 무관하다.
+#
+# - mode: "server" (default)
+#     server-side에서 OpenAI/Anthropic 백엔드를 직접 호출한다. CLI와 동일한
+#     llm.* 설정(provider, base_url, model, api_key, retry, timeout, ...)을
+#     그대로 활용하므로 mcp.json `env`에 OPENAI_API_KEY 또는
+#     ANTHROPIC_API_KEY를 박아 주어야 한다. 응답에 `backend: "mcp_server"`
+#     라벨이 박힌다. 일반적인 MCP 클라이언트(Claude Code Desktop, Cursor 등
+#     2026년 4월 기준 대부분의 빌드)에서 즉시 동작한다
+#
+# - mode: "sampling"
+#     호스트 에이전트의 LLM에 `sampling/createMessage`로 위임한다. server-side
+#     키가 필요 없는 대신 호스트가 sampling capability를 명시적으로 노출해야
+#     한다. 응답에 `backend: "mcp_sampling"` 라벨이 박힌다. 호스트가 sampling을
+#     지원하지 않으면 ConfigError + CLI fallback 안내로 차단된다
+#
+# 자동 fallback은 하지 않는다. 사용자가 모드를 명시 선택해 동작 경로를 분명히
+# 한다(ADR-004 §3 결정 근거).
+mcp:
+  # "server" 또는 "sampling". 기본은 "server"다.
+  mode: "server"
+
 # output: 결과 JSON/마크다운/JSONL 로그가 저장되는 디렉토리와 콘솔/로그 옵션.
 output:
   # 결과 디렉토리. 생성 시 0700, 결과 파일은 0600 권한으로 저장된다.

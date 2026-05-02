@@ -861,3 +861,65 @@ def test_load_config_dotenv_주석_라인_무시(
 
     cfg = load_config(yaml_path=tmp_path / "no.yaml")
     assert cfg.llm.api_key == "sk-actual"
+
+
+# ---------------------------------------------------------------------------
+# mcp.mode 토글(ADR-004)
+# ---------------------------------------------------------------------------
+
+
+def test_mcp_config_default_mode_server(tmp_path: Path) -> None:
+    """yaml 미존재일 때 ``mcp.mode`` default는 ``server``다(ADR-004)."""
+
+    cfg = load_config(yaml_path=tmp_path / "no.yaml")
+    assert cfg.mcp.mode == "server"
+
+
+def test_mcp_config_yaml_sampling_override(tmp_path: Path) -> None:
+    """yaml에서 ``mcp.mode: sampling``을 명시하면 그대로 반영된다."""
+
+    yaml_path = tmp_path / "config.yaml"
+    yaml_path.write_text("mcp:\n  mode: 'sampling'\n", encoding="utf-8")
+    cfg = load_config(yaml_path=yaml_path)
+    assert cfg.mcp.mode == "sampling"
+
+
+def test_mcp_config_yaml_server_override(tmp_path: Path) -> None:
+    """yaml에서 ``mcp.mode: server``를 명시해도 정상 통과한다."""
+
+    yaml_path = tmp_path / "config.yaml"
+    yaml_path.write_text("mcp:\n  mode: 'server'\n", encoding="utf-8")
+    cfg = load_config(yaml_path=yaml_path)
+    assert cfg.mcp.mode == "server"
+
+
+def test_mcp_config_허용_외_mode_ConfigError(tmp_path: Path) -> None:
+    """``mcp.mode``는 화이트리스트(server/sampling) 외 값을 거부한다."""
+
+    yaml_path = tmp_path / "config.yaml"
+    yaml_path.write_text("mcp:\n  mode: 'auto'\n", encoding="utf-8")
+    with pytest.raises(ConfigError):
+        load_config(yaml_path=yaml_path)
+
+
+def test_mcp_config_대소문자_정규화(tmp_path: Path) -> None:
+    """``mcp.mode``는 대문자 입력을 소문자로 정규화한다."""
+
+    yaml_path = tmp_path / "config.yaml"
+    yaml_path.write_text("mcp:\n  mode: 'SAMPLING'\n", encoding="utf-8")
+    cfg = load_config(yaml_path=yaml_path)
+    assert cfg.mcp.mode == "sampling"
+
+
+def test_mcp_config_dataclass_직접_생성_허용() -> None:
+    from src.config import McpConfig
+
+    assert McpConfig().mode == "server"
+    assert McpConfig(mode="sampling").mode == "sampling"
+
+
+def test_mcp_config_dataclass_직접_생성_검증() -> None:
+    from src.config import McpConfig
+
+    with pytest.raises(ConfigError):
+        McpConfig(mode="auto")

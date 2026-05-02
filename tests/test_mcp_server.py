@@ -1,11 +1,15 @@
 """Unit tests for the MCP server tool dispatch.
 
 The application-layer logic (``run_batch``, ``generate_report``, the LLM
-backends) is exercised by other test modules; this module focuses on dispatch
-and the sampling-only entry point.
+backends) is exercised by other test modules; this module focuses on dispatch,
+the ``mcp.mode`` toggle (server default vs sampling opt-in), and the response
+``backend`` label invariant.
 
-The MCP host is mocked by registering a fake session under
-``_current_sampling_session`` so handlers see a sampling-capable client.
+For sampling-mode tests the host is mocked by registering a fake session under
+``_current_sampling_session`` and overriding the working directory with a
+``config.yaml`` that pins ``mcp.mode: "sampling"``. For server-mode tests the
+cwd is overridden with a yaml that pins ``mcp.mode: "server"`` and provider
+backends are stubbed via monkeypatch.
 """
 
 from __future__ import annotations
@@ -84,6 +88,24 @@ def _install_session(
     return session
 
 
+def _pin_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+) -> None:
+    """Pin ``mcp.mode`` for the in-flight tool call.
+
+    The MCP server handlers all call ``load_config(yaml_path=None, ...)`` which
+    resolves to ``Path("config.yaml")`` relative to the current working
+    directory. We move into ``tmp_path`` and write a yaml that only sets the
+    mode toggle so the rest of the defaults stay intact.
+    """
+
+    monkeypatch.chdir(tmp_path)
+    yaml_path = tmp_path / "config.yaml"
+    yaml_path.write_text(f"mcp:\n  mode: '{mode}'\n", encoding="utf-8")
+
+
 def test_tool_handlers_네_개_도구_등록() -> None:
     assert set(_TOOL_HANDLERS.keys()) == {
         "healthcheck",
@@ -153,10 +175,11 @@ def test_to_json_text_한국어_보존() -> None:
 
 
 @pytest.mark.asyncio
-async def test_handle_healthcheck_정상(
+async def test_handle_healthcheck_sampling_정상(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("KPI_OUTPUT_DIR", str(tmp_path))
+    _pin_mode(tmp_path, monkeypatch, "sampling")
     _install_session(monkeypatch)
 
     result = await dispatch_tool("healthcheck", {})
@@ -166,12 +189,13 @@ async def test_handle_healthcheck_정상(
 
 
 @pytest.mark.asyncio
-async def test_handle_healthcheck_세션없음_안내_메시지(
+async def test_handle_healthcheck_sampling_세션없음_안내_메시지(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """No MCP host attached: tool returns a config error pointing at the CLI."""
+    """No MCP host attached and sampling mode: tool routes back to the CLI."""
 
     monkeypatch.setenv("KPI_OUTPUT_DIR", str(tmp_path))
+    _pin_mode(tmp_path, monkeypatch, "sampling")
     monkeypatch.setattr(_mcp_server, "_current_sampling_session", lambda: None)
 
     result = await dispatch_tool("healthcheck", {})
@@ -179,6 +203,7 @@ async def test_handle_healthcheck_세션없음_안내_메시지(
     assert "error" in result
     assert result["error"]["code"] == "config_error"
     assert "CLI" in result["error"]["message"] or "main.py" in result["error"]["message"]
+    assert result["backend"] == "mcp_sampling"
 
 
 @pytest.mark.asyncio
@@ -188,6 +213,7 @@ async def test_handle_healthcheck_sampling_미지원_안내(
     """Host attached but sampling capability missing: clear hint to the CLI."""
 
     monkeypatch.setenv("KPI_OUTPUT_DIR", str(tmp_path))
+    _pin_mode(tmp_path, monkeypatch, "sampling")
     _install_session(monkeypatch, supports_sampling=False)
 
     result = await dispatch_tool("healthcheck", {})
@@ -195,6 +221,48 @@ async def test_handle_healthcheck_sampling_미지원_안내(
     assert "error" in result
     assert result["error"]["code"] == "config_error"
     assert "Claude Code" in result["error"]["message"] or "CLI" in result["error"]["message"]
+    assert result["backend"] == "mcp_sampling"
+
+
+@pytest.mark.asyncio
+async def test_handle_healthcheck_server_mode_정상(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, httpx_mock
+) -> None:
+    """server mode healthcheck: OpenAI ``/models`` 엔드포인트에 ping을 보내고
+    응답 라벨에 ``mcp_server``가 박힌다."""
+
+    monkeypatch.setenv("KPI_OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-server-mode")
+    _pin_mode(tmp_path, monkeypatch, "server")
+
+    httpx_mock.add_response(
+        method="GET",
+        url="https://api.openai.com/v1/models",
+        json={"data": [{"id": "gpt-4o-mini"}]},
+        status_code=200,
+    )
+
+    result = await dispatch_tool("healthcheck", {})
+
+    assert result["ok"] is True
+    assert result["backend"] == "mcp_server"
+
+
+@pytest.mark.asyncio
+async def test_handle_healthcheck_server_mode_키없음_ConfigError(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """server mode인데 OPENAI_API_KEY 미설정: 친절한 ConfigError로 차단된다."""
+
+    monkeypatch.setenv("KPI_OUTPUT_DIR", str(tmp_path))
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    _pin_mode(tmp_path, monkeypatch, "server")
+
+    result = await dispatch_tool("healthcheck", {})
+
+    assert "error" in result
+    assert result["error"]["code"] == "config_error"
+    assert result["backend"] == "mcp_server"
 
 
 # ---------------------------------------------------------------------------
@@ -207,6 +275,7 @@ async def test_handle_list_personas_정상(
     fake_load_dataset, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("KPI_OUTPUT_DIR", str(tmp_path))
+    _pin_mode(tmp_path, monkeypatch, "server")
 
     result = await dispatch_tool(
         "list_personas",
@@ -217,9 +286,28 @@ async def test_handle_list_personas_정상(
     assert result["count"] == 2
     assert result["filter"] == "age:20-29"
     assert result["seed"] == 42
+    assert result["backend"] == "mcp_server"
     persona = result["personas"][0]
     assert "persona_id" in persona
     assert "raw" not in persona
+
+
+@pytest.mark.asyncio
+async def test_handle_list_personas_sampling_라벨(
+    fake_load_dataset, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """sampling mode에서도 list_personas 응답에 mcp_sampling 라벨이 박힌다."""
+
+    monkeypatch.setenv("KPI_OUTPUT_DIR", str(tmp_path))
+    _pin_mode(tmp_path, monkeypatch, "sampling")
+
+    result = await dispatch_tool(
+        "list_personas",
+        {"filter": "age:20-29", "limit": 2, "seed": 42},
+    )
+
+    assert result["ok"] is True
+    assert result["backend"] == "mcp_sampling"
 
 
 @pytest.mark.asyncio
@@ -239,6 +327,7 @@ async def test_handle_list_personas_필터_DSL_파싱_실패(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("KPI_OUTPUT_DIR", str(tmp_path))
+    _pin_mode(tmp_path, monkeypatch, "server")
 
     result = await dispatch_tool(
         "list_personas",
@@ -247,6 +336,7 @@ async def test_handle_list_personas_필터_DSL_파싱_실패(
 
     assert "error" in result
     assert result["error"]["code"] == "config_error"
+    assert result["backend"] == "mcp_server"
 
 
 @pytest.mark.asyncio
@@ -254,6 +344,7 @@ async def test_handle_list_personas_필터_결과_0건(
     fake_load_dataset, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("KPI_OUTPUT_DIR", str(tmp_path))
+    _pin_mode(tmp_path, monkeypatch, "server")
 
     result = await dispatch_tool(
         "list_personas",
@@ -263,6 +354,7 @@ async def test_handle_list_personas_필터_결과_0건(
     assert "error" in result
     assert result["error"]["code"] == "filter_matched_zero"
     assert result["error"]["exit_code"] == 2
+    assert result["backend"] == "mcp_server"
 
 
 # ---------------------------------------------------------------------------
@@ -341,12 +433,13 @@ async def test_handle_interview_n_범위_검증(
 
 
 @pytest.mark.asyncio
-async def test_handle_interview_세션없음_안내(
+async def test_handle_interview_sampling_세션없음_안내(
     fake_load_dataset, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Without an MCP host, the interview tool routes the user to the CLI."""
+    """sampling mode + no MCP host: the interview tool routes back to the CLI."""
 
     monkeypatch.setenv("KPI_OUTPUT_DIR", str(tmp_path))
+    _pin_mode(tmp_path, monkeypatch, "sampling")
     monkeypatch.setattr(_mcp_server, "_current_sampling_session", lambda: None)
 
     result = await dispatch_tool(
@@ -361,18 +454,20 @@ async def test_handle_interview_세션없음_안내(
 
     assert "error" in result
     assert result["error"]["code"] == "config_error"
+    assert result["backend"] == "mcp_sampling"
 
 
 @pytest.mark.asyncio
-async def test_handle_interview_정상_실행(
+async def test_handle_interview_sampling_정상_실행(
     fake_load_dataset,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Sampling-driven happy path. Two responses cover the interview body and
+    """sampling mode happy path. Two responses cover the interview body and
     structured summary."""
 
     monkeypatch.setenv("KPI_OUTPUT_DIR", str(tmp_path))
+    _pin_mode(tmp_path, monkeypatch, "sampling")
     _install_session(
         monkeypatch,
         responses=[
@@ -463,26 +558,114 @@ async def test_handle_report_top_n_검증(
 
 
 # ---------------------------------------------------------------------------
-# _build_backend (sampling-only)
+# _build_backend (mode 분기)
 # ---------------------------------------------------------------------------
 
 
-def test_build_backend_세션있음은_McpSamplingBackend(
+def test_build_backend_sampling_세션있음은_McpSamplingBackend(
     monkeypatch: pytest.MonkeyPatch,
+    make_app_config,
 ) -> None:
-    fake_session = _FakeSamplingSession()
+    """sampling mode + 세션 존재: McpSamplingBackend 반환."""
 
+    fake_session = _FakeSamplingSession()
     monkeypatch.setattr(
         _mcp_server, "_current_sampling_session", lambda: fake_session
     )
-    backend = _build_backend()
+    config = make_app_config(mcp_mode="sampling")
+
+    backend = _build_backend(config)
     assert isinstance(backend, McpSamplingBackend)
 
 
-def test_build_backend_세션없음은_ConfigError(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_backend_sampling_세션없음은_ConfigError(
+    monkeypatch: pytest.MonkeyPatch,
+    make_app_config,
+) -> None:
+    """sampling mode + 세션 부재: 친절한 ConfigError로 차단."""
+
     from src.models import ConfigError
 
     monkeypatch.setattr(_mcp_server, "_current_sampling_session", lambda: None)
+    config = make_app_config(mcp_mode="sampling")
+
     with pytest.raises(ConfigError) as exc_info:
-        _build_backend()
-    assert "CLI" in str(exc_info.value) or "main.py" in str(exc_info.value)
+        _build_backend(config)
+    msg = str(exc_info.value)
+    assert "CLI" in msg or "main.py" in msg or "mcp.mode" in msg
+
+
+def test_build_backend_server_mode_OpenAIBackend(
+    monkeypatch: pytest.MonkeyPatch,
+    make_app_config,
+) -> None:
+    """server mode(provider=openai): OpenAIBackend 인스턴스를 반환한다."""
+
+    from src.llm_backend import OpenAIBackend
+
+    config = make_app_config(mcp_mode="server", provider="openai")
+    backend = _build_backend(config)
+    assert isinstance(backend, OpenAIBackend)
+
+
+def test_build_backend_server_mode_AnthropicBackend(
+    monkeypatch: pytest.MonkeyPatch,
+    make_app_config,
+) -> None:
+    """server mode(provider=anthropic): AnthropicBackend 인스턴스를 반환한다."""
+
+    from src.llm_backend import AnthropicBackend
+
+    config = make_app_config(
+        mcp_mode="server",
+        provider="anthropic",
+        base_url="https://api.anthropic.com/v1",
+    )
+    backend = _build_backend(config)
+    assert isinstance(backend, AnthropicBackend)
+
+
+def test_build_backend_server_mode_세션없어도_OK(
+    monkeypatch: pytest.MonkeyPatch,
+    make_app_config,
+) -> None:
+    """server mode는 sampling 세션 부재와 무관하게 동작한다."""
+
+    from src.llm_backend import OpenAIBackend
+
+    monkeypatch.setattr(_mcp_server, "_current_sampling_session", lambda: None)
+    config = make_app_config(mcp_mode="server", provider="openai")
+    backend = _build_backend(config)
+    assert isinstance(backend, OpenAIBackend)
+
+
+# ---------------------------------------------------------------------------
+# Default mode = "server" (ADR-004)
+# ---------------------------------------------------------------------------
+
+
+def test_mcp_default_mode_server() -> None:
+    """yaml 미존재일 때 ``mcp.mode`` default는 ``server``다(ADR-004)."""
+
+    from src.config import load_config
+
+    config = load_config(yaml_path=Path("/nonexistent/no.yaml"))
+    assert config.mcp.mode == "server"
+
+
+def test_backend_label_helper_server_mode(make_app_config) -> None:
+    """``_backend_label`` 헬퍼는 server mode에서 ``mcp_server``를 돌려준다."""
+
+    from src.mcp_server import _backend_label
+
+    config = make_app_config(mcp_mode="server")
+    assert _backend_label(config) == "mcp_server"
+
+
+def test_backend_label_helper_sampling_mode(make_app_config) -> None:
+    """``_backend_label`` 헬퍼는 sampling mode에서 ``mcp_sampling``을 돌려준다."""
+
+    from src.mcp_server import _backend_label
+
+    config = make_app_config(mcp_mode="sampling")
+    assert _backend_label(config) == "mcp_sampling"
