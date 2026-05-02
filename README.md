@@ -608,6 +608,10 @@ Pull requests are welcome. Before opening one.
 - Use Conventional Commits
 - For substantive changes, open an issue first to discuss the approach
 
+## Acknowledgments
+
+This project was developed with [Claude Code](https://claude.com/claude-code).
+
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
