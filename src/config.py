@@ -457,7 +457,7 @@ def load_config(
         cli_overrides: 다른 모든 레이어를 덮어쓰는 CLI 옵션의 부분 dict
 
     Raises:
-        ConfigError: yaml 파싱 실패, 타입 불일치, 범위 초과 등
+        ConfigError: yaml 파싱 실패, 타입 불일치, 범위 초과 등.
     """
 
     for key, value in _load_dotenv().items():

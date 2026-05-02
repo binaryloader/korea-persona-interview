@@ -190,16 +190,16 @@ def save_batch_result(
 ) -> Path:
     """``BatchResult``를 ``outputs/interview_{slug}_{ts}.json``에 atomic하게 저장한다.
 
-    인자:
-        result: 직렬화할 ``BatchResult``
+    Args:
+        result: 직렬화할 ``BatchResult``.
         output_dir: 저장 디렉토리. 없으면 생성한다.
-        slug: 파일명 슬러그
+        slug: 파일명 슬러그.
         timestamp: ``YYYYMMDD_HHMMSS`` UTC 문자열. 기본값은 ``now``.
         partial: True면 JSON meta에 ``partial=True``가 추가된다.
-        extra_meta: 추가 meta 블록(SIGINT 사유, 환경 정보 등)
+        extra_meta: 추가 meta 블록(SIGINT 사유, 환경 정보 등).
 
-    반환:
-        JSON이 기록된 절대 경로
+    Returns:
+        JSON이 기록된 절대 경로.
     """
 
     ts = timestamp or _timestamp_filename()
@@ -589,15 +589,15 @@ async def run_batch(
     페르소나는 그대로 보존되고 새 배치에서 건너뛴다. 실패한 persona ID만 재시도되어
     다운스트림 diff용 안정 식별자를 유지한다.
 
-    인자:
-        personas: 인터뷰 대상 페르소나
-        product: 한 줄 product 설명
-        questions: 메인 질문 리스트(1개 이상)
-        follow_ups: 사용자 정의 공통 follow-up(빈 리스트 허용)
-        llm: ``async with`` 블록 안에서 이미 열린 ``LLMBackend``
+    Args:
+        personas: 인터뷰 대상 페르소나.
+        product: 한 줄 product 설명.
+        questions: 메인 질문 리스트(1개 이상).
+        follow_ups: 사용자 정의 공통 follow-up(빈 리스트 허용).
+        llm: ``async with`` 블록 안에서 이미 열린 ``LLMBackend``.
         config: 최상위 ``AppConfig``. 본 함수는 ``llm``/``batch``/``interview``만 사용한다.
-        output_dir: 결과 JSON 저장 디렉토리
-        slug: 파일명 슬러그(기본값 ``korea-persona-interview``)
+        output_dir: 결과 JSON 저장 디렉토리.
+        slug: 파일명 슬러그(기본값 ``korea-persona-interview``).
         seed: 추적용으로 ``RunMeta.seed``에 보존된다. 실제 샘플링은 상위
             ``load_personas`` 단계에서 발생한다.
         save: True면 정상 완료/partial 완료 모두 ``save_batch_result``로 저장한다.
@@ -606,10 +606,10 @@ async def run_batch(
         resume_run_id: 이전 run의 ``interview_id``. 지정 시
             ``meta_extra.previous_run_id``에 기록된다.
 
-    반환:
+    Returns:
         ``BatchResultEnvelope``. CLI가 본 값으로 exit code를 결정한다.
 
-    raise:
+    Raises:
         ConfigError: 페르소나 리스트가 비었거나 concurrency가 [1, 10] 밖.
         ServerNotReachableError: 사전 healthcheck가 실패한 경우.
     """

@@ -32,13 +32,13 @@ async def run_dry_run(
 ) -> None:
     """단일 페르소나 인터뷰를 실행해 결과를 ``console``에 찍어 준다.
 
-    인자:
-        persona: 인터뷰 대상 페르소나
-        product: 인터뷰 주제로 사용되는 사업 아이템 한 문장
-        questions: 메인 질문 리스트(1개 이상)
-        follow_ups: 공유 follow-up 질문 리스트(선택)
-        config: 애플리케이션 설정(llm, batch, dataset, interview, report)
-        console: 사람 대상 dump를 위한 콘솔 렌더러
+    Args:
+        persona: 인터뷰 대상 페르소나.
+        product: 인터뷰 주제로 사용되는 사업 아이템 한 문장.
+        questions: 메인 질문 리스트(1개 이상).
+        follow_ups: 공유 follow-up 질문 리스트(선택).
+        config: 애플리케이션 설정(llm, batch, dataset, interview, report).
+        console: 사람 대상 dump를 위한 콘솔 렌더러.
         json_mode: ``True``면 사람용 dump 출력을 모두 생략한다. caller가 본
             코루틴 종료 후 페르소나 메타와 결과 envelope을 단일 JSON 페이로드로
             출력하는 흐름을 가정한다.

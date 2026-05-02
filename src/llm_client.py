@@ -146,10 +146,10 @@ class LLMClient:
     async def healthcheck(self) -> list:
         """모델 목록 조회로 연결성을 검증한다.
 
-        반환:
-            ``data[*].id``에서 추출한 모델 ID 리스트
+        Returns:
+            ``data[*].id``에서 추출한 모델 ID 리스트.
 
-        raise:
+        Raises:
             ServerNotReachableError: 네트워크 실패, 5xx, 또는 빈 응답.
             ConfigError: 401 등 4xx 응답이거나 API 키 누락.
         """
@@ -216,12 +216,12 @@ class LLMClient:
     ) -> ChatResponse:
         """chat completion 요청을 보내고 응답을 반환한다.
 
-        인자:
-            messages: OpenAI 형식 messages 배열
-            max_tokens: 호출 단위 ``LlmConfig.max_tokens`` override
-            temperature: 호출 단위 ``LlmConfig.temperature`` override
+        Args:
+            messages: OpenAI 형식 messages 배열.
+            max_tokens: 호출 단위 ``LlmConfig.max_tokens`` override.
+            temperature: 호출 단위 ``LlmConfig.temperature`` override.
 
-        raise:
+        Raises:
             ConfigError: API 키가 없거나 유효하지 않거나, 4xx 응답.
             ServerNotReachableError: 단발 네트워크 실패.
             RetryExhaustedError: 5xx/429/timeout/빈 응답이 설정된 retry 한도를 넘은 경우.

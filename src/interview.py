@@ -65,12 +65,12 @@ _NUMBERED_SEGMENT_RE = re.compile(
 def _parse_single_turn_response(text: str, expected_count: int) -> tuple:
     """단일턴 응답 텍스트를 질문별 답변 청크로 분리한다.
 
-    인자:
+    Args:
         text: LLM 응답 본문. 시스템 프롬프트가 모델에게 ``1. ... 2. ... 3. ...``
             번호 segment 형식을 출력하도록 지시한다.
         expected_count: caller가 기대하는 segment 수(메인 질문 + 공유 follow-up).
 
-    반환:
+    Returns:
         ``(answers, parse_failed)``. 성공 시 ``answers``는 ``expected_count``
         길이 리스트로, 각 슬롯 0..N-1에 trim된 segment 본문이 들어간다. 실패
         시에는 마지막 슬롯에 전체 응답 텍스트가 들어가고 나머지는 빈 문자열,
