@@ -662,6 +662,7 @@ datasets==3.*
 pyyaml==6.0.*
 tqdm==4.66.*
 click==8.1.*
+aiohttp>=3.13.5,<3.14
 ```
 
 - httpx는 비동기 HTTP를 담당한다. aiohttp 대신 동기/비동기 양쪽을 지원하며 OpenAI/Anthropic SDK도 내부적으로 사용한다
@@ -669,6 +670,7 @@ click==8.1.*
 - pyyaml은 설정 파일 파싱을 담당한다
 - tqdm은 진행률 표시를 담당한다
 - click은 CLI 프레임워크다. argparse 대비 데코레이터 기반으로 가독성에서 우위를 갖는다
+- aiohttp는 datasets가 트랜지티브로 끌어오는 패키지다. 본 도구가 직접 import하지 않지만 GHSA-9548-qrrj-x5pj 보안 권고를 lock 파일에서 명시 통제하기 위해 상한을 박는다(security.md §1, dependency.md §4). 정식 패치인 3.14는 본 문서 작성 시점에 PyPI에 정식 릴리즈되지 않아 가용 최신 정식 버전 3.13.5를 일시 핀하며 3.14 정식 릴리즈 시 갱신한다
 
 #### 11.3. requirements-dev.txt
 
@@ -679,7 +681,17 @@ pytest-asyncio==0.23.*
 pytest-httpx==0.30.*
 ```
 
-#### 11.4. 도입을 거부하는 의존성과 근거
+#### 11.4. lock 파일
+
+`uv pip compile`로 생성한 lock 파일을 함께 커밋한다(python.md §2.2, dependency.md §2).
+
+- `requirements.lock`은 production 그래프(`requirements.txt` → 트랜지티브)이며 약 60종 핀을 담는다
+- `requirements-dev.lock`은 dev 그래프(`requirements-dev.txt` → 트랜지티브)이며 production 핀을 그대로 포함한다
+- production 환경 설치는 `uv pip sync requirements.lock requirements-dev.lock`으로 frozen 상태를 강제한다
+- lock 파일을 갱신할 때는 `uv pip compile requirements.txt -o requirements.lock` 후 `uv pip compile requirements-dev.txt -o requirements-dev.lock` 두 명령을 순서대로 실행한다
+- aiohttp의 보안 핀(§11.2)은 lock 파일에서 정확한 버전(3.13.5)으로 박힌다. SLA 내에 3.14 정식 릴리즈가 발표되면 본 핀과 lock을 함께 갱신한다
+
+#### 11.5. 도입을 거부하는 의존성과 근거
 
 dependency.md §1 leftpad 안티패턴 회피와 직접 통제 목적으로 아래 라이브러리는 도입하지 않는다.
 

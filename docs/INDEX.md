@@ -48,3 +48,4 @@
 - 2026-05-02 TDD §12.2.1 Qwen3 thinking 토글(chat_template_kwargs) 보강 추가, GATE-1 검증 결과 반영
 - 2026-05-02 환경 도구 uv 채택, .python-version 3.12 고정
 - 2026-05-02 GATE-2 통과(데이터셋 컬럼 26개 + 인구 통계 13개 표기 100% 일치 확인)
+- 2026-05-02 의존성 lock 파일(`requirements.lock`, `requirements-dev.lock`) 추가, aiohttp는 GHSA-9548-qrrj-x5pj 대응으로 `>=3.13.5,<3.14` 명시 핀(3.14 정식 릴리즈 시 재핀)

@@ -3,3 +3,8 @@ datasets==3.*
 pyyaml==6.0.*
 tqdm==4.66.*
 click==8.1.*
+# datasets가 트랜지티브로 끌어오는 aiohttp의 명시적 상한 핀(security.md §1,
+# dependency.md §4). GHSA-9548-qrrj-x5pj는 upstream 3.14+에서 패치 예정이지만
+# 작성 시점 PyPI 가용 정식 릴리즈는 3.13.5가 최신이라 그 버전을 강제한다.
+# 3.14 정식 릴리즈 발표 시 본 핀을 갱신해 lock도 다시 compile한다(ADR 후보).
+aiohttp>=3.13.5,<3.14
