@@ -143,8 +143,11 @@ class AnthropicBackend:
     - ``usage.output_tokens`` -> ``TokenUsage.completion_tokens``
     - ``usage.cache_read_input_tokens`` -> ``TokenUsage.cached_tokens``
 
-    Anthropic prompt caching ``cache_control`` markers are not emitted by this
-    backend. They are tracked in the v1.1 backlog.
+    Anthropic prompt caching is enabled by default via the ``cache_control``
+    marker on the system prompt. Toggle off with ``llm.anthropic_cache_control:
+    false`` in yaml when targeting older Messages API revisions that reject the
+    marker. ``cache_creation_input_tokens`` and ``cache_read_input_tokens`` are
+    both surfaced in the response usage when caching is hit.
     """
 
     _ANTHROPIC_VERSION = "2023-06-01"
@@ -238,7 +241,24 @@ class AnthropicBackend:
             ),
         }
         if system_prompt:
-            body["system"] = system_prompt
+            # When Anthropic prompt caching is enabled, send the system prompt
+            # as a single text block annotated with ``cache_control:
+            # ephemeral``. The Messages API treats the marker as the cache
+            # boundary, so the static prefix is reused across requests with
+            # identical system text. Anthropic surfaces both
+            # ``cache_creation_input_tokens`` and ``cache_read_input_tokens``
+            # in the response usage block, which ``_extract_usage`` maps to
+            # ``TokenUsage.cached_tokens`` for parity with OpenAI.
+            if self._config.anthropic_cache_control:
+                body["system"] = [
+                    {
+                        "type": "text",
+                        "text": system_prompt,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ]
+            else:
+                body["system"] = system_prompt
 
         logger.debug(
             "chat 요청 시작",
@@ -387,11 +407,16 @@ class AnthropicBackend:
         input_tokens = _as_int(usage_raw.get("input_tokens"))
         output_tokens = _as_int(usage_raw.get("output_tokens"))
         cached_read = _as_int(usage_raw.get("cache_read_input_tokens"))
+        cached_creation = _as_int(usage_raw.get("cache_creation_input_tokens"))
+        # ``cached_tokens`` carries the total cached prefix length (creation +
+        # read) so the field can be compared like-for-like with the OpenAI
+        # ``cached_tokens`` count. Creation is the first call that primes the
+        # cache; read is every subsequent call that hits the warm cache.
         return TokenUsage(
             prompt_tokens=input_tokens,
             completion_tokens=output_tokens,
             total_tokens=input_tokens + output_tokens,
-            cached_tokens=cached_read,
+            cached_tokens=cached_read + cached_creation,
         )
 
 

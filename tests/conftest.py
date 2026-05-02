@@ -296,6 +296,9 @@ def make_app_config():
         retry_max_attempts: int = 3,
         retry_backoff_seconds: tuple = (0.0, 0.0, 0.0),
         api_key: str = "test-key",
+        provider: str = "openai",
+        anthropic_cache_control: bool = True,
+        extra_chat_kwargs: tuple = (),
         concurrency: int = 2,
         persona_fields: tuple = ("summary",),
         single_turn: bool = False,
@@ -330,6 +333,9 @@ def make_app_config():
             retry_max_attempts=retry_max_attempts,
             retry_backoff_seconds=retry_backoff_seconds,
             api_key=api_key,
+            provider=provider,
+            anthropic_cache_control=anthropic_cache_control,
+            extra_chat_kwargs=extra_chat_kwargs,
         )
         batch = BatchConfig(
             concurrency=concurrency,

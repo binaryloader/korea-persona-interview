@@ -179,6 +179,17 @@ class MlxLLMClient:
                 else self._config.temperature
             ),
         }
+        # ``extra_chat_kwargs`` lets users forward backend-specific request
+        # fields that fall outside the OpenAI Chat Completions spec, such as
+        # ``chat_template_kwargs`` for mlx_lm.server / vLLM thinking toggles
+        # on Qwen3 models. Reserved keys (``model``/``messages``/
+        # ``max_tokens``/``temperature``) are skipped to keep the canonical
+        # request body shape intact.
+        extras = self._config.extra_chat_kwargs_dict()
+        for key, value in extras.items():
+            if key in body:
+                continue
+            body[key] = value
 
         # Message bodies stay out of the structured log per security policy.
         # Only counts and char totals are recorded.

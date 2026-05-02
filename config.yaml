@@ -25,6 +25,17 @@ llm:
   context_budget: 32000
   retry_max_attempts: 3
   retry_backoff_seconds: [1, 2, 4]
+  # provider=anthropic 호출에서 system 메시지에 cache_control: ephemeral 마커를
+  # 박아 prompt caching을 활성화한다. 예전 Messages API 리비전이 마커를 거부하면
+  # false로 두어 끈다.
+  anthropic_cache_control: true
+  # OpenAI Chat Completions request body에 그대로 머지되는 확장 필드 dict.
+  # 예: 로컬 mlx_lm.server/vLLM의 Qwen3 thinking 토글을 끄려면
+  #   extra_chat_kwargs:
+  #     chat_template_kwargs:
+  #       enable_thinking: false
+  # provider=anthropic에서는 무시된다.
+  extra_chat_kwargs: {}
   # api_key 항목은 의도적으로 비워둔다. 환경변수 또는 .env에서만 받는다.
 
 batch:

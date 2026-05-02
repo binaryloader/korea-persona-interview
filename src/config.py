@@ -57,6 +57,8 @@ class LlmConfig:
     retry_backoff_seconds: tuple
     api_key: Optional[str] = None
     provider: str = "openai"
+    anthropic_cache_control: bool = True
+    extra_chat_kwargs: tuple = ()
 
     def __post_init__(self) -> None:
         if not (1 <= self.max_tokens <= 16000):
@@ -82,6 +84,19 @@ class LlmConfig:
                 f"llm.provider는 {sorted(_VALID_PROVIDERS)} 중 하나여야 한다. "
                 f"입력값: {self.provider!r}"
             )
+        if not isinstance(self.extra_chat_kwargs, tuple):
+            raise ConfigError(
+                "llm.extra_chat_kwargs는 (key, value) 튜플의 튜플이어야 한다"
+            )
+
+    def extra_chat_kwargs_dict(self) -> dict:
+        """``extra_chat_kwargs`` 튜플을 dict로 풀어 반환한다.
+
+        frozen dataclass는 hashable이어야 하므로 dict 자체를 필드로 보관할 수
+        없다. 외부에 노출할 때는 dict로 풀어주는 헬퍼를 둔다.
+        """
+
+        return dict(self.extra_chat_kwargs)
 
 
 @dataclass(frozen=True)
@@ -226,6 +241,8 @@ def _default_dict() -> dict:
             "retry_max_attempts": 3,
             "retry_backoff_seconds": [1, 2, 4],
             "api_key": None,
+            "anthropic_cache_control": True,
+            "extra_chat_kwargs": {},
         },
         "batch": {
             "concurrency": 4,
@@ -485,6 +502,12 @@ def load_config(
             model_raw = "claude-haiku-4-5"
         elif not model_raw:
             model_raw = "gpt-4o-mini"
+        extra_chat_kwargs_raw = merged["llm"].get("extra_chat_kwargs") or {}
+        if not isinstance(extra_chat_kwargs_raw, dict):
+            raise ConfigError(
+                "llm.extra_chat_kwargs는 dict여야 한다. "
+                f"입력 타입: {type(extra_chat_kwargs_raw).__name__}"
+            )
         llm_cfg = LlmConfig(
             base_url=str(base_url_raw),
             model=str(model_raw),
@@ -498,6 +521,12 @@ def load_config(
             ),
             api_key=api_key_val,
             provider=provider,
+            anthropic_cache_control=bool(
+                merged["llm"].get("anthropic_cache_control", True)
+            ),
+            extra_chat_kwargs=tuple(
+                (str(k), v) for k, v in extra_chat_kwargs_raw.items()
+            ),
         )
         batch_cfg = BatchConfig(
             concurrency=int(merged["batch"]["concurrency"]),
