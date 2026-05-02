@@ -30,7 +30,7 @@ class PersonaMeta:
     """페르소나 1명의 인구 통계 + 원본 raw dict.
 
     데이터셋의 컬럼 매핑 결과(TDD §1.3)를 보존한다. ``name``은 데이터셋에 별도
-    이름 컬럼이 없어 v1에서 ``None``으로 두는 것을 기본 동작으로 한다.
+    이름 컬럼이 없어 기본 동작은 ``None``이다.
 
     ``family_type``/``housing_type``은 1인 가구 여부와 주거 유형을 시스템
     프롬프트에 그대로 노출하기 위한 필드다. 데이터셋에 해당 컬럼이 없거나
@@ -123,12 +123,12 @@ class ChatResponse:
     """LLM chat 호출 결과 컨테이너.
 
     OpenAI Chat Completions API에는 ``message.reasoning`` 확장 필드가 없으므로
-    ``reasoning_trace``는 v1.x 환경에서 항상 ``None``이다(직렬화 backward
-    compatibility 유지를 위해 필드는 보존). ``content``가 비면 호출자가 별도
-    에러 처리를 수행한다.
+    ``reasoning_trace``는 항상 ``None``이다. 직렬화 호환을 위해 필드 자체는 보존한다.
+    ``content``가 비면 호출자가 별도 에러 처리를 수행한다.
 
     ``usage``는 OpenAI 응답의 토큰 사용량이다. 모킹된 응답이나 ``usage`` 필드를
-    돌려주지 않는 호환 서버에서는 0으로 채운 ``TokenUsage()``가 들어간다.
+    돌려주지 않는 호환 서버, MCP sampling 응답에서는 0으로 채운 ``TokenUsage()``가
+    들어간다.
     """
 
     content: str
@@ -140,7 +140,7 @@ class ChatResponse:
 
 @dataclass(frozen=True)
 class StructuredSummary:
-    """인터뷰 종료 후 단일턴으로 생성한 구조화 요약(ADR-001 §2)."""
+    """인터뷰 종료 후 단일턴으로 생성한 구조화 요약(ADR-001)."""
 
     intent: str
     willingness_to_pay: Optional[int]
@@ -163,9 +163,9 @@ class StructuredSummary:
 class Flags:
     """record 단위 부가 플래그.
 
-    truncated는 TDD §7과 ADR-001 §2에서 추가됐다. parse_failed는 단일턴 모드
-    응답에서 번호 파싱이 실패해 fallback으로 마지막 question에 통째 텍스트를
-    넣은 경우를 표시한다(라운드 B1 추가).
+    truncated는 컨텍스트 budget 초과로 가장 오래된 user/assistant 페어를 제거한
+    경우 True가 된다. parse_failed는 단일턴 모드 응답에서 번호 파싱이 실패해
+    fallback으로 마지막 question에 통째 텍스트를 넣은 경우를 표시한다.
     """
 
     persona_drift: bool = False
@@ -261,7 +261,7 @@ class PersonaBreakError(Exception):
 
 
 class ResponseTooShortError(Exception):
-    """짧은 답변(자동 follow-up으로 흡수). v1에서는 raise 대신 플래그로만 처리."""
+    """짧은 답변(자동 follow-up으로 흡수). 현재 흐름은 raise 대신 플래그로만 처리."""
 
 
 class ModelRefusedError(Exception):
@@ -279,7 +279,6 @@ class StructuredSummaryParseError(Exception):
 class EmptyResponseError(Exception):
     """``message.content``가 비어 있는 응답. retry 대상으로 본다.
 
-    OpenAI 응답에서는 거의 발생하지 않지만 안전망으로 보존한다. v1.0 시절
-    Qwen3 reasoning 토큰 폭증 사례(``enable_thinking=true`` 호출 시 content가
-    빈 문자열로 반환되던 케이스)에서 도입된 매핑이다.
+    OpenAI 응답에서는 거의 발생하지 않지만 호환 서버나 모델 thinking 토큰
+    폭증 케이스에서 빈 content가 돌아오는 사례를 흡수하기 위한 안전망이다.
     """

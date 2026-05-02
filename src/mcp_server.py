@@ -1,19 +1,23 @@
 """MCP(Model Context Protocol) 서버 진입점.
 
 외부 에이전트(Claude Code, Cursor, Codex 등)가 본 도구를 stdio 기반 도구로
-등록해 자연어로 호출할 수 있도록 4개 도구를 노출한다(라운드 C1).
+등록해 자연어로 호출할 수 있도록 4개 도구를 노출한다.
 
 도구 목록은 아래와 같다.
 
-- ``healthcheck``: OpenAI 서버 응답과 모델 가용성 확인
+- ``healthcheck``: 백엔드 가용성과 모델 확인
 - ``list_personas``: 필터 결과 페르소나 미리 보기
 - ``interview``: 배치 인터뷰 실행 후 결과 JSON 경로와 summary 반환
 - ``report``: 결과 JSON에서 마크다운 리포트 생성
 
-application 계층(`run_batch`, `generate_report`, `MlxLLMClient` 등)을 그대로
-재사용한다. MCP는 비대화식이라 tqdm/ANSI 컬러/[OK] 라벨 출력 없이 stdout 대신
-JSON 결과를 ``TextContent``로 돌려준다. 로그는 stderr/jsonl 채널에 그대로 흐른다
+application 계층(`run_batch`, `generate_report`)을 그대로 재사용한다. MCP는
+비대화식이라 tqdm/ANSI 컬러/[OK] 라벨 출력 없이 stdout 대신 JSON 결과를
+``TextContent``로 돌려준다. 로그는 stderr/jsonl 채널에 그대로 흐른다
 (logging.md §3 구조화 + 격리).
+
+LLM 백엔드는 ``llm.backend`` 설정에 따라 OpenAI 직접 호출 또는 MCP sampling
+경유 위임을 선택한다(``llm_backend.py`` 참고). ``auto`` 기본은 클라이언트가
+sampling capability를 노출하면 sampling을, 그렇지 않으면 OpenAI를 사용한다.
 
 본 모듈은 ``mcp`` SDK가 부재한 환경(예: lock 미동기화)에서도 import 자체가 깨지지
 않도록 ``mcp`` import는 ``main()`` 진입 시점에 lazy하게 수행한다. import 실패 시
@@ -23,7 +27,7 @@ JSON 결과를 ``TextContent``로 돌려준다. 로그는 stderr/jsonl 채널에
 진입점은 두 가지다.
 
 - ``python -m src.mcp_server``: 모듈 단위 실행
-- ``kpi-mcp-server`` (pyproject.toml console script, 라운드 C4)
+- ``kpi-mcp-server``: pyproject.toml에 등록된 console script
 """
 
 from __future__ import annotations

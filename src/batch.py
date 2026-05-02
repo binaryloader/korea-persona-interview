@@ -73,10 +73,9 @@ logger = logging.getLogger(__name__)
 
 # 부분 실패 판정 임계값 default. 완료(`completed`/`drift`/`refused`) record 비율이
 # 본 값 미만이면 BatchResult.partial_failure를 True로 표시한다. CLI 단계에서
-# exit 3 처리에 활용한다(PRD §5.9, UI §6.4).
-#
-# 라운드 B3부터 ``BatchConfig.partial_failure_threshold``로 외부화되어 yaml에서
-# 변경 가능하다. 본 모듈 상수는 backward compat용 fallback이다.
+# exit 3 처리에 활용한다(PRD §5.9, UI §6.4). 정본 값은
+# ``BatchConfig.partial_failure_threshold``이며 본 상수는 yaml/CLI override가 빠진
+# 호출 경로의 fallback이다.
 _PARTIAL_SUCCESS_RATIO = 0.5
 
 
@@ -250,8 +249,7 @@ def _aggregate_usage(records: list) -> TokenUsage:
 
     멀티턴 한 호출이 한 ``RawResponse``를 만든다. 자동 follow-up도 별도
     ``RawResponse``로 누적되므로 사실상 모든 chat 호출의 usage가 합산된다.
-    구조화 요약과 정성 인사이트 단계는 별도 호출이라 본 합산에 포함되지 않는다
-    (해당 단계의 usage는 v1.1 후속 작업에서 record/envelope에 추가 검토).
+    구조화 요약과 정성 인사이트 단계는 별도 호출이라 본 합산에 포함되지 않는다.
     """
 
     total = TokenUsage()
@@ -333,9 +331,6 @@ async def _run_single(
             # 흐름이지만(인터뷰 본체 보존), 호출 자체가 시작 전에 실패하면
             # 본 layer에서 흡수한다. ``error.type``은 ``_classify_exception``이
             # 도메인 예외명을 매핑하므로 부분 실패 사유 분포에서 식별된다.
-            #
-            # 후속(v1.1): ``ServerNotReachableError``가 동시성 단위로 다발하면
-            # ``cancel_event``를 set해 circuit breaker로 동작하도록 보강 후보.
             logger.warning(
                 "페르소나 인터뷰 도메인 예외(흡수)",
                 extra={
@@ -653,7 +648,7 @@ async def run_batch(
 
     # 부분 실패 판정: 실제 종료된 record 중 success(=completed/refused/drift)
     # 비율이 임계값 미만이면 partial로 본다(PRD §5.9, UI §6.4). 임계값은
-    # ``BatchConfig.partial_failure_threshold``에서 받는다(라운드 B3 외부화).
+    # ``BatchConfig.partial_failure_threshold``에서 받는다.
     if summary.requested == 0:
         partial_failure = False
     else:

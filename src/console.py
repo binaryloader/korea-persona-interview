@@ -18,9 +18,7 @@ import click
 
 
 # 한국어 단일 출처 메시지 사전(UI §3.1). 동일 예외가 명령마다 다른 문구로
-# 출력되지 않도록 본 사전만 사용한다.
-#
-# v1.x부터 백엔드는 OpenAI Chat Completions API다. ``server_not_reachable``과
+# 출력되지 않도록 본 사전만 사용한다. ``server_not_reachable``과
 # ``api_key_missing``은 분리해 사용자가 어떤 문제인지 즉시 식별할 수 있게 한다.
 MESSAGES: dict = {
     "server_not_reachable": (

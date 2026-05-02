@@ -568,7 +568,7 @@ def list_personas(
     "--single-turn",
     is_flag=True,
     default=False,
-    help="단일턴 모드(v1은 기본 비활성).",
+    help="단일턴 모드(기본 비활성). 활성화 시 모든 질문을 한 chat 호출에 묶는다.",
 )
 @click.option(
     "--dry-run",

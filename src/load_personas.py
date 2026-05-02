@@ -41,7 +41,7 @@ from .models import (
 logger = logging.getLogger(__name__)
 
 
-# 지원하는 필터 키. v1에서 더 이상 확장하지 않는다(PRD §5.5).
+# 지원하는 필터 키(PRD §5.5). 새 키 추가는 PRD 갱신과 함께 진행한다.
 ALLOWED_FILTER_KEYS = frozenset(
     {"age", "gender", "region", "subregion", "occupation_keyword"}
 )
@@ -471,8 +471,7 @@ def load_and_sample(
     같은 ``(filter_str, n, seed, field_map, dataset_name, split)`` 조합으로 다시
     호출하면 in-memory 캐시 hit으로 즉시 반환한다. ``list-personas``/``interview``/
     ``dry-run``에서 같은 표본을 반복 조회하는 흐름의 중복 비용을 제거한다.
-    디스크 캐시는 v1.1 백로그(필터 결과를 디스크에 저장하면 다른 프로세스에서도
-    재사용 가능).
+    캐시는 프로세스 단위라 다른 프로세스에서는 재사용되지 않는다.
 
     Args:
         filter_str: 필터 DSL 문자열. None이면 전체에서 샘플링.
@@ -580,7 +579,7 @@ def load_and_sample(
 # key는 ``_build_cache_key``가 반환하는 hashable 튜플, value는 ``PersonaMeta``
 # 리스트다. CLI 단일 프로세스 한 번 실행 안에서 ``list-personas``/``interview``/
 # ``dry-run``이 같은 spec으로 반복 호출되는 흐름을 단축한다. 프로세스 종료 시
-# 함께 사라진다(디스크 캐시는 v1.1 백로그).
+# 함께 사라진다.
 _PERSONA_POOL_CACHE: dict = {}
 
 

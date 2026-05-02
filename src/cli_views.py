@@ -36,12 +36,12 @@ def persona_to_json_dict(persona: PersonaMeta) -> dict:
 
 
 def render_persona_table(personas: list, console: Console) -> None:
-    """간단 표 출력. 한글 폭 2 가정으로 단순 정렬한다(UI §5.4의 v1 방침).
+    """간단 표 출력. 한글 폭 2 가정으로 단순 정렬한다(UI §5.4).
 
-    터미널 환경에 따라 한글 폭 1 케이스(특히 일부 SSH 클라이언트)가 있지만 v1은
-    가장 흔한 한글 폭 2를 가정한다. 본격적인 wcwidth 라이브러리 도입은 v1.1
-    백로그(dependency.md §1 leftpad 회피 원칙에 따라 표준 라이브러리 외 의존
-    추가는 신중히 결정).
+    터미널 환경에 따라 한글 폭 1 케이스(특히 일부 SSH 클라이언트)가 있지만 본
+    함수는 가장 흔한 한글 폭 2를 가정한다. 정확한 wcwidth가 필요하면 외부
+    라이브러리 도입을 검토한다(dependency.md §1 leftpad 회피 원칙에 따라 표준
+    라이브러리 외 의존 추가는 신중히 결정).
     """
 
     headers = ("persona_id", "이름", "성별", "연령", "지역", "직업")

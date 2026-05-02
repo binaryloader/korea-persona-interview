@@ -7,8 +7,8 @@
 "추정" 표기를 호출자에서 명시한다).
 
 단가 단위는 1M 토큰당 USD다. ``cached_input``은 OpenAI prompt caching 적용 시
-입력 토큰의 환급 단가로, 표준 입력 단가의 50%다(2026-05 기준 정책). cached
-환급은 ``input`` 단가에서 ``cached_input`` 단가로 자동 대체되어 청구된다.
+입력 토큰의 환급 단가로, 표준 입력 단가의 50%다. cached 환급은 ``input``
+단가에서 ``cached_input`` 단가로 자동 대체되어 청구된다.
 """
 
 from __future__ import annotations
@@ -32,8 +32,8 @@ class ModelPricing:
     output: float
 
 
-# 2026-05 기준 OpenAI 공식 가격 페이지 단가. 모델 추가 시 본 dict에만 항목을
-# 더하면 된다. 정확한 단가는 OpenAI 공식 페이지를 우선한다(본 표는 추정용).
+# OpenAI 공식 가격 페이지 단가 스냅샷. 모델 추가 시 본 dict에만 항목을 더하면
+# 된다. 정확한 단가는 OpenAI 공식 페이지를 우선하며 본 표는 추정용이다.
 PRICING_TABLE: dict = {
     "gpt-4o-mini": ModelPricing(input=0.15, cached_input=0.075, output=0.60),
     "gpt-4o-mini-2024-07-18": ModelPricing(

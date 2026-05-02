@@ -8,9 +8,8 @@ Lines 로깅을 얹는다. ``openai``/``anthropic`` SDK와 ``tenacity`` 의존�
 도메인 예외와의 매핑은 본 모듈에서 일원화하며, 호출자(InterviewSession 등)는
 도메인 예외만 다룬다.
 
-v1.x부터 OpenAI Chat Completions API로 호출한다(이전 v1.0의 로컬 MLX 서버는
-완전 제거). API 키는 ``LlmConfig.api_key``에서 받아 ``Authorization: Bearer``
-헤더로 전송한다. 키 누락 시 ``ConfigError``로 친절한 한국어 안내가 나온다.
+API 키는 ``LlmConfig.api_key``에서 받아 ``Authorization: Bearer`` 헤더로
+전송한다. 키 누락 시 ``ConfigError``로 친절한 한국어 안내가 나온다.
 """
 
 from __future__ import annotations
@@ -57,8 +56,8 @@ _INVALID_API_KEY_MESSAGE = (
 class MlxLLMClient:
     """OpenAI Chat Completions 호환 비동기 클라이언트.
 
-    클래스명은 v1.0 시절(로컬 MLX 서버) 호환을 위해 보존한다. v1.x부터 OpenAI
-    공식 엔드포인트로 호출한다.
+    클래스명은 외부 import 호환을 위해 보존한다. 본 클라이언트는 OpenAI 공식
+    엔드포인트(또는 호환 엔드포인트)로 호출한다.
 
     사용 예시는 아래와 같다.
 
@@ -173,7 +172,7 @@ class MlxLLMClient:
         키 누락 시 ``ConfigError``로 차단한다. 재시도/타임아웃 정책은
         ``LlmConfig``의 값을 따른다. OpenAI 응답에는 ``message.reasoning``
         필드가 없으므로 ``ChatResponse.reasoning_trace``는 항상 ``None``이다
-        (도메인 모델 backward compat 유지).
+        (도메인 모델 호환 유지).
 
         Args:
             messages: OpenAI Chat Completions 형식의 messages 배열.
@@ -347,8 +346,8 @@ class MlxLLMClient:
         """첫 choice의 ``content``를 안전하게 꺼낸다.
 
         OpenAI 표준 스키마에서는 ``choices[0].message.content``만 사용한다.
-        v1.0 시절 Qwen3 ``message.reasoning`` 확장 필드는 OpenAI 응답에
-        존재하지 않는다.
+        호환 서버가 ``message.reasoning`` 같은 확장 필드를 보내도 도메인 모델은
+        무시한다.
 
         Returns:
             content 문자열. 누락/비정상 응답은 빈 문자열을 반환한다.

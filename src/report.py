@@ -49,17 +49,16 @@ logger = logging.getLogger(__name__)
 
 
 # 코호트 셀 표본 부족 임계값 default. PRD §5.6, TDD §3.7.
-# 라운드 B3부터 ``ReportConfig.cohort_min_cell``로 외부화되어 yaml에서 변경
-# 가능하다. 본 모듈 상수는 ``compute_cohort``의 default fallback과
-# ``_render_cohort_section`` 안내 문구의 backward compat을 위해 보존한다.
+# 정본은 ``ReportConfig.cohort_min_cell``이며 본 상수는 yaml/CLI override가 빠진
+# 호출 경로의 fallback이다.
 _MIN_COHORT_CELL = 3
 
 # 가격 히스토그램 구간 수 default. UI §4.2.2.
-# 라운드 B3부터 ``ReportConfig.histogram_bins``로 외부화.
+# 정본은 ``ReportConfig.histogram_bins``.
 _PRICE_HIST_BINS = 10
 
 # 텍스트 막대 차트 폭 default. UI §4.2.1, §4.2.2의 시각 일관성을 위한 기본값.
-# 라운드 B3부터 ``ReportConfig.bar_width``로 외부화.
+# 정본은 ``ReportConfig.bar_width``.
 _BAR_CHART_WIDTH = 30
 
 # 17개 시도 짧은 표기. 코호트 그룹 정렬 키로 사용한다.
@@ -400,8 +399,7 @@ def compute_price_stats(records: list, *, bins: int = _PRICE_HIST_BINS) -> Price
 
     Args:
         records: 정량 집계 대상 record 리스트.
-        bins: 히스토그램 구간 수. 라운드 B3 외부화로 ``ReportConfig.histogram_bins``
-            에서 받는다.
+        bins: 히스토그램 구간 수. ``ReportConfig.histogram_bins``에서 받는다.
     """
 
     valid_values: list = []
@@ -655,9 +653,9 @@ def compute_quant(
         records: 정량 집계 대상 record 리스트.
         top_n: 거절 사유 상위 N개.
         include_drift: drift record를 정량 집계에 포함할지.
-        cohort_min_cell: 코호트 셀 표본 마스킹 임계값. 기본은 모듈 default 3.
-            라운드 B3부터 ``ReportConfig.cohort_min_cell``에서 받는다.
-        histogram_bins: 가격 히스토그램 구간 수. 라운드 B3 외부화.
+        cohort_min_cell: 코호트 셀 표본 마스킹 임계값. 기본 3.
+            ``ReportConfig.cohort_min_cell``에서 받는다.
+        histogram_bins: 가격 히스토그램 구간 수.
     """
 
     valid = _filter_valid_records(records, include_drift=include_drift)
@@ -924,8 +922,8 @@ def _format_ratio(value: float) -> str:
 def _bar(value: float, *, width: int = _BAR_CHART_WIDTH) -> str:
     """0-1 비율을 블록 문자(▇)로 렌더링한다.
 
-    ``width``는 ``ReportConfig.bar_width``에서 전달된다(라운드 B3). 본 함수
-    내부 default는 모듈 상수 fallback이라 호출자가 명시하지 않아도 동작한다.
+    ``width``는 ``ReportConfig.bar_width``에서 전달된다. 본 함수 내부 default는
+    모듈 상수 fallback이라 호출자가 명시하지 않아도 동작한다.
     """
 
     filled = max(0, min(width, int(round(value * width))))
@@ -1147,8 +1145,8 @@ def render_markdown(
     ``usage_summary``가 있으면 헤더 표에 토큰 사용량과 비용 추정을 추가한다
     (배치 결과 JSON의 ``meta_extra.usage``/``meta_extra.estimated_cost_usd``).
 
-    ``bar_width``/``cohort_min_cell``은 라운드 B3에서 외부화된 ReportConfig
-    값이다. 명시되지 않으면 모듈 default(30/3)를 사용한다.
+    ``bar_width``/``cohort_min_cell``은 ``ReportConfig`` 값이다. 명시되지 않으면
+    모듈 default(30/3)를 사용한다.
     """
 
     product = str(meta.get("product", ""))

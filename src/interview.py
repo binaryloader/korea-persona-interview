@@ -1,4 +1,4 @@
-"""멀티턴 인터뷰 세션과 단일턴 구조화 요약(ADR-001 채택).
+"""멀티턴 인터뷰 세션과 단일턴 구조화 요약(ADR-001).
 
 본 모듈은 페르소나 1명에 대한 멀티턴 인터뷰 1회를 수행한다. 책임은 아래와 같다.
 
@@ -50,10 +50,8 @@ logger = logging.getLogger(__name__)
 
 
 # 자동 follow-up 시 추가하는 사용자 발화의 기본값. PRD §5.1, §5.8 표준 문구다.
-# 라운드 B2부터 본 문구는 ``InterviewConfig.auto_follow_up_text``로 외부화되어
-# yaml/CLI에서 변경 가능하다. 본 모듈 상수는 외부 import 호환성을 위해 보존하지만
-# 실제 인터뷰 흐름은 ``InterviewSession``이 ``self._interview_cfg.auto_follow_up_text``
-# 를 사용한다.
+# 정본은 ``InterviewConfig.auto_follow_up_text``이며 ``InterviewSession``은 항상
+# config에서 받은 값을 사용한다. 본 모듈 상수는 외부 import 호환성을 위해 보존된다.
 AUTO_FOLLOW_UP_PROMPT = "조금만 더 자세히 말씀해 주실 수 있을까요?"
 
 
@@ -195,16 +193,12 @@ _FAMILY_COHABITATION_TOKENS: tuple = (
 # - 부정 단언("1인 가구가 아니", "혼자 살지 않")은 두 페르소나 모두에게
 #   정합 또는 무관이라 drift 트리거에서 제외한다
 #
-# 정밀화 회귀 사례(false positive 방지)는 아래와 같다.
+# false positive 방지를 위해 아래 패턴은 trigger에서 제외한다.
 #
-# - 가족 동거 페르소나가 ``혼자 사시는 분들에겐 좋은 서비스`` 같이 3인칭으로
-#   1인 가구를 언급해도 자기 단언이 아니므로 drift 미발동
-# - 가족 동거 페르소나가 ``혼자서 끼니를 해결할 수 있기 때문에`` 같이 행동
-#   표현(``혼자서`` + 비-거주 동사)을 써도 거주 형태 단언이 아니므로 drift
-#   미발동
-# - 가족 동거 페르소나가 ``저는 부모님과 같이 살고 있어서 1인 가구용 반찬
-#   서비스는`` 같이 응답에 product 키워드(``1인 가구용``)가 등장해도, 본인이
-#   단독 거주임을 단언하는 1인칭 동사가 없으므로 drift 미발동
+# - 3인칭 언급(예: ``혼자 사시는 분들에겐 좋은 서비스``)
+# - 행동 표현(예: ``혼자서 끼니를 해결할 수 있기 때문에``의 ``혼자서`` + 비-거주 동사)
+# - 응답에 product 키워드만 등장하고 본인 단언 1인칭 동사는 없는 경우
+#   (예: ``저는 부모님과 같이 살고 있어서 1인 가구용 반찬 서비스는``)
 
 
 # 단독 거주 긍정 단언 정규식. 본 패턴이 한 문장 안에서 매칭되면 응답자가 본인을
@@ -362,7 +356,7 @@ def build_system_prompt(
     템플릿은 ``prompts/system_prompt.txt``(기본)에서 읽으며, 본문에는
     ``{persona_json}``과 ``{product}`` 두 개의 str.format placeholder가 들어 있어야
     한다. 사용자는 본 파일을 직접 편집해 시스템 프롬프트의 톤/지침을 도메인에
-    맞게 조정할 수 있다(라운드 B4 외부화).
+    맞게 조정할 수 있다.
 
     기본 묶음은 인구 통계 7개 필드와 ``persona``(요약 자유 서술)다(TDD §1.4).
     토글 키워드(``professional``/``sports``/``arts``/``travel``/``culinary``/
@@ -386,7 +380,7 @@ def build_system_prompt(
 
     # 기본 묶음: 인구 통계 + summary 페르소나(TDD §1.4).
     # family_type/housing_type은 1인 가구 여부와 주거 유형을 모델이 추론으로
-    # 채우지 않도록 명시적으로 노출한다(박태민 사례 회귀 방지).
+    # 채우지 않도록 명시적으로 노출한다(거주 형태를 임의로 추측하던 회귀 차단).
     persona_obj: dict = {
         "name": persona.name,
         "gender": persona.gender,
@@ -713,7 +707,7 @@ def detect_persona_drift(
         persona: 페르소나 메타.
         english_ratio_threshold: 영어 비율 임계값(0.0-1.0). 기본 0.30은
             ``InterviewConfig.english_ratio_threshold``의 기본값과 일치한다.
-            yaml 또는 사용자 설정에서 조정 가능(라운드 B2 외부화).
+            yaml 또는 사용자 설정에서 조정 가능하다.
     """
 
     if not response:

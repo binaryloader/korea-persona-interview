@@ -1,14 +1,13 @@
 """애플리케이션 설정 로드.
 
 우선순위는 코드 default → ``config.yaml`` → ``.env`` 파일 → 환경변수
-``KPI_*``/``OPENAI_API_KEY`` → CLI 옵션이다(TDD §10). 로드 결과는
-``AppConfig`` frozen dataclass로 반환하며, 도메인 모델과 달리 외부
-의존(yaml/.env)을 갖는 infrastructure 계층 코드다(architecture.md §1).
+``OPENAI_API_KEY`` → CLI 옵션이다(TDD §10). 로드 결과는 ``AppConfig`` frozen
+dataclass로 반환하며, 도메인 모델과 달리 외부 의존(yaml/.env)을 갖는 infrastructure
+계층 코드다(architecture.md §1).
 
-v1.x 백엔드 전환 시점부터 본 도구는 OpenAI Chat Completions API로 호출한다.
-이전 v1.0의 로컬 MLX 서버 가드(``is_local_base_url`` 강제 차단)는 제거되었고,
-사업 아이템 본문은 OpenAI 서버로 송신된다. 사용자는 본 사실을 이해하고 사용한다
-(README/PRD에 명시).
+본 도구는 OpenAI Chat Completions API로 호출한다(MCP sampling 백엔드 사용 시는
+클라이언트 LLM에 위임). 사업 아이템 본문이 OpenAI 서버 또는 MCP 클라이언트의 LLM
+서버로 송신되는 점을 사용자가 이해하고 사용한다(README/PRD에 명시).
 
 ``.env`` 로더는 ``python-dotenv`` 의존을 회피하고 stdlib만으로 직접 파싱한다
 (dependency.md §1, leftpad 회피). ``KEY=value`` 한 줄 형식, ``#`` 주석, 공백 라인,
@@ -72,12 +71,11 @@ class LlmConfig:
     backend: str = "auto"
 
     def __post_init__(self) -> None:
-        # 상한값은 본 도구의 v1 운영 가정에 맞춘 보수적 상한이다.
+        # 상한값은 본 도구의 운영 가정에 맞춘 보수적 상한이다.
         # max_tokens 1-16000: gpt-4o-mini의 출력 토큰 상한(약 16k)을 수용한다.
-        # MLX 시절 reasoning 토큰 폭증 가드(8k)는 OpenAI 백엔드에서 의미가 없다.
         # retry_max_attempts 1-5: 5회 초과 재시도는 사용자 대기를 길게 만든다
         # (120s timeout x 5 = 10분).
-        # timeout 1-600초: 600초(10분)를 넘는 단일 호출은 v1 SLO 밖이다.
+        # timeout 1-600초: 600초(10분)를 넘는 단일 호출은 SLO 밖이다.
         # context_budget 1000-128000: gpt-4o-mini 입력 컨텍스트(128k)를 수용한다.
         # 1000 미만은 system 프롬프트 수용 불가.
         if not (1 <= self.max_tokens <= 16000):
@@ -109,15 +107,12 @@ class LlmConfig:
 class BatchConfig:
     """배치 인터뷰 동시성/페르소나 토글 설정.
 
-    동시성 상한은 v1.0 시절 로컬 MLX 메모리 가드(Apple Silicon 단일 모델
-    인스턴스에서 1-3 동시 호출만 안정적이었음) 때문에 1-3으로 묶여 있었다.
-    OpenAI 백엔드 전환 이후 메모리 가드가 무관해 1-10으로 상향한다. 동시성
-    10은 OpenAI rate limit(tier별 분당 요청 수)을 한 번에 다 쓰지 않도록 둔
-    완만한 상한이며, 그 이상은 비용 폭증과 rate limit 회귀를 동반한다.
+    동시성 상한 1-10은 OpenAI rate limit(tier별 분당 요청 수)을 한 번에 다 쓰지
+    않도록 둔 완만한 상한이며, 그 이상은 비용 폭증과 rate limit 회귀를 동반한다.
 
     ``partial_failure_threshold``는 부분 실패 판정 임계값(0.0-1.0)이다.
     완료된 record 비율이 본 값 미만이면 ``BatchResultEnvelope.partial_failure``가
-    True로 표시되고 CLI는 종료 코드 3을 반환한다(라운드 B3 외부화).
+    True로 표시되고 CLI는 종료 코드 3을 반환한다.
     """
 
     concurrency: int
@@ -152,10 +147,9 @@ class DatasetConfig:
 class InterviewConfig:
     """인터뷰 임계값/키워드(TDD §8).
 
-    임계값/키워드를 외부화한 결과 사용자가 yaml에서 인터뷰 휴리스틱을 직접
-    조정할 수 있다(라운드 B2). 영어 비율 임계값을 0.5로 올리면 영어 단어가 더
-    많이 섞여도 drift로 보지 않고, 짧은 답변 임계값을 30자로 올리면 자동
-    follow-up이 더 자주 발동된다.
+    임계값/키워드를 외부화해 사용자가 yaml에서 인터뷰 휴리스틱을 직접 조정할 수
+    있다. 영어 비율 임계값을 0.5로 올리면 영어 단어가 더 많이 섞여도 drift로 보지
+    않고, 짧은 답변 임계값을 30자로 올리면 자동 follow-up이 더 자주 발동된다.
 
     상하한 검증은 ``__post_init__``에서 한다. 음수 임계값이나 1.0 초과 영어
     비율 같은 비현실 값은 ConfigError로 차단한다(error-handling.md §1).
@@ -197,13 +191,10 @@ class InterviewConfig:
 
 @dataclass(frozen=True)
 class ReportConfig:
-    """리포트 생성 임계값/렌더 파라미터(라운드 B3 외부화).
+    """리포트 생성 임계값/렌더 파라미터.
 
-    이전에는 ``src/report.py``에 모듈 상수(`_MIN_COHORT_CELL`,
-    `_PRICE_HIST_BINS`, `_BAR_CHART_WIDTH`)로 박혀 있어 사용자가 yaml에서
-    조정할 수 없었다. 본 dataclass로 외부화해 리포트 표본 마스킹 임계값,
-    히스토그램 구간 수, 텍스트 막대 폭, 거절 사유 top N 기본값을 yaml에서
-    조정할 수 있다.
+    리포트 표본 마스킹 임계값, 히스토그램 구간 수, 텍스트 막대 폭, 거절 사유
+    top N 기본값을 yaml에서 조정할 수 있다.
     """
 
     cohort_min_cell: int = 3
@@ -278,8 +269,7 @@ def _default_dict() -> dict:
             "backend": "auto",
         },
         "batch": {
-            # 기본 동시성. OpenAI 백엔드는 동시성 4-5에서 안정적 처리량과
-            # rate limit 여유의 균형이 좋다(MLX 시절 2 → OpenAI 4).
+            # 기본 동시성. 4-5에서 안정적 처리량과 rate limit 여유의 균형이 좋다.
             "concurrency": 4,
             "persona_fields": ["summary"],
             # single_turn은 PRD §5.1, §5.9의 ``--single-turn`` 옵션 매핑.
@@ -495,13 +485,12 @@ def _parse_dotenv_file(path: Path) -> dict:
 def _apply_env(merged: dict) -> dict:
     """환경변수에서 비밀만 받아 merged dict에 덮어쓴다.
 
-    v1.x부터 본 도구의 설정 정책은 아래와 같다.
+    설정 정책은 아래와 같다.
 
     - 비밀(API 키)은 환경변수에서만 받는다. yaml/CLI override는 허용하지 않아
       디스크/명령행 히스토리에 시크릿이 남지 않게 한다(security.md §1)
     - 그 외 설정(모델 ID, 동시성, 토큰 한도, 타임아웃 등)은 ``config.yaml``의
       기본값과 CLI override(예: ``--model``, ``--concurrency``)로만 다룬다.
-      ``KPI_LLM_*``/``KPI_BATCH_*`` 같은 환경변수 override는 v1.x에서 제거됐다.
       "비밀=env, 기본=yaml, 일회성=CLI" 한 가지 규칙으로 우선순위를 단순화한다
 
     keep된 환경변수 키는 아래 두 개뿐이다.
