@@ -28,7 +28,7 @@ from typing import Any, Optional, Protocol, runtime_checkable
 import httpx
 
 from .config import LlmConfig
-from .llm_client import MlxLLMClient
+from .llm_client import LLMClient
 from .models import (
     ChatResponse,
     ConfigError,
@@ -66,7 +66,7 @@ _MCP_SAMPLING_UNSUPPORTED_MESSAGE = (
 class LLMBackend(Protocol):
     """Minimal interface used by the interview pipeline.
 
-    Compatible with ``MlxLLMClient`` so any object conforming to this protocol
+    Compatible with ``LLMClient`` so any object conforming to this protocol
     is interchangeable in ``run_batch``/``run_interview``/``generate_report``.
     Implementations must support the async context manager protocol.
     """
@@ -92,14 +92,14 @@ class LLMBackend(Protocol):
 class OpenAIBackend:
     """Adapter for OpenAI Chat Completions and OpenAI-compatible servers.
 
-    Wraps ``MlxLLMClient`` so the interview pipeline can also target
+    Wraps ``LLMClient`` so the interview pipeline can also target
     self-hosted OpenAI-compatible endpoints (mlx_lm.server, vLLM, llama.cpp)
     by configuring ``base_url`` and ``api_key`` (the local servers usually
     accept any string).
     """
 
     def __init__(self, config: LlmConfig) -> None:
-        self._client = MlxLLMClient(config)
+        self._client = LLMClient(config)
         self._config = config
 
     async def __aenter__(self) -> "OpenAIBackend":

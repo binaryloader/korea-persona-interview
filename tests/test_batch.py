@@ -25,7 +25,7 @@ from src.batch import (
     run_batch,
     save_batch_result,
 )
-from src.llm_client import MlxLLMClient
+from src.llm_client import LLMClient
 from src.models import (
     BatchResult,
     ConfigError,
@@ -417,7 +417,7 @@ async def test_run_batch_정상_3명_completed(
     config = make_app_config(concurrency=2)
     personas = [_persona(f"p-{i}", age=25 + i) for i in range(3)]
 
-    async with MlxLLMClient(config.llm) as client:
+    async with LLMClient(config.llm) as client:
         envelope = await run_batch(
             personas=personas,
             product="반찬",
@@ -485,7 +485,7 @@ async def test_run_batch_usage_누적_envelope(
     config = make_app_config(concurrency=1)
     personas = [_persona("p-0")]
 
-    async with MlxLLMClient(config.llm) as client:
+    async with LLMClient(config.llm) as client:
         envelope = await run_batch(
             personas=personas,
             product="반찬",
@@ -541,7 +541,7 @@ async def test_run_batch_부분_실패_50_미만_partial_failure(
     config = make_app_config(concurrency=1, retry_max_attempts=3)
     personas = [_persona(f"p-{i}") for i in range(4)]
 
-    async with MlxLLMClient(config.llm) as client:
+    async with LLMClient(config.llm) as client:
         envelope = await run_batch(
             personas=personas,
             product="반찬",
@@ -568,7 +568,7 @@ async def test_run_batch_personas_비어있음_ConfigError(
     tmp_path: Path,
 ) -> None:
     config = make_app_config()
-    async with MlxLLMClient(config.llm) as client:
+    async with LLMClient(config.llm) as client:
         with pytest.raises(ConfigError):
             await run_batch(
                 personas=[],
@@ -591,7 +591,7 @@ async def test_run_batch_questions_비어있음_ConfigError(
     tmp_path: Path,
 ) -> None:
     config = make_app_config()
-    async with MlxLLMClient(config.llm) as client:
+    async with LLMClient(config.llm) as client:
         with pytest.raises(ConfigError):
             await run_batch(
                 personas=[_persona("p")],
@@ -622,7 +622,7 @@ async def test_run_batch_헬스체크_실패_ServerNotReachableError(
     )
 
     config = make_app_config()
-    async with MlxLLMClient(config.llm) as client:
+    async with LLMClient(config.llm) as client:
         with pytest.raises(ServerNotReachableError):
             await run_batch(
                 personas=[_persona("p")],
@@ -661,7 +661,7 @@ async def test_run_batch_save_False_파일_미저장(
     )
 
     config = make_app_config()
-    async with MlxLLMClient(config.llm) as client:
+    async with LLMClient(config.llm) as client:
         envelope = await run_batch(
             personas=[_persona("p")],
             product="반찬",
@@ -691,10 +691,10 @@ async def test_run_batch_concurrency_제한_2_동시실행(
 ) -> None:
     """동시성 2일 때 동시에 실행되는 task 수가 2를 초과하지 않는다.
 
-    ``MlxLLMClient.chat``을 monkeypatch로 가짜 함수로 교체해 카운터를 둔다.
+    ``LLMClient.chat``을 monkeypatch로 가짜 함수로 교체해 카운터를 둔다.
     """
 
-    from src.llm_client import MlxLLMClient as _Client
+    from src.llm_client import LLMClient as _Client
     from src.models import ChatResponse
 
     _add_models_response(httpx_mock)
@@ -727,7 +727,7 @@ async def test_run_batch_concurrency_제한_2_동시실행(
 
     config = make_app_config(concurrency=2)
     personas = [_persona(f"p-{i}") for i in range(5)]
-    async with MlxLLMClient(config.llm) as client:
+    async with LLMClient(config.llm) as client:
         envelope = await run_batch(
             personas=personas,
             product="반찬",

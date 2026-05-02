@@ -16,7 +16,7 @@ import pytest
 
 from main import MESSAGES
 from src.config import BatchConfig, LlmConfig
-from src.llm_client import MlxLLMClient
+from src.llm_client import LLMClient
 from src.load_personas import _sample_indices, parse_filter
 from src.models import (
     ConfigError,
@@ -256,7 +256,7 @@ def test_API_KEY_누락_chat_차단_한국어_메시지() -> None:
     import asyncio
 
     async def _check():
-        async with MlxLLMClient(cfg) as client:
+        async with LLMClient(cfg) as client:
             try:
                 await client.chat([{"role": "user", "content": "x"}])
             except ConfigError as exc:

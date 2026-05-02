@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from src.llm_client import MlxLLMClient
+from src.llm_client import LLMClient
 from src.models import (
     Flags,
     InterviewRecord,
@@ -688,7 +688,7 @@ async def test_generate_qualitative_insights_정상(httpx_mock, make_app_config)
     quant = compute_quant(records, top_n=10, include_drift=False)
 
     config = make_app_config()
-    async with MlxLLMClient(config.llm) as client:
+    async with LLMClient(config.llm) as client:
         insights = await generate_qualitative_insights(
             records, quant, client, config, product="반찬"
         )
@@ -712,7 +712,7 @@ async def test_generate_qualitative_insights_LLM_실패_fallback(
     quant = compute_quant(records, top_n=10, include_drift=False)
 
     config = make_app_config(retry_max_attempts=3)
-    async with MlxLLMClient(config.llm) as client:
+    async with LLMClient(config.llm) as client:
         insights = await generate_qualitative_insights(
             records, quant, client, config, product="반찬"
         )
@@ -738,7 +738,7 @@ async def test_generate_qualitative_insights_valid_0_fallback(
     )
     config = make_app_config()
     # llm 호출 없음을 보장하기 위해 클라이언트는 만들되 chat을 등록하지 않는다.
-    async with MlxLLMClient(config.llm) as client:
+    async with LLMClient(config.llm) as client:
         insights = await generate_qualitative_insights(
             [], quant, client, config, product="x"
         )
@@ -805,7 +805,7 @@ async def test_generate_report_E2E_마크다운_저장(
     config = make_app_config()
     options = ReportOptions(top_n=10, include_drift=False, output_dir=None)
 
-    async with MlxLLMClient(config.llm) as client:
+    async with LLMClient(config.llm) as client:
         report_path = await generate_report(
             json_path=json_path,
             options=options,
@@ -836,7 +836,7 @@ async def test_generate_report_정상_record_0건_EmptyValidRecordsError(
     config = make_app_config()
     options = ReportOptions(top_n=10, include_drift=False, output_dir=None)
 
-    async with MlxLLMClient(config.llm) as client:
+    async with LLMClient(config.llm) as client:
         with pytest.raises(EmptyValidRecordsError):
             await generate_report(
                 json_path=json_path,
@@ -1002,7 +1002,7 @@ async def test_run_batch_partial_failure_threshold_외부화(
     """partial_failure_threshold를 0.9로 올리면 80% 성공도 partial로 분류한다."""
 
     from src.batch import run_batch
-    from src.llm_client import MlxLLMClient
+    from src.llm_client import LLMClient
 
     # /models healthcheck
     httpx_mock.add_response(
@@ -1076,7 +1076,7 @@ async def test_run_batch_partial_failure_threshold_외부화(
         retry_backoff_seconds=(0.0, 0.0, 0.0),
     )
 
-    async with MlxLLMClient(config.llm) as client:
+    async with LLMClient(config.llm) as client:
         envelope = await run_batch(
             personas=personas,
             product="제품",

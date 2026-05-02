@@ -4,7 +4,7 @@
 모은다. 동시성은 ``asyncio.Semaphore``로 제어하며 진행률은 tqdm 수동 패턴으로
 표시한다(TDD §3.6, §9, UI §6).
 
-application 계층이며 infrastructure(``MlxLLMClient``)와 domain
+application 계층이며 infrastructure(``LLMClient``)와 domain
 (``InterviewRecord``, ``RunMeta``, ``BatchResult``)을 조합한다(architecture.md
 §1, §2). 단일 페르소나 task 실패가 다른 task를 죽이지 않도록 ``return_exceptions``
 패턴을 사용하고, 시작 직전 ``client.healthcheck()``를 1회 호출해 서버 가용성을
@@ -480,7 +480,7 @@ async def run_batch(
         product: 사업 아이템 한 줄 설명.
         questions: 질문 리스트(1개 이상).
         follow_ups: 사용자 정의 follow-up 리스트(빈 리스트 허용).
-        llm: ``async with`` 컨텍스트 안의 ``MlxLLMClient``.
+        llm: ``async with`` 컨텍스트 안의 ``LLMClient``.
         config: ``AppConfig`` 전체. ``llm``/``batch``/``interview`` 섹션을 사용한다.
         output_dir: 결과 JSON 저장 디렉토리.
         slug: 파일명 슬러그(기본 ``korea-persona-interview``).

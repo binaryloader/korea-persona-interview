@@ -36,7 +36,7 @@ from src.interview import (
     summarize_interview,
     truncate_history,
 )
-from src.llm_client import MlxLLMClient
+from src.llm_client import LLMClient
 from src.models import (
     Flags,
     InterviewRecord,
@@ -853,7 +853,7 @@ async def test_run_interview_정상_경로_completed(
     _add_chat_response(httpx_mock, summary_json)
 
     config = make_app_config()
-    async with MlxLLMClient(config.llm) as client:
+    async with LLMClient(config.llm) as client:
         record = await run_interview(
             persona=fake_persona_meta,
             product="반찬 정기배송",
@@ -900,7 +900,7 @@ async def test_run_interview_자동_follow_up_트리거(
     )
 
     config = make_app_config()
-    async with MlxLLMClient(config.llm) as client:
+    async with LLMClient(config.llm) as client:
         record = await run_interview(
             persona=fake_persona_meta,
             product="반찬",
@@ -943,7 +943,7 @@ async def test_run_interview_거부_감지_status_refused(
     )
 
     config = make_app_config()
-    async with MlxLLMClient(config.llm) as client:
+    async with LLMClient(config.llm) as client:
         record = await run_interview(
             persona=fake_persona_meta,
             product="반찬",
@@ -988,7 +988,7 @@ async def test_run_interview_drift_감지_status_drift(
     )
 
     config = make_app_config()
-    async with MlxLLMClient(config.llm) as client:
+    async with LLMClient(config.llm) as client:
         record = await run_interview(
             persona=fake_persona_meta,
             product="반찬",
@@ -1010,7 +1010,7 @@ async def test_run_interview_questions_비어있음_ConfigError(
     from src.models import ConfigError
 
     config = make_app_config()
-    async with MlxLLMClient(config.llm) as client:
+    async with LLMClient(config.llm) as client:
         with pytest.raises(ConfigError):
             session = InterviewSession(
                 persona=fake_persona_meta,
@@ -1038,7 +1038,7 @@ async def test_run_interview_LLM_실패_status_failed(
         )
 
     config = make_app_config(retry_max_attempts=3)
-    async with MlxLLMClient(config.llm) as client:
+    async with LLMClient(config.llm) as client:
         record = await run_interview(
             persona=fake_persona_meta,
             product="반찬",
@@ -1078,7 +1078,7 @@ async def test_summarize_interview_정상(httpx_mock, make_app_config) -> None:
         MessageEntry(role="user", content="질문"),
         MessageEntry(role="assistant", content="답변"),
     ]
-    async with MlxLLMClient(config.llm) as client:
+    async with LLMClient(config.llm) as client:
         result = await summarize_interview(msgs, client, config.llm)
 
     assert result is not None
@@ -1099,7 +1099,7 @@ async def test_summarize_interview_파싱_실패_2회후_None(
         MessageEntry(role="user", content="질문"),
         MessageEntry(role="assistant", content="답변"),
     ]
-    async with MlxLLMClient(config.llm) as client:
+    async with LLMClient(config.llm) as client:
         result = await summarize_interview(msgs, client, config.llm)
 
     assert result is None
@@ -1210,7 +1210,7 @@ async def test_run_interview_single_turn_정상_파싱(
     )
 
     config = make_app_config(single_turn=True)
-    async with MlxLLMClient(config.llm) as client:
+    async with LLMClient(config.llm) as client:
         record = await run_interview(
             persona=fake_persona_meta,
             product="반찬 정기배송",
@@ -1262,7 +1262,7 @@ async def test_run_interview_single_turn_부분_파싱_fallback(
     )
 
     config = make_app_config(single_turn=True)
-    async with MlxLLMClient(config.llm) as client:
+    async with LLMClient(config.llm) as client:
         record = await run_interview(
             persona=fake_persona_meta,
             product="반찬",
@@ -1306,7 +1306,7 @@ async def test_run_interview_single_turn_drift_감지(
     )
 
     config = make_app_config(single_turn=True)
-    async with MlxLLMClient(config.llm) as client:
+    async with LLMClient(config.llm) as client:
         record = await run_interview(
             persona=fake_persona_meta,
             product="반찬",
@@ -1345,7 +1345,7 @@ async def test_run_interview_single_turn_chat_호출_1회_멀티턴_대비_절�
     )
 
     config = make_app_config(single_turn=True)
-    async with MlxLLMClient(config.llm) as client:
+    async with LLMClient(config.llm) as client:
         record = await run_interview(
             persona=fake_persona_meta,
             product="제품",
@@ -1390,7 +1390,7 @@ async def test_run_interview_single_turn_자동_follow_up_비활성화(
     )
 
     config = make_app_config(single_turn=True)
-    async with MlxLLMClient(config.llm) as client:
+    async with LLMClient(config.llm) as client:
         record = await run_interview(
             persona=fake_persona_meta,
             product="제품",
@@ -1473,7 +1473,7 @@ async def test_run_interview_auto_follow_up_max_0이면_비활성(
     )
 
     config = make_app_config(auto_follow_up_max=0)
-    async with MlxLLMClient(config.llm) as client:
+    async with LLMClient(config.llm) as client:
         record = await run_interview(
             persona=fake_persona_meta,
             product="반찬",
@@ -1629,7 +1629,7 @@ async def test_run_interview_auto_follow_up_text_커스텀_적용(
     )
 
     config = make_app_config(auto_follow_up_text=custom_text)
-    async with MlxLLMClient(config.llm) as client:
+    async with LLMClient(config.llm) as client:
         record = await run_interview(
             persona=fake_persona_meta,
             product="반찬",

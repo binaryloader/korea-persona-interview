@@ -13,7 +13,7 @@
 ``should_auto_follow_up``, ``detect_persona_drift``, ``detect_refusal``)는 모듈
 함수로 분리해 단위 테스트 용이성을 확보한다(TDD §16).
 
-application 계층이며, infrastructure(``MlxLLMClient``, OpenAI 호환 클라이언트)와
+application 계층이며, infrastructure(``LLMClient``, OpenAI 호환 클라이언트)와
 domain(``PersonaMeta``, ``InterviewRecord`` 등)을 조합한다(architecture.md §1, §2).
 """
 
@@ -966,7 +966,7 @@ class InterviewSession:
 
     ::
 
-        async with MlxLLMClient(cfg.llm) as client:
+        async with LLMClient(cfg.llm) as client:
             session = InterviewSession(persona, product, questions, follow_ups, client, cfg)
             record = await session.run()
 
@@ -1259,7 +1259,7 @@ class InterviewSession:
         )
 
     async def _call_llm(self, messages: list) -> tuple:
-        """``MlxLLMClient.chat``을 호출하고 응답 메타를 반환한다.
+        """``LLMClient.chat``을 호출하고 응답 메타를 반환한다.
 
         OpenAI 호환 dict 형식으로 변환하여 보낸다.
 

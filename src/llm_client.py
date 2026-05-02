@@ -47,16 +47,17 @@ _INVALID_API_KEY_MESSAGE = (
 )
 
 
-class MlxLLMClient:
+class LLMClient:
     """Async client for the OpenAI Chat Completions API and compatible servers.
 
-    Class name is preserved for import compatibility with earlier releases of
-    this package. New code should depend on the ``LLMBackend`` protocol from
-    ``llm_backend`` rather than this concrete class.
+    The class is provider-agnostic in name (the legacy ``MlxLLMClient`` alias
+    has been removed in v1.1). New code should depend on the ``LLMBackend``
+    protocol from ``llm_backend`` rather than this concrete class so the
+    underlying transport (OpenAI / Anthropic / MCP sampling) stays swappable.
 
     Example::
 
-        async with MlxLLMClient(cfg.llm) as client:
+        async with LLMClient(cfg.llm) as client:
             models = await client.healthcheck()
             response = await client.chat(messages, max_tokens=500)
 
@@ -72,7 +73,7 @@ class MlxLLMClient:
         self._config = config
         self._client: Optional[httpx.AsyncClient] = None
 
-    async def __aenter__(self) -> "MlxLLMClient":
+    async def __aenter__(self) -> "LLMClient":
         self._client = httpx.AsyncClient(timeout=self._config.timeout)
         return self
 
@@ -280,7 +281,7 @@ class MlxLLMClient:
     def _require_client(self) -> httpx.AsyncClient:
         if self._client is None:
             raise RuntimeError(
-                "MlxLLMClient는 async with 블록 안에서만 사용할 수 있다"
+                "LLMClient는 async with 블록 안에서만 사용할 수 있다"
             )
         return self._client
 

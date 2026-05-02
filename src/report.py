@@ -4,7 +4,7 @@
 리포트를 생성한다(TDD §3.7, UI §4). ``statistics`` 모듈만 사용하고 numpy/scipy
 의존을 도입하지 않는다(dependency.md §1).
 
-application 계층이며 infrastructure(``MlxLLMClient``)와 domain(``InterviewRecord``,
+application 계층이며 infrastructure(``LLMClient``)와 domain(``InterviewRecord``,
 ``StructuredSummary``)을 조합한다(architecture.md §1).
 
 리포트 마크다운은 H2 4개 섹션이다.
