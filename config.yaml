@@ -125,6 +125,10 @@ report:
   top_n_default: 10
   histogram_bins: 10
   bar_width: 30
+  # 정성 인사이트 호출에만 사용할 별도 모델 ID. null이면 인터뷰와 같은
+  # llm.model을 사용한다. 인터뷰는 gpt-4o-mini로 돌리고 인사이트 한 번만
+  # gpt-4o로 깊이 있는 통찰을 받는 흐름을 단일 옵션으로 지원한다.
+  insight_model: null
 
 output:
   output_dir: "outputs/"

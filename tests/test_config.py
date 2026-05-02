@@ -574,6 +574,35 @@ def test_load_config_batch_partial_failure_threshold_default(tmp_path: Path) -> 
     assert cfg.batch.partial_failure_threshold == 0.5
 
 
+def test_load_config_report_insight_model_default_None(tmp_path: Path) -> None:
+    """report.insight_model default는 None(라운드 G13)."""
+
+    cfg = load_config(yaml_path=tmp_path / "no.yaml")
+    assert cfg.report.insight_model is None
+
+
+def test_load_config_report_insight_model_yaml_override(tmp_path: Path) -> None:
+    """yaml의 report.insight_model이 ReportConfig에 그대로 반영된다."""
+
+    yaml_path = tmp_path / "config.yaml"
+    yaml_path.write_text(
+        "report:\n  insight_model: gpt-4o\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(yaml_path=yaml_path)
+    assert cfg.report.insight_model == "gpt-4o"
+
+
+def test_load_config_report_insight_model_cli_override(tmp_path: Path) -> None:
+    """CLI overrides도 report.insight_model을 갈아 끼운다."""
+
+    cfg = load_config(
+        yaml_path=tmp_path / "no.yaml",
+        cli_overrides={"report": {"insight_model": "claude-sonnet-4-5"}},
+    )
+    assert cfg.report.insight_model == "claude-sonnet-4-5"
+
+
 def test_load_config_batch_partial_failure_threshold_override(tmp_path: Path) -> None:
     """yaml override가 그대로 반영된다."""
 

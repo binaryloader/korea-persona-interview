@@ -190,6 +190,7 @@ class ReportConfig:
     top_n_default: int = 10
     histogram_bins: int = 10
     bar_width: int = 30
+    insight_model: Optional[str] = None
 
     def __post_init__(self) -> None:
         if self.cohort_min_cell < 1:
@@ -313,6 +314,7 @@ def _default_dict() -> dict:
             "top_n_default": 10,
             "histogram_bins": 10,
             "bar_width": 30,
+            "insight_model": None,
         },
         "output": {
             "output_dir": "outputs/",
@@ -578,11 +580,18 @@ def load_config(
             ),
         )
         report_raw = merged.get("report") or {}
+        insight_model_raw = report_raw.get("insight_model")
+        insight_model_val: Optional[str] = (
+            str(insight_model_raw).strip() or None
+            if insight_model_raw not in (None, "")
+            else None
+        )
         report_cfg = ReportConfig(
             cohort_min_cell=int(report_raw.get("cohort_min_cell", 3)),
             top_n_default=int(report_raw.get("top_n_default", 10)),
             histogram_bins=int(report_raw.get("histogram_bins", 10)),
             bar_width=int(report_raw.get("bar_width", 30)),
+            insight_model=insight_model_val,
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise ConfigError(f"설정 필드 변환 실패: {exc}") from exc

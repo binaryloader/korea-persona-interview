@@ -1197,6 +1197,16 @@ async def _run_batch_async(
         "config.yaml의 llm.model을 일회성으로 덮어쓴다(우선순위: --model > config.yaml > 기본값)."
     ),
 )
+@click.option(
+    "--insight-model",
+    "insight_model_override",
+    default=None,
+    help=(
+        "정성 인사이트 호출에만 사용할 별도 모델 ID. 미지정 시 ``--model`` 또는 "
+        "``config.yaml``의 ``report.insight_model`` 또는 ``llm.model``을 본다. "
+        "예: 인터뷰는 mini로 돌리고 인사이트는 ``gpt-4o``/``claude-sonnet-4-5``로."
+    ),
+)
 @click.pass_context
 def report(
     ctx: click.Context,
@@ -1207,6 +1217,7 @@ def report(
     provider: Optional[str],
     base_url: Optional[str],
     model_override: Optional[str],
+    insight_model_override: Optional[str],
 ) -> None:
     """report 진입점(PRD §5.9, UI §2.4)."""
 
@@ -1222,6 +1233,8 @@ def report(
         if model_override:
             llm_overrides["model"] = model_override
         cli_overrides["llm"] = llm_overrides
+    if insight_model_override:
+        cli_overrides.setdefault("report", {})["insight_model"] = insight_model_override
 
     try:
         config, console = _common_setup(
@@ -1325,7 +1338,30 @@ async def _run_report_async(
     options: ReportOptions,
     config: AppConfig,
 ) -> Path:
-    """리포트는 LLM 호출 1회를 포함한다. 호출 실패는 ``generate_report``에서 흡수."""
+    """리포트는 LLM 호출 1회를 포함한다. 호출 실패는 ``generate_report``에서 흡수.
+
+    ``config.report.insight_model``이 지정되면 정성 인사이트 호출 한정으로
+    ``LlmConfig.model``만 갈아끼운 별도 backend를 만든다. 인터뷰 단계는 mini,
+    인사이트는 4o/sonnet 류 더 깊은 모델로 분리하는 흐름을 yaml/CLI에서 단일
+    옵션으로 지원한다.
+    """
+
+    insight_model = (
+        config.report.insight_model.strip()
+        if config.report.insight_model
+        else None
+    )
+    if insight_model and insight_model != config.llm.model:
+        import dataclasses as _dc
+
+        insight_llm = _dc.replace(config.llm, model=insight_model)
+        async with build_cli_backend(insight_llm) as client:
+            return await generate_report(
+                json_path=json_path,
+                options=options,
+                llm=client,
+                config=config,
+            )
 
     async with build_cli_backend(config.llm) as client:
         return await generate_report(
