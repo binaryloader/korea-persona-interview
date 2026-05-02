@@ -4,7 +4,7 @@
 
 PRD 참조 위치는 아래와 같다.
 
-- 전체 PRD: `/Users/binaryloader/Desktop/repository/binaryloader/korea-persona-interview/docs/prd/korea-persona-interview.md`
+- 전체 PRD: [docs/prd/korea-persona-interview.md](../prd/korea-persona-interview.md)
 - CLI 서브커맨드 정의: PRD §5.9
 - 실패 모드: PRD §5.8
 - 리포트 정량/정성 지표: PRD §5.6, §5.7
