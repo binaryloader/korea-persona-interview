@@ -1,12 +1,12 @@
 # PRD: korea-persona-interview
 
-기능 슬러그는 `korea-persona-interview`로 확정한다. 저장소명, 패키지 디렉토리, 문서 경로, 출력 파일 prefix 모두 동일한 슬러그를 사용한다. 후보였던 `persona-interview`는 한국 페르소나라는 핵심 도메인을 잃고, `kpi-cli`는 핵심 성과 지표 약어와 충돌하므로 제외한다.
+기능 슬러그는 `korea-persona-interview`로 확정한다. 저장소명, 패키지 디렉토리, 문서 경로, 출력 파일 prefix 모두 동일한 슬러그를 사용한다. 후보였던 `persona-interview`는 한국 페르소나라는 핵심 도메인을 잃고 `kpi-cli`는 핵심 성과 지표 약어와 충돌하므로 제외한다.
 
 ## 1. 배경
 
 1인 창업자, 사이드 프로젝트 기획자, 초기 단계 프로덕트 매니저는 사업 아이템을 검증하기 위해 잠재 고객 인터뷰가 필요하지만 시간과 비용 제약이 크다. 한국인 응답자 10-30명을 모집해 1차 정성 인터뷰만 진행해도 모집비, 수당, 일정 조율로 수백만 원과 1-2주가 소요된다. 동시에 인터뷰 대상 모집은 친구/지인 편향에 빠지기 쉬워 통계적으로 가까운 분포의 표본을 얻기도 어렵다.
 
-엔비디아가 2025년 공개한 `nvidia/Nemotron-Personas-Korea` 데이터셋은 약 100만 레코드, 약 700만 합성 페르소나를 CC BY 4.0 라이선스로 제공한다. 인구 통계 분포에 가깝게 합성된 한국인 페르소나에 OpenAI Chat Completions API를 결합하면, 실제 인터뷰 이전 단계의 빠른 가설 검증과 페르소나별 반응 시뮬레이션이 가능하다. v1은 OpenAI 백엔드(기본 모델 `gpt-4o-mini`)를 사용한다. 본 결정의 배경과 대안 비교는 ADR-002(`docs/adr/2026-05-02-openai-backend-migration.md`)에 기록한다.
+엔비디아가 2025년 공개한 `nvidia/Nemotron-Personas-Korea` 데이터셋은 약 100만 레코드, 약 700만 합성 페르소나를 CC BY 4.0 라이선스로 제공한다. 인구 통계 분포에 가깝게 합성된 한국인 페르소나에 OpenAI Chat Completions API를 결합하면 실제 인터뷰 이전 단계의 빠른 가설 검증과 페르소나별 반응 시뮬레이션이 가능하다. v1은 OpenAI 백엔드(기본 모델 `gpt-4o-mini`)를 사용한다. 본 결정의 배경과 대안 비교는 ADR-002(`docs/adr/2026-05-02-openai-backend-migration.md`)에 기록한다.
 
 본 도구는 진짜 인터뷰를 대체하지 않는다. 진짜 인터뷰 직전 단계의 가설 정리, 질문지 점검, 초기 페르소나 가설 수립을 빠르게 반복하는 용도로 한정한다. 결과의 한계와 합성 페르소나라는 사실, 그리고 사업 아이템 본문이 사용자가 설정한 LLM 백엔드(OpenAI / Anthropic / 로컬 LLM / MCP 호스트 에이전트)로 송신된다는 사실을 사용자 인터페이스와 출력물 모두에서 명시한다.
 
@@ -87,8 +87,8 @@
   - 자동 follow-up: 답변 길이가 20자 미만이거나 모호한 키워드(예: "글쎄요", "잘 모르겠습니다", "딱히")만 포함되면 시스템이 "조금만 더 자세히 말씀해 주실 수 있을까요?" 류 follow-up을 1회 추가한다(상한 1회)
   - 사용자 정의 follow-up: 명령행 인자 `--follow-up "질문 1" "질문 2"`로 모든 페르소나에 공통 적용되는 후속 질문을 추가할 수 있다
 - 인터뷰 종료 후 별도 프롬프트로 구조화 요약을 생성한다(2단계 흐름)
-- 멀티턴은 v1의 기본값이다. 단일턴 옵션은 `--single-turn` 플래그로 명시한 경우에만 동작한다(빠른 dry-run, 토큰 절약 목적). 단일턴 모드는 모든 질문(메인 + 사용자 정의 follow-up)을 한 번의 chat 호출에 묶어 보내고, 모델 응답 텍스트를 `1. ... 2. ... 3. ...` 번호 형식으로 question_index별 분리한다. 자동 follow-up은 단일턴에서 비활성화된다(한 번에 다 묶어 보내므로). 응답 번호 파싱이 실패하면 `flags.parse_failed: true`로 표시하고 마지막 question에 통째 텍스트를 fallback으로 저장해 데이터를 잃지 않는다
-- v1.1.0부터 `--resume PATH` 옵션을 지원한다. 이전 결과 JSON 경로를 받아 status가 `failed`인 record만 재시도하고 나머지(`completed`/`refused`/`drift`)는 그대로 보존한다. personas는 입력 JSON과 같은 시드/필터/ID 매칭으로 다시 샘플링되며, 새 결과는 새 timestamp 파일로 저장되고 `meta_extra.previous_run_id`에 입력 JSON의 `interview_id`가 박힌다. 모든 record가 이미 completed인 경우 LLM 호출 자체를 건너뛴다
+- 멀티턴은 v1의 기본값이다. 단일턴 옵션은 `--single-turn` 플래그로 명시한 경우에만 동작한다(빠른 dry-run, 토큰 절약 목적). 단일턴 모드는 모든 질문(메인 + 사용자 정의 follow-up)을 한 번의 chat 호출에 묶어 보내고 모델 응답 텍스트를 `1. ... 2. ... 3. ...` 번호 형식으로 question_index별 분리한다. 자동 follow-up은 단일턴에서 비활성화된다(한 번에 다 묶어 보내므로). 응답 번호 파싱이 실패하면 `flags.parse_failed: true`로 표시하고 마지막 question에 통째 텍스트를 fallback으로 저장해 데이터를 잃지 않는다
+- v1.1.0부터 `--resume PATH` 옵션을 지원한다. 이전 결과 JSON 경로를 받아 status가 `failed`인 record만 재시도하고 나머지(`completed`/`refused`/`drift`)는 그대로 보존한다. personas는 입력 JSON과 같은 시드/필터/ID 매칭으로 다시 샘플링되며 새 결과는 새 timestamp 파일로 저장되고 `meta_extra.previous_run_id`에 입력 JSON의 `interview_id`가 박힌다. 모든 record가 이미 completed인 경우 LLM 호출 자체를 건너뛴다
 
 ### 5.2. 페르소나 주입
 
@@ -99,18 +99,18 @@
 - 토글 옵션(`--persona-fields professional,sports,arts,travel,culinary,family` 형식의 다중 선택): 직업인/스포츠/예술/여행/미식/가족 페르소나 자유 서술 필드를 선택적으로 추가
 - 토글 기본값은 기본 묶음만 주입한다. 토큰 사용량과 페르소나 일관성의 균형 관점에서 가장 안정적인 조합이다
 - 시스템 프롬프트 [지침] 섹션에는 family_type 정보를 그대로 반영하고 거주 형태를 추측하지 않도록 한 줄을 명시한다. 25세 1인 가구 페르소나가 ``1인 가구가 아니라서 필요성을 못 느끼겠네요``로 응답하는 회귀 사례를 막기 위함이다
-- 시스템 프롬프트 본문은 `prompts/system_prompt.txt` 외부 파일에 보관한다(라운드 B4). 사용자는 본 파일을 편집하거나 `common.persona.system_prompt_path` 설정으로 다른 파일을 가리켜 도메인 맞춤 톤/지침을 적용할 수 있다. 템플릿에는 `{persona_json}`과 `{product}` 두 placeholder가 반드시 포함되어야 하며, 누락 또는 파일 부재 시 ConfigError로 차단된다(에러 메시지에 경로와 조치 안내 포함)
+- 시스템 프롬프트 본문은 `prompts/system_prompt.txt` 외부 파일에 보관한다(라운드 B4). 사용자는 본 파일을 편집하거나 `common.persona.system_prompt_path` 설정으로 다른 파일을 가리켜 도메인 맞춤 톤/지침을 적용할 수 있다. 템플릿에는 `{persona_json}`과 `{product}` 두 placeholder가 반드시 포함되어야 하며 누락 또는 파일 부재 시 ConfigError로 차단된다(에러 메시지에 경로와 조치 안내 포함)
 
 데이터셋의 실제 컬럼명은 추측하지 않는다. 구현 단계 첫 게이트(§5.10)에서 `ds['train'].column_names` 출력을 확인한 후 위 묶음과 매핑한다. 매핑 결과를 `config.yaml`의 `dataset.field_map` 섹션에 기록해 어디서든 같은 매핑을 사용한다.
 
-v1.1.0부터 사용자는 페르소나를 두 가지 방식으로 고를 수 있다. `--filter` + `--n` + `--seed` 조합은 시드 고정 샘플링이고, `--persona-id UUID` 다중 지정은 명시 페르소나 직접 매칭이다. `--persona-id`를 쓰면 `--n`과 `--seed`는 무시되며 입력한 ID 순서대로 인터뷰가 실행된다. 같은 페르소나 표본에 다른 product/questions로 비교 인터뷰를 돌릴 때(시드 고정 샘플링은 시드 충돌이 있을 수 있으므로) 사용한다. `--filter`와 `--persona-id`를 함께 지정하면 ID 매칭 후 추가로 필터를 통과한 row만 채택한다(교집합). 일부 ID가 데이터셋에 없으면 누락된 ID 목록을 ConfigError 메시지에 담아 즉시 차단한다.
+v1.1.0부터 사용자는 페르소나를 두 가지 방식으로 고를 수 있다. `--filter` + `--n` + `--seed` 조합은 시드 고정 샘플링이고 `--persona-id UUID` 다중 지정은 명시 페르소나 직접 매칭이다. `--persona-id`를 쓰면 `--n`과 `--seed`는 무시되며 입력한 ID 순서대로 인터뷰가 실행된다. 같은 페르소나 표본에 다른 product/questions로 비교 인터뷰를 돌릴 때(시드 고정 샘플링은 시드 충돌이 있을 수 있으므로) 사용한다. `--filter`와 `--persona-id`를 함께 지정하면 ID 매칭 후 추가로 필터를 통과한 row만 채택한다(교집합). 일부 ID가 데이터셋에 없으면 누락된 ID 목록을 ConfigError 메시지에 담아 즉시 차단한다.
 
 ### 5.3. 답변 포맷
 
 본 도구는 답변을 두 단계로 받는다.
 
 - 1단계 자연어 응답: 멀티턴 인터뷰. 시스템 프롬프트의 지침("2-4문장 간결, 솔직한 거절 허용")을 따른다
-- 2단계 구조화 요약: 인터뷰 종료 후 별도의 single-turn 프롬프트로 같은 모델에게 1단계 messages 전체를 입력하고 정해진 JSON 스키마(§5.4의 `structured_summary`)를 출력하도록 요청한다. 본 단계는 모델 응답을 그대로 JSON 파싱하고, 파싱 실패 시 1회 retry 후에도 실패하면 `structured_summary: null`로 record를 저장한다
+- 2단계 구조화 요약: 인터뷰 종료 후 별도의 single-turn 프롬프트로 같은 모델에게 1단계 messages 전체를 입력하고 정해진 JSON 스키마(§5.4의 `structured_summary`)를 출력하도록 요청한다. 본 단계는 모델 응답을 그대로 JSON 파싱하고 파싱 실패 시 1회 retry 후에도 실패하면 `structured_summary: null`로 record를 저장한다
 
 ### 5.4. 결과 JSON 스키마
 
@@ -181,7 +181,7 @@ v1.1.0부터 사용자는 페르소나를 두 가지 방식으로 고를 수 있
 
 스키마 미세 조정 근거는 데이터셋 실제 컬럼 확인 결과(TDD §1)를 반영한 결정이다. `persona_meta.name`은 데이터셋에 별도 이름 컬럼이 없어 v1에서 `null`을 채택한다. `persona_meta.marital`과 `persona_meta.education`은 데이터셋의 `marital_status`, `education_level` 컬럼을 분석 가치를 위해 보존한다. `flags.truncated`는 멀티턴 누적 컨텍스트가 토큰 윈도우(8000)를 초과해 가장 오래된 페어를 제거한 경우를 표시한다(ADR-001 §2, TDD §7). `flags.parse_failed`는 단일턴 모드 응답에서 번호 파싱이 실패해 fallback으로 마지막 question에 통째 텍스트를 저장한 경우를 표시한다(라운드 B1 추가).
 
-v1.1.0에서 schema_version을 1에서 2로 올렸다. 변경 사항은 두 가지다. 첫째, `structured_summary.acceptable_price_signal`을 신설했다. `cheap`/`fair`/`expensive`/`null` 네 값 중 하나가 들어가며, 인터뷰 본문에 명시 숫자가 없어도 정성 가격 신호를 모든 record에 가능한 한 채운다. 둘째, `structured_summary.willingness_to_pay`의 의미를 좁혔다. v1에서는 정성 신호와 명시 숫자가 모두 들어갈 수 있었지만 v2에서는 명시 숫자만 정수로 들어가고 그렇지 않으면 `null`이다. v1 JSON은 `load_interview_json` 단계에서 `acceptable_price_signal=null`로 채워 호환 로드된다. resume 모드(§5.1)에서 생성되는 결과 JSON은 `meta_extra.previous_run_id`에 입력 JSON의 `interview_id`를 함께 박는다.
+v1.1.0에서 schema_version을 1에서 2로 올렸다. 변경 사항은 두 가지다. 첫째, `structured_summary.acceptable_price_signal`을 신설했다. `cheap`/`fair`/`expensive`/`null` 네 값 중 하나가 들어가며 인터뷰 본문에 명시 숫자가 없어도 정성 가격 신호를 모든 record에 가능한 한 채운다. 둘째, `structured_summary.willingness_to_pay`의 의미를 좁혔다. v1에서는 정성 신호와 명시 숫자가 모두 들어갈 수 있었지만 v2에서는 명시 숫자만 정수로 들어가고 그렇지 않으면 `null`이다. v1 JSON은 `load_interview_json` 단계에서 `acceptable_price_signal=null`로 채워 호환 로드된다. resume 모드(§5.1)에서 생성되는 결과 JSON은 `meta_extra.previous_run_id`에 입력 JSON의 `interview_id`를 함께 박는다.
 
 JSON 스키마 결정 근거는 아래와 같다.
 
@@ -232,7 +232,7 @@ JSON 스키마 결정 근거는 아래와 같다.
 
 도구가 처리해야 할 실패 모드와 대응은 아래와 같다.
 
-- 페르소나 깨짐 감지: 응답 텍스트의 영어 단어 비율이 30%를 초과하거나, 페르소나의 연령/성별/지역/거주 형태(`family_type`)와 명백히 모순되는 자기소개가 발견되면 `flags.persona_drift: true`와 `status: "drift"`로 기록한다. v1.1.0부터 연령/성별/지역 축은 거주 형태 축과 동일한 정밀도로 격상되었다. 같은 문장(`.`/`!`/`?` boundary) 안에서 1인칭 주어(`저는`/`나는`/`제가`/`내가`/`난`)와 단언/계사가 함께 등장할 때만 trigger한다. 부정문(`아니`/`아닌`/`아닙`)이 같은 문장에 있으면 정합한 답변으로 보고 제외하고, 3인칭 일반화 표현(`다른 사람들은`/`보통 사람`/`남들`/`타인`)이 같은 문장에 있어도 제외한다. 거주 형태 축은 1인칭 주어 + 거주 동사 정밀 정규식만 매칭하며 `혼자 사시는 분들에겐` 같은 3인칭, `혼자서 끼니를 해결` 같은 행동 표현, 응답에 우연히 들어온 product 키워드(`1인 가구용`)는 trigger에서 제외한다. 영어 비율 분모에서 페르소나 직업명에 등장하는 영문 토큰(`IT 컨설턴트`, `UX 디자이너`)은 옵션(`heuristics.occupation_english_whitelist: true`, 기본 ON)에 따라 제외한다. v1.1.0에 도입된 `heuristics.llm_drift_review: true`(기본 OFF) 옵션은 휴리스틱이 drift 의심으로 판정한 record에 한해 1-token LLM 호출로 재판정한다. ok 판정이면 drift 플래그를 해제해 false positive를 줄이며, drift 판정이거나 호출 실패면 보수적으로 drift 라벨을 유지한다(TDD §8.2 참조)
+- 페르소나 깨짐 감지: 응답 텍스트의 영어 단어 비율이 30%를 초과하거나, 페르소나의 연령/성별/지역/거주 형태(`family_type`)와 명백히 모순되는 자기소개가 발견되면 `flags.persona_drift: true`와 `status: "drift"`로 기록한다. v1.1.0부터 연령/성별/지역 축은 거주 형태 축과 동일한 정밀도로 격상되었다. 같은 문장(`.`/`!`/`?` boundary) 안에서 1인칭 주어(`저는`/`나는`/`제가`/`내가`/`난`)와 단언/계사가 함께 등장할 때만 trigger한다. 부정문(`아니`/`아닌`/`아닙`)이 같은 문장에 있으면 정합한 답변으로 보고 제외하고 3인칭 일반화 표현(`다른 사람들은`/`보통 사람`/`남들`/`타인`)이 같은 문장에 있어도 제외한다. 거주 형태 축은 1인칭 주어 + 거주 동사 정밀 정규식만 매칭하며 `혼자 사시는 분들에겐` 같은 3인칭, `혼자서 끼니를 해결` 같은 행동 표현, 응답에 우연히 들어온 product 키워드(`1인 가구용`)는 trigger에서 제외한다. 영어 비율 분모에서 페르소나 직업명에 등장하는 영문 토큰(`IT 컨설턴트`, `UX 디자이너`)은 옵션(`heuristics.occupation_english_whitelist: true`, 기본 ON)에 따라 제외한다. v1.1.0에 도입된 `heuristics.llm_drift_review: true`(기본 OFF) 옵션은 휴리스틱이 drift 의심으로 판정한 record에 한해 1-token LLM 호출로 재판정한다. ok 판정이면 drift 플래그를 해제해 false positive를 줄이며 drift 판정이거나 호출 실패면 보수적으로 drift 라벨을 유지한다(TDD §8.2 참조)
 - 짧은 답변: 답변 길이가 20자 미만이면 자동 follow-up 1회 시도 후에도 짧으면 그대로 record에 기록한다. 자동 follow-up 사용 여부는 `flags.auto_follow_up_used`에 기록한다
 - 모델 거부: 응답에 거부 키워드(예: "답변할 수 없습니다", "I cannot", "I'm sorry, but")가 포함되면 `flags.refusal_detected: true`와 `status: "refused"`로 기록한다. retry는 시도하지 않는다(같은 거부가 반복될 가능성이 높다)
 - 토큰 루프 가드: 동일 토큰/구절이 max_tokens 한도에 가까워질 때까지 반복되는 응답을 감지하면 해당 record를 `status: "failed"`로 기록한다. OpenAI gpt-4o-mini에서는 거의 발생하지 않지만 회귀 안전망으로 둔다
@@ -267,7 +267,7 @@ CLI는 4개 서브커맨드를 제공한다. 매크로 명령(예: `run-all`)은
 
 - 100명 인터뷰 1회를 5-10분 이내에 완료한다(질문 5개, 동시성 4 가정). gpt-4o-mini 기준 한 턴 응답이 약 1-3초로 추정되며 동시성 4-10 구간은 OpenAI rate limit 여유 안에서 처리량을 크게 끌어올린다. v1.0의 30분 SLO는 로컬 MLX 시절 보수 추정치였고 v1.x OpenAI 백엔드에서는 5-10분 SLO로 갱신한다
 - 데이터셋 첫 로드는 5분 이내에 완료한다(`~/.cache/huggingface` 캐시 활용). 두 번째 실행부터는 30초 이내에 시작한다
-- 동시성 기본값은 4로 둔다. `asyncio.Semaphore(4)` 기준이다. 사용자가 `--concurrency` 옵션으로 1-10 범위에서 조정할 수 있다. 11 이상은 차단한다(OpenAI rate limit 부하 방지). v1.0 시절 1-3 범위는 로컬 MLX 메모리 가드였고, OpenAI 백엔드에서는 메모리 가드가 무관해 1-10으로 상향했다
+- 동시성 기본값은 4로 둔다. `asyncio.Semaphore(4)` 기준이다. 사용자가 `--concurrency` 옵션으로 1-10 범위에서 조정할 수 있다. 11 이상은 차단한다(OpenAI rate limit 부하 방지). v1.0 시절 1-3 범위는 로컬 MLX 메모리 가드였고 OpenAI 백엔드에서는 메모리 가드가 무관해 1-10으로 상향했다
 - v1.1.0부터 OpenAI 호환 streaming 응답을 옵션(`llm.streaming: true`, 기본 OFF)으로 지원한다. 첫 토큰 시간이 빨라지지만 일부 호환 서버는 SSE 형식이 미묘하게 다르므로 default OFF를 유지한다. provider=anthropic 또는 MCP orchestrator 모드에서는 무시된다(MCP orchestrator는 호스트 sub-agent가 LLM 호출을 소유하므로 본 옵션과 무관하다)
 
 ### 6.2. 신뢰성
@@ -303,7 +303,7 @@ CLI는 4개 서브커맨드를 제공한다. 매크로 명령(예: `run-all`)은
   - Anthropic Messages API(`provider=anthropic`)
   - OpenAI 호환 로컬 서버(mlx_lm.server, vLLM, llama.cpp 등). `provider=openai` + `--base-url` override
 - MCP 진입점은 `mcp.mode` 토글로 두 경로를 노출한다(ADR-005). 자동 fallback은 두지 않는다. v1.2.0(ADR-005)에서 `mcp.mode: "sampling"`은 제거됐고 `mcp.mode: "orchestrator"`가 신설됐다
-  - `mcp.mode: "orchestrator"`(기본)는 server-side에서 LLM을 호출하지 않는다. 호스트 sub-agent가 자기 LLM으로 인터뷰를 수행하고, 본 도구는 데이터/프롬프트 helper만 노출한다. server-side 키 불필요. 응답 라벨은 `mcp_orchestrator`다. v1.2.0 후속 정리에서 default가 `server`에서 본 값으로 바뀌었다(키 설정 없이 즉시 동작하므로 신규 사용자 마찰이 가장 작다)
+  - `mcp.mode: "orchestrator"`(기본)는 server-side에서 LLM을 호출하지 않는다. 호스트 sub-agent가 자기 LLM으로 인터뷰를 수행하고 본 도구는 데이터/프롬프트 helper만 노출한다. server-side 키 불필요. 응답 라벨은 `mcp_orchestrator`다. v1.2.0 후속 정리에서 default가 `server`에서 본 값으로 바뀌었다(키 설정 없이 즉시 동작하므로 신규 사용자 마찰이 가장 작다)
   - `mcp.mode: "server"`는 server-side OpenAI/Anthropic 백엔드를 사용한다. CLI와 동일한 `LlmConfig`를 그대로 활용하므로 mcp.json env 또는 `.env`에 `OPENAI_API_KEY` 또는 `ANTHROPIC_API_KEY`가 필요하다. 응답 라벨은 `mcp_server`다
 - 진입점은 셋이다. CLI, MCP server, MCP orchestrator. 어떤 진입점이 사용되었는지에 따라 노출되는 도구 집합과 LLM 호출 위치가 달라진다(상세 매트릭스는 README와 INDEX §3.4)
 - 인터넷 접근은 직접 호출 provider(OpenAI/Anthropic)와 데이터셋 첫 로드 시 Hugging Face Hub에 한해 필요하다. 로컬 LLM 또는 MCP orchestrator 경로는 server-side에서 인터넷 없이도 동작 가능하다(데이터셋 캐시 필요. 호스트 sub-agent가 호출하는 LLM은 호스트 정책을 따른다)
@@ -437,8 +437,8 @@ CLI는 4개 서브커맨드를 제공한다. 매크로 명령(예: `run-all`)은
 ### 10.9. provider별 응답 품질 차이
 
 - 위험: ADR-003 채택으로 OpenAI/Anthropic/로컬 LLM 진입점이 활성화되었고 ADR-005에서 MCP orchestrator 모드가 추가되었다. 페르소나 일관성과 drift 비율은 `gpt-4o-mini` 기준으로만 검증된 상태다. 다른 provider 또는 모델, 호스트 sub-agent의 LLM(MCP orchestrator)으로 전환했을 때 페르소나 추종력이 달라질 수 있다. MCP orchestrator 모드에서는 휴리스틱이 자동 적용되지 않으므로 호스트가 helper 도구(`detect_persona_drift`, `should_auto_follow_up`)를 명시 호출하지 않으면 drift/follow-up 정책이 누락될 수 있다는 위험이 추가된다
-- 완화: README "Choosing a model" 섹션에 검증 기준을 명시하고, 새 provider 도입 시 작은 표본(10-20명)으로 drift 비율을 먼저 측정하도록 안내한다. MCP orchestrator 사용자에게는 README "Integration with External Agents" 섹션의 의사코드와 `interview_record_schema` 도구로 helper 호출 흐름을 명시 안내한다. provider별 검증 보고서 작업은 rolling backlog(`docs/backlog/`)에서 추적한다
+- 완화: README "Choosing a model" 섹션에 검증 기준을 명시하고 새 provider 도입 시 작은 표본(10-20명)으로 drift 비율을 먼저 측정하도록 안내한다. MCP orchestrator 사용자에게는 README "Integration with External Agents" 섹션의 의사코드와 `interview_record_schema` 도구로 helper 호출 흐름을 명시 안내한다. provider별 검증 보고서 작업은 rolling backlog(`docs/backlog/`)에서 추적한다
 
-데이터셋 실제 컬럼명 확정은 dev-planner가 TDD 작성 전에 `datasets.load_dataset(..., streaming=True)`로 1샘플만 로드해 컬럼 키와 값 표기를 직접 확인한 뒤 TDD에 매핑값(예: `gender_field: sex`, `region_field: residence_region`)까지 박는 방식으로 처리한다. 게이트 2(§5.10)는 구현 단계 휴먼 검증으로 그대로 유지하며, 두 단계가 중복되어도 비용이 거의 없으므로 안전망으로 둘 다 운영한다.
+데이터셋 실제 컬럼명 확정은 dev-planner가 TDD 작성 전에 `datasets.load_dataset(..., streaming=True)`로 1샘플만 로드해 컬럼 키와 값 표기를 직접 확인한 뒤 TDD에 매핑값(예: `gender_field: sex`, `region_field: residence_region`)까지 박는 방식으로 처리한다. 게이트 2(§5.10)는 구현 단계 휴먼 검증으로 그대로 유지하며 두 단계가 중복되어도 비용이 거의 없으므로 안전망으로 둘 다 운영한다.
 
 데이터셋 컬럼 키와 값 표기는 dev-planner가 viewer 직접 조회로 확인 후 TDD §1, `config.yaml`의 `dataset.field_map`에 박았다. 게이트 2(§5.10)는 휴먼 검증 안전망으로 그대로 유지한다.

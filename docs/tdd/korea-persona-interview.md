@@ -256,8 +256,8 @@ MCP(Model Context Protocol) 서버 진입점이다. v1.2.0에서 ADR-005 모드 
 - 도구 셋은 모드별로 다르며 정본은 `src/mcp_handlers/__init__.py`의 `TOOLS_BY_MODE`다. 도구명은 MCP 관례인 snake_case로 통일한다. `list-personas` CLI와 표기가 다른 것은 도구 호출 명세가 식별자이기 때문이다
 - 추론 경로는 `config.yaml`의 `mcp.mode`로 명시 선택한다. `HANDLERS` dict가 `(mode, tool_name)` 튜플 키로 핸들러를 분기하며 자동 fallback은 두지 않는다(ADR-005)
   - `mode == "server"`(기본): `build_cli_backend(config.llm)`로 `OpenAIBackend`나 `AnthropicBackend`를 만든다. server-side에 `OPENAI_API_KEY` 또는 `ANTHROPIC_API_KEY`가 필요하다
-  - `mode == "orchestrator"`: server-side LLM을 호출하지 않는다. 호스트 sub-agent가 자기 LLM으로 인터뷰를 수행하고, 본 도구는 데이터/프롬프트 helper만 노출한다. server-side 키가 불필요하다
-- 각 도구는 application 계층(`run_batch`, `generate_report`, `LLMClient`)을 그대로 재사용한다. 도구 응답은 `{"ok": true, "backend": "...", ...}` 또는 `{"ok": false, "backend": "...", "error": {"code", "message", "exit_code"}}` 두 형태 중 하나로 통일하며, 한국어를 보존한 JSON 텍스트로 `TextContent`에 담는다. `backend` 라벨은 정상/에러 응답 모두에 일관 박힌다(`mcp_server` 또는 `mcp_orchestrator`). 단 `load_config` 자체가 실패해 모드 결정 전에 차단되면 `backend` 필드는 빠진다
+  - `mode == "orchestrator"`: server-side LLM을 호출하지 않는다. 호스트 sub-agent가 자기 LLM으로 인터뷰를 수행하고 본 도구는 데이터/프롬프트 helper만 노출한다. server-side 키가 불필요하다
+- 각 도구는 application 계층(`run_batch`, `generate_report`, `LLMClient`)을 그대로 재사용한다. 도구 응답은 `{"ok": true, "backend": "...", ...}` 또는 `{"ok": false, "backend": "...", "error": {"code", "message", "exit_code"}}` 두 형태 중 하나로 통일하며 한국어를 보존한 JSON 텍스트로 `TextContent`에 담는다. `backend` 라벨은 정상/에러 응답 모두에 일관 박힌다(`mcp_server` 또는 `mcp_orchestrator`). 단 `load_config` 자체가 실패해 모드 결정 전에 차단되면 `backend` 필드는 빠진다
 - MCP는 비대화식이라 tqdm/ANSI 컬러/[OK] 라벨은 출력하지 않는다. 진행률 표시는 `progress_disable=True`로 끈다. 로그는 stderr/`outputs/logs/run_*.jsonl`에 그대로 흘려 stdio JSON-RPC 채널을 오염시키지 않는다(logging.md §3)
 - `mcp` SDK가 부재한 환경(예: lock 미동기화)에서도 본 모듈 import 자체가 깨지지 않도록 `mcp` import는 `main()` 진입 시점의 `_serve_stdio()` 안에서 lazy하게 수행한다. import 실패 시 stderr로 친절한 한국어 안내를 내고 exit 1로 종료한다(error-handling.md §1)
 - 진입점은 `python -m src.mcp_server`(모듈 단위 실행)와 console script `kpi-mcp-server` 두 가지를 둔다
@@ -682,7 +682,7 @@ CLI는 인터뷰 종료 시 콘솔에 `토큰 사용량: prompt N / completion N
 
 `load_and_sample`는 `(filter_str, n, seed, field_map, gender_aliases, province_aliases, dataset_name, split)` 튜플을 키로 in-memory 캐시(`_PERSONA_POOL_CACHE`)에 결과 `PersonaMeta` 리스트를 저장한다. 같은 spec으로 두 번째 호출하면 데이터셋 로드/필터/샘플링을 건너뛰고 캐시 hit으로 즉시 반환한다.
 
-CLI 단일 프로세스 흐름에서 `list-personas`(미리 보기) → `interview`(같은 시드/필터로 본 실행) → `interview --dry-run`(같은 시드/필터로 1명 시연) 순으로 동일 spec이 반복되는 패턴을 단축한다. 프로세스 종료 시 캐시는 함께 사라지고, 디스크 캐시(다른 프로세스 간 재사용)는 rolling backlog에서 추적한다.
+CLI 단일 프로세스 흐름에서 `list-personas`(미리 보기) → `interview`(같은 시드/필터로 본 실행) → `interview --dry-run`(같은 시드/필터로 1명 시연) 순으로 동일 spec이 반복되는 패턴을 단축한다. 프로세스 종료 시 캐시는 함께 사라지고 디스크 캐시(다른 프로세스 간 재사용)는 rolling backlog에서 추적한다.
 
 캐시 무효화 API는 `clear_persona_pool_cache()`로 노출한다. 테스트 격리(`conftest._isolate_env`)가 매 테스트마다 호출해 누수를 막는다.
 
@@ -699,7 +699,7 @@ v1.x 정책은 "비밀=env, 기본=yaml, 일회성=CLI" 한 가지로 단순화�
 - provider가 openai이면 `OPENAI_API_KEY`, provider가 anthropic이면 `ANTHROPIC_API_KEY`가 `llm.api_key`로 들어간다
 - `KPI_OUTPUT_DIR`은 `common.output.output_dir`로 들어간다(테스트/CI 격리 편의)
 
-모델 변경 같은 일회성 override는 CLI(`--model gpt-4o`)로 처리하고, 동시성 같은 운영 기본값은 `config.yaml`을 갱신해 수정한다. config.yaml은 일부 섹션만 정의해도 default와 머지된다. `dataset.field_map`은 default 코드값(§1.6)과 yaml 값을 깊은 병합한다.
+모델 변경 같은 일회성 override는 CLI(`--model gpt-4o`)로 처리하고 동시성 같은 운영 기본값은 `config.yaml`을 갱신해 수정한다. config.yaml은 일부 섹션만 정의해도 default와 머지된다. `dataset.field_map`은 default 코드값(§1.6)과 yaml 값을 깊은 병합한다.
 
 `.env` 파일은 stdlib 파서로 비밀(API 키)만 환경에 승격한다. 명시 환경변수가 이미 set된 경우 `.env`가 덮지 않는다(setdefault). 자세한 파싱 규칙은 `_parse_dotenv_file` docstring을 참고한다.
 
@@ -766,7 +766,7 @@ dependency.md §1 leftpad 안티패턴 회피와 직접 통제 목적으로 아�
 | --- | --- | --- | --- |
 | `openai` (공식 + 호환 로컬 서버) | `POST {base_url}/chat/completions` | `Authorization: Bearer ${OPENAI_API_KEY}` | OpenAI 표준 messages 배열, system은 messages 안에 둠 |
 | `anthropic` | `POST {base_url}/messages` | `x-api-key: ${ANTHROPIC_API_KEY}` + `anthropic-version: 2023-06-01` | top-level `system` 필드, messages는 user/assistant만 |
-| MCP orchestrator (host 위임, `mcp.mode: "orchestrator"`) | host sub-agent의 자기 LLM | 없음(server-side 호출 없음) | 본 도구는 시스템 프롬프트와 페르소나 dict만 build_persona_prompt/build_batch_prompts로 넘기고, 호스트가 record를 모아 aggregate_results로 리포트 생성 |
+| MCP orchestrator (host 위임, `mcp.mode: "orchestrator"`) | host sub-agent의 자기 LLM | 없음(server-side 호출 없음) | 본 도구는 시스템 프롬프트와 페르소나 dict만 build_persona_prompt/build_batch_prompts로 넘기고 호스트가 record를 모아 aggregate_results로 리포트 생성 |
 
 MCP 진입점은 두 모드를 노출한다(ADR-005). `mcp.mode: "orchestrator"`(기본)는 server-side LLM 호출 없이 표의 마지막 행처럼 호스트 sub-agent에 인터뷰를 위임한다. `mcp.mode: "server"`는 위 표의 OpenAI 또는 Anthropic 계약을 server-side에서 그대로 호출한다. v1.2.0 후속 정리에서 default가 `server`에서 `orchestrator`로 바뀌었다(키 설정 없이 즉시 동작하므로 신규 사용자 마찰이 가장 작다).
 
@@ -776,7 +776,7 @@ MCP 진입점은 두 모드를 노출한다(ADR-005). `mcp.mode: "orchestrator"`
 
 - CLI 진입점은 모든 `llm.*` 필드를 그대로 HTTP 요청에 반영한다. provider, base_url, model, api_key, streaming, extra_chat_kwargs, anthropic_cache_control, timeout, retry_max_attempts, retry_backoff_seconds 모두 적용된다
 - MCP 서버 진입점에서 `mcp.mode: "server"`이면 모든 `llm.*` 필드가 CLI와 동일하게 적용된다. server-side `OpenAIBackend`나 `AnthropicBackend`가 같은 코드 경로로 호출되기 때문이다
-- MCP 진입점에서 `mcp.mode: "orchestrator"`이면 server-side에서 LLM을 호출하지 않으므로 `llm.*` 섹션 전체가 본 모드에서는 무시된다(provider, base_url, model, api_key, streaming, extra_chat_kwargs, anthropic_cache_control, timeout, retry_max_attempts, retry_backoff_seconds, max_tokens, temperature 모두). 본 도구는 build_persona_prompt와 build_batch_prompts로 시스템 프롬프트와 페르소나 dict만 호스트에게 넘기고, 호스트 sub-agent가 자기 LLM으로 인터뷰를 수행한 뒤 record를 aggregate_results로 도로 넘긴다. context_budget도 호스트 sub-agent가 자체 truncation을 적용하므로 본 모드에서는 server-side에서 적용되지 않는다(필요 시 호스트가 직접 처리)
+- MCP 진입점에서 `mcp.mode: "orchestrator"`이면 server-side에서 LLM을 호출하지 않으므로 `llm.*` 섹션 전체가 본 모드에서는 무시된다(provider, base_url, model, api_key, streaming, extra_chat_kwargs, anthropic_cache_control, timeout, retry_max_attempts, retry_backoff_seconds, max_tokens, temperature 모두). 본 도구는 build_persona_prompt와 build_batch_prompts로 시스템 프롬프트와 페르소나 dict만 호스트에게 넘기고 호스트 sub-agent가 자기 LLM으로 인터뷰를 수행한 뒤 record를 aggregate_results로 도로 넘긴다. context_budget도 호스트 sub-agent가 자체 truncation을 적용하므로 본 모드에서는 server-side에서 적용되지 않는다(필요 시 호스트가 직접 처리)
 - context_budget은 `truncate_history`에서 messages 배열을 자르기 전에 모든 진입점과 모드에서 평가된다. system 메시지는 절대 truncate되지 않으며 가장 오래된 user/assistant 페어부터 제거된다
 
 #### 12.1. 헬스체크
@@ -832,7 +832,7 @@ Response body는 아래와 같다.
 
 #### 12.2.1. Qwen3 thinking 토글 단락 supersede
 
-ADR-002 채택으로 백엔드가 OpenAI Chat Completions API로 전환되어 Qwen3 전용 `chat_template_kwargs: {"enable_thinking": ...}` 처리는 더 이상 필요하지 않다. 본 단락은 이력 보존 목적으로만 남긴다. 코드는 `chat_template_kwargs`를 보내지 않으며, MLX 백엔드 회귀가 발생하면 ADR-002 supersede ADR을 새로 작성한다.
+ADR-002 채택으로 백엔드가 OpenAI Chat Completions API로 전환되어 Qwen3 전용 `chat_template_kwargs: {"enable_thinking": ...}` 처리는 더 이상 필요하지 않다. 본 단락은 이력 보존 목적으로만 남긴다. 코드는 `chat_template_kwargs`를 보내지 않으며 MLX 백엔드 회귀가 발생하면 ADR-002 supersede ADR을 새로 작성한다.
 
 OpenAI gpt-4o-mini는 EOS 토큰 인식이 안정적이라 토큰 루프 사례(`券后` 반복 등)가 거의 발생하지 않는다. 그래도 회귀 안전망으로 응답 본문에 동일 토큰/구절이 max_tokens 한도까지 반복되는 패턴을 감지하는 토큰 루프 가드를 둔다(PRD §5.8). 가드 트리거 시 `RetryExhaustedError`로 처리되며 record는 `status="failed"`가 된다.
 

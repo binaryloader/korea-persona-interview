@@ -110,7 +110,7 @@ ANSI 컬러 적용 시 출력은 아래와 같다. `[OK]`는 녹색, 모델 ID�
 [ERR] OpenAI API 키가 유효하지 않습니다.
   Base URL: https://api.openai.com/v1
   원인: HTTP 401 Unauthorized
-  조치: https://platform.openai.com/api-keys 에서 키 상태를 확인하고, 만료/회수된 경우 재발급 후 다시 export 해주세요.
+  조치: https://platform.openai.com/api-keys 에서 키 상태를 확인하고 만료/회수된 경우 재발급 후 다시 export 해주세요.
 종료 코드: 1
 ```
 
@@ -223,7 +223,7 @@ ANSI 컬러 적용 시 출력은 아래와 같다. `[OK]`는 녹색, 모델 ID�
 
 기본 동작은 `--report`(인터뷰 종료 직후 같은 JSON으로 마크다운 리포트까지 자동 생성)다. `--no-report`로 끄면 JSON만 저장하며 외부 분석 파이프라인(Claude Code, Cursor, Codex 등)이 마크다운 없이 record 배열만 받아 후처리할 때 사용한다. `--dry-run`은 본 옵션과 무관하게 JSON/리포트 모두 만들지 않는다. 비용 추정 라인은 v1.0.0 시점에 제거되었으며 사용자가 토큰 카운트를 자신의 provider 청구서와 직접 대조하는 흐름으로 이관되었다. v1.1.0부터 OpenAI streaming(`llm.streaming: true`)을 옵트인하면 첫 토큰 시간이 빨라지지만 콘솔 출력 형식은 동일하다.
 
-`--persona-id UUID`를 다중 지정하면 `--n`/`--seed`가 무시되고 입력한 ID 순서대로 인터뷰가 실행된다. 같은 페르소나 표본에 다른 product/questions로 비교 인터뷰를 돌릴 때 사용한다. `--resume PATH`는 이전 결과 JSON에서 status가 failed인 record만 재시도하며, 새 결과 JSON에 `meta_extra.previous_run_id`가 박혀 두 run을 link할 수 있다.
+`--persona-id UUID`를 다중 지정하면 `--n`/`--seed`가 무시되고 입력한 ID 순서대로 인터뷰가 실행된다. 같은 페르소나 표본에 다른 product/questions로 비교 인터뷰를 돌릴 때 사용한다. `--resume PATH`는 이전 결과 JSON에서 status가 failed인 record만 재시도하며 새 결과 JSON에 `meta_extra.previous_run_id`가 박혀 두 run을 link할 수 있다.
 
 #### 2.3.2. 정상 출력(dry-run, 단일 페르소나)
 
@@ -294,7 +294,7 @@ persona_id: kp-000123
 
 #### 2.3.5. 오류 출력(타임아웃)
 
-페르소나 단위 타임아웃은 record에 기록하고 다음 페르소나로 진행하는 방식이라, 콘솔에는 진행률 라인 아래에 단발 경고로만 표기한다.
+페르소나 단위 타임아웃은 record에 기록하고 다음 페르소나로 진행하는 방식이라 콘솔에는 진행률 라인 아래에 단발 경고로만 표기한다.
 
 ```text
 인터뷰 진행 중
@@ -435,7 +435,7 @@ PRD §5.8 실패 모드와 §5.9 종료 코드를 기준으로 메시지를 통�
 - 명령행 예시가 필요하면 백틱 안에 그대로 적는다(`export OPENAI_API_KEY=sk-...` 형태)
 - 식별자(모델 ID, persona_id, 파일 경로)는 영문 원문을 그대로 두고 한국어 안에 인용한다
 - 약어를 풀어쓰는 경우만 괄호 병기를 허용한다(예: `MCP(Model Context Protocol)`). 음차된 외래어 뒤에 영어를 병기하지 않는다
-- 메시지 끝에 마침표는 본문 단락이면 찍고, 표 셀과 라벨이면 찍지 않는다
+- 메시지 끝에 마침표는 본문 단락이면 찍고 표 셀과 라벨이면 찍지 않는다
 
 ### 3.3. 일관성 점검 체크리스트
 
@@ -646,7 +646,7 @@ H2: `## 4. 한계와 출처`. 합성 페르소나의 한계와 데이터셋 라�
 ```text
 ## 4. 한계와 출처
 
-본 리포트는 합성 페르소나 데이터(`nvidia/Nemotron-Personas-Korea`)와 사용자가 설정한 LLM 백엔드의 추론 결과를 결합하여 생성되었습니다. 합성 페르소나의 분포는 실제 인구 통계 분포와 일치하지 않을 수 있고, 응답은 모델의 추론 결과이므로 실제 한국인 응답자의 의견을 대체하지 않습니다. 본 도구는 실제 인터뷰 직전 단계의 가설 검증과 질문지 점검 용도로 사용하시기 바랍니다. 사업 아이템 본문과 페르소나 정보는 사용자가 설정한 LLM 백엔드(OpenAI / Anthropic / 로컬 LLM / MCP 호스트 에이전트)로 송신되었으며 해당 provider의 약관에 따라 처리됩니다.
+본 리포트는 합성 페르소나 데이터(`nvidia/Nemotron-Personas-Korea`)와 사용자가 설정한 LLM 백엔드의 추론 결과를 결합하여 생성되었습니다. 합성 페르소나의 분포는 실제 인구 통계 분포와 일치하지 않을 수 있고 응답은 모델의 추론 결과이므로 실제 한국인 응답자의 의견을 대체하지 않습니다. 본 도구는 실제 인터뷰 직전 단계의 가설 검증과 질문지 점검 용도로 사용하시기 바랍니다. 사업 아이템 본문과 페르소나 정보는 사용자가 설정한 LLM 백엔드(OpenAI / Anthropic / 로컬 LLM / MCP 호스트 에이전트)로 송신되었으며 해당 provider의 약관에 따라 처리됩니다.
 
 - 데이터셋 출처: nvidia/Nemotron-Personas-Korea(https://huggingface.co/datasets/nvidia/Nemotron-Personas-Korea)
 - 데이터셋 라이선스: CC BY 4.0

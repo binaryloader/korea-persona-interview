@@ -7,7 +7,7 @@
 
 ## 1. 배경
 
-ADR-004에서 MCP 진입점에 `mcp.mode` 토글을 도입했다. `mode: "server"`(기본)는 server-side OpenAI/Anthropic 백엔드를 직접 호출하고, `mode: "sampling"`(opt-in)는 호스트 LLM에 `sampling/createMessage`로 위임하는 정책이었다. server default 결정으로 onboarding 마찰은 해소됐다.
+ADR-004에서 MCP 진입점에 `mcp.mode` 토글을 도입했다. `mode: "server"`(기본)는 server-side OpenAI/Anthropic 백엔드를 직접 호출하고 `mode: "sampling"`(opt-in)는 호스트 LLM에 `sampling/createMessage`로 위임하는 정책이었다. server default 결정으로 onboarding 마찰은 해소됐다.
 
 그러나 v1.1.1 운영 데이터에서 sampling 모드는 사실상 사용되지 않는다는 사실이 드러났다.
 
@@ -21,7 +21,7 @@ sampling 모드는 정책 일관성은 있지만 실 사용처가 0에 수렴해
 
 `mcp.mode` 화이트리스트를 아래와 같이 변경한다(BREAKING).
 
-- `mcp.mode: "orchestrator"`(신규, default): server-side에서 LLM을 호출하지 않는다. 호스트 sub-agent가 자기 LLM으로 인터뷰를 수행하고, 본 도구는 데이터/프롬프트 helper만 노출한다. server-side 키 불필요. 응답 backend 라벨은 `"mcp_orchestrator"`다. v1.2.0 후속 정리에서 default가 `server`에서 본 값으로 바뀌었다(키 설정 없이 즉시 동작하므로 신규 사용자 마찰이 가장 작다. ADR-004의 server-default 결정은 본 변경으로 supersede된다)
+- `mcp.mode: "orchestrator"`(신규, default): server-side에서 LLM을 호출하지 않는다. 호스트 sub-agent가 자기 LLM으로 인터뷰를 수행하고 본 도구는 데이터/프롬프트 helper만 노출한다. server-side 키 불필요. 응답 backend 라벨은 `"mcp_orchestrator"`다. v1.2.0 후속 정리에서 default가 `server`에서 본 값으로 바뀌었다(키 설정 없이 즉시 동작하므로 신규 사용자 마찰이 가장 작다. ADR-004의 server-default 결정은 본 변경으로 supersede된다)
 - `mcp.mode: "server"`: server-side에서 OpenAI/Anthropic을 직접 호출한다. mcp.json env 또는 `.env`에 `OPENAI_API_KEY`/`ANTHROPIC_API_KEY`가 필요하다. 응답 backend 라벨은 `"mcp_server"`다
 - `mcp.mode: "sampling"`(제거): v1.2.0에서 화이트리스트와 코드 양쪽에서 제거된다. `McpSamplingBackend` 클래스, sampling capability check, `_convert_to_sampling_messages`, `_extract_sampling_text` 헬퍼도 함께 정리된다
 
@@ -58,9 +58,9 @@ sampling 모드는 정책 일관성은 있지만 실 사용처가 0에 수렴해
 
 ## 4. 대안
 
-`mcp.mode: "sampling"` 유지는 거부했다. 사실 무용한 옵션을 화이트리스트에 남겨 두면 사용자가 설정해도 기대 동작을 못 보고, 코드 분기는 유지보수 부담만 남긴다.
+`mcp.mode: "sampling"` 유지는 거부했다. 사실 무용한 옵션을 화이트리스트에 남겨 두면 사용자가 설정해도 기대 동작을 못 보고 코드 분기는 유지보수 부담만 남긴다.
 
-`mcp.mode: "orchestrator"` 추가하되 sampling도 같이 두는 안은 거부했다. 모드 3개 동시 유지보수 부담이 크고, sampling 대비 orchestrator의 가치가 명확하다(같은 기능을 보급률 100%인 sub-agent로 제공). v1.2.0 minor 릴리즈에서는 한쪽으로 정리한다.
+`mcp.mode: "orchestrator"` 추가하되 sampling도 같이 두는 안은 거부했다. 모드 3개 동시 유지보수 부담이 크고 sampling 대비 orchestrator의 가치가 명확하다(같은 기능을 보급률 100%인 sub-agent로 제공). v1.2.0 minor 릴리즈에서는 한쪽으로 정리한다.
 
 자동 fallback(server → orchestrator)은 거부했다. ADR-004 §4의 sampling 자동 fallback 거부 사유와 같다. 응답이 어느 경로로 갔는지 사용자가 추적할 수 없으면 비용 청구 주체와 데이터 흐름이 불분명해진다.
 

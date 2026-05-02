@@ -13,7 +13,7 @@ ADR-003에서 본 도구의 MCP 서버 진입점을 sampling 전용으로 단순
 
 본 결정은 MCP가 본질적으로 호스트 LLM을 활용하기 위한 프로토콜이라는 관점에서 깔끔하지만 두 가지 운영 마찰이 누적되었다.
 
-- 2026년 4월 현재 sampling capability를 표준 노출하는 MCP 클라이언트가 매우 적다. cmux 빌드는 sampling을 지원하지 않고, Claude Code Desktop의 정식 빌드도 sampling 노출이 확정되지 않았으며 Cursor 일부 버전만 부분 지원한다
+- 2026년 4월 현재 sampling capability를 표준 노출하는 MCP 클라이언트가 매우 적다. cmux 빌드는 sampling을 지원하지 않고 Claude Code Desktop의 정식 빌드도 sampling 노출이 확정되지 않았으며 Cursor 일부 버전만 부분 지원한다
 - 결과적으로 일반 사용자가 mcp.json에 본 도구를 등록하고 자연어로 호출하면 ConfigError가 항상 떨어진다. 도구가 부팅조차 되지 않으니 실 사용 가치가 사라진다
 
 ADR-003의 sampling-only 정책은 정책 자체로는 일관되지만 보급률 한계로 대부분 사용자 환경에서 무용하다는 사실이 운영 데이터로 드러났다.
