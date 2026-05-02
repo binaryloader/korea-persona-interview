@@ -15,10 +15,10 @@ PRD 참조 위치는 아래와 같다.
 
 ### 1.1. 단계별 흐름
 
-핵심 흐름은 5단계다. MLX 서버 기동은 본 도구가 직접 통제하지 않는 외부 의존이므로 사용자가 별도 터미널에서 수행한다.
+핵심 흐름은 5단계다. OpenAI API 키 설정은 본 도구가 직접 통제하지 않는 외부 의존이므로 사용자가 환경변수로 미리 설정한다.
 
-1. 사용자가 별도 터미널에서 `mlx_lm.server --model {model} --port 8080`으로 MLX 서버를 띄운다
-2. 사용자가 `python main.py healthcheck`를 실행해 모델 ID와 포트를 확인한다
+1. 사용자가 셸에서 `export OPENAI_API_KEY=sk-...`로 OpenAI API 키를 설정한다
+2. 사용자가 `python main.py healthcheck`를 실행해 OpenAI API 도달성과 모델 ID를 확인한다
 3. 사용자가 `python main.py list-personas --filter "..." --limit 20`으로 표본을 미리 본다
 4. 사용자가 `python main.py interview --product "..." --questions "..." --filter "..." --n 30`으로 배치 인터뷰를 실행하고 결과 JSON을 저장한다
 5. 사용자가 `python main.py report outputs/interview_{slug}_{timestamp}.json`으로 리포트 마크다운을 생성한다
@@ -27,9 +27,9 @@ PRD 참조 위치는 아래와 같다.
 
 ```mermaid
 flowchart TD
-    A[MLX 서버 기동<br/>별도 터미널] --> B[healthcheck]
+    A[OPENAI_API_KEY 설정<br/>셸 환경변수] --> B[healthcheck]
     B -->|exit 0<br/>모델 ID 확인| C[list-personas]
-    B -->|exit 1<br/>서버 다운| B1[안내: 서버 띄우기]
+    B -->|exit 1<br/>키 미설정/401/도달 불가| B1[안내: 키 설정/재발급]
     B1 --> A
     C -->|exit 0<br/>표본 N명 출력| D[interview]
     C -->|exit 2<br/>0건| C1[안내: 필터 완화]
@@ -50,7 +50,9 @@ flowchart TD
 
 ### 1.4. 실패 분기
 
-- 서버 다운: healthcheck 또는 interview 시작 직전 실패. exit 1과 한국어 안내로 사용자가 즉시 조치할 수 있게 한다
+- API 키 미설정 또는 도달 불가: healthcheck 또는 interview 시작 직전 실패. exit 1과 한국어 안내로 사용자가 즉시 조치할 수 있게 한다(키 발급 URL과 export 명령 포함)
+- 인증 실패(401): 키가 잘못되었거나 만료된 경우. exit 1과 한국어 안내로 키 재발급/교체를 유도한다
+- 사용량 한도 초과(429): 페르소나 단위 retry 3회(1s, 2s, 4s) 후 최종 실패 시 record에 `status: failed`. 배치 시작 직전 헬스체크에서 일관되게 429를 받으면 exit 1로 즉시 중단한다
 - 필터 결과 0건: list-personas 또는 interview 시작 직전 실패. exit 2와 적용된 필터 요약 표기로 다음 시도 방향을 제시한다
 - 호출 타임아웃 또는 5xx: 페르소나 단위 retry 3회(1s, 2s, 4s) 후 record에 `status: failed` 기록. 다른 페르소나는 계속 진행한다
 - 부분 실패: 완료된 record가 전체의 50% 미만이면 exit 3. 결과 JSON은 그대로 저장하고 사용자에게 다음 단계 안내를 출력한다
@@ -75,40 +77,69 @@ ANSI 컬러 코드는 PRD §6.7에 따라 기본 활성화되며 `--no-color` �
 ANSI 컬러 적용 시 출력은 아래와 같다. `[OK]`는 녹색, 모델 ID는 청록색, 본문은 일반 텍스트다.
 
 ```text
-[OK] MLX 서버 응답 정상
-  Base URL: http://localhost:8080/v1
-  사용 가능한 모델: mlx-community/Qwen2.5-14B-Instruct-4bit
-  응답 지연: 18ms
+[OK] OpenAI API 응답 정상
+  Base URL: https://api.openai.com/v1
+  사용 모델: gpt-4o-mini
+  응답 지연: 412ms
 종료 코드: 0
 ```
 
 `--no-color` 적용 시 출력은 동일하지만 ANSI 이스케이프가 제거된 일반 텍스트만 남는다.
 
 ```text
-[OK] MLX 서버 응답 정상
-  Base URL: http://localhost:8080/v1
-  사용 가능한 모델: mlx-community/Qwen2.5-14B-Instruct-4bit
-  응답 지연: 18ms
+[OK] OpenAI API 응답 정상
+  Base URL: https://api.openai.com/v1
+  사용 모델: gpt-4o-mini
+  응답 지연: 412ms
 종료 코드: 0
 ```
 
-#### 2.1.2. 오류 출력(서버 다운)
+#### 2.1.2. 오류 출력(키 미설정)
 
 ```text
-[ERR] MLX 서버가 응답하지 않습니다.
-  Base URL: http://localhost:8080/v1
-  원인: Connection refused
-  조치: 별도 터미널에서 아래 명령을 실행해 주세요.
-    mlx_lm.server --model mlx-community/Qwen2.5-14B-Instruct-4bit --port 8080
+[ERR] OPENAI_API_KEY 환경변수가 설정되어 있지 않습니다.
+  Base URL: https://api.openai.com/v1
+  조치: https://platform.openai.com/api-keys 에서 키를 발급한 뒤 셸에서 아래 명령을 실행해 주세요.
+    export OPENAI_API_KEY=sk-...
 종료 코드: 1
 ```
 
-#### 2.1.3. 종료 코드 매핑
+#### 2.1.3. 오류 출력(401 인증 실패)
 
-- 0: 정상(서버 응답, 모델 ID 확인)
-- 1: 서버 다운, 연결 실패, 5xx 응답
+```text
+[ERR] OpenAI API 키가 유효하지 않습니다.
+  Base URL: https://api.openai.com/v1
+  원인: HTTP 401 Unauthorized
+  조치: https://platform.openai.com/api-keys 에서 키 상태를 확인하고, 만료/회수된 경우 재발급 후 다시 export 해주세요.
+종료 코드: 1
+```
 
-#### 2.1.4. 진행률
+#### 2.1.4. 오류 출력(429 사용량 한도)
+
+```text
+[ERR] OpenAI API 사용량 한도를 초과했습니다.
+  Base URL: https://api.openai.com/v1
+  원인: HTTP 429 Too Many Requests
+  조치: 잠시 후 다시 시도하거나 https://platform.openai.com/usage 에서 한도와 결제 정보를 확인해 주세요.
+종료 코드: 1
+```
+
+#### 2.1.5. 오류 출력(도달 불가)
+
+```text
+[ERR] OpenAI API에 도달할 수 없습니다.
+  Base URL: https://api.openai.com/v1
+  원인: 네트워크 오류 또는 OpenAI 서비스 장애
+  조치: 인터넷 연결 상태와 https://status.openai.com 을 확인해 주세요.
+종료 코드: 1
+```
+
+#### 2.1.6. 종료 코드 매핑
+
+- 0: 정상(API 응답, 모델 ID 확인)
+- 1: 키 미설정, 401, 429, 5xx, 연결 실패, 도달 불가
+
+#### 2.1.7. 진행률
 
 - 단일 호출이라 tqdm을 사용하지 않는다
 
@@ -171,19 +202,20 @@ ANSI 컬러 적용 시 출력은 아래와 같다. `[OK]`는 녹색, 모델 ID�
 #### 2.3.1. 정상 출력(배치 인터뷰)
 
 ```text
-[INFO] 헬스체크 통과(모델: mlx-community/Qwen2.5-14B-Instruct-4bit)
+[INFO] 헬스체크 통과(모델: gpt-4o-mini)
 [INFO] 데이터셋 로드 완료
 [INFO] 적용 필터: age:25-39, region:서울특별시
 [INFO] 매칭 페르소나: 384명, 표본 추출: 30명(seed=42)
 [INFO] 사업 아이템: "1인 가구용 반찬 정기배송, 월 39,9..."(길이 38자)
+[INFO] 사업 아이템 본문은 OpenAI 서버로 송신됩니다. 민감 정보는 입력하지 마세요.
 [INFO] 질문 수: 3개, 동시성: 2, 멀티턴: 활성
 
 인터뷰 진행 중
- 60%|██████████████████████          | 18/30 [03:24<02:16, 11.4s/persona] 완료=17 실패=1
+ 60%|██████████████████████          | 18/30 [00:54<00:36, 1.8s/persona] 완료=17 실패=1
 
 [INFO] 모든 페르소나 인터뷰 완료
   완료: 28명, 거부: 1명, 실패: 1명, 드리프트: 0명
-  평균 지연: 11.2s/persona, 총 소요 시간: 5분 36초
+  평균 지연: 1.9s/persona, 총 소요 시간: 1분 4초
   결과 저장: outputs/interview_korea-persona-interview_20260502_143000.json
 
 다음 단계: python main.py report outputs/interview_korea-persona-interview_20260502_143000.json
@@ -193,7 +225,7 @@ ANSI 컬러 적용 시 출력은 아래와 같다. `[OK]`는 녹색, 모델 ID�
 #### 2.3.2. 정상 출력(dry-run, 단일 페르소나)
 
 ```text
-[INFO] 헬스체크 통과(모델: mlx-community/Qwen2.5-14B-Instruct-4bit)
+[INFO] 헬스체크 통과(모델: gpt-4o-mini)
 [INFO] dry-run 모드: JSON 저장 없이 콘솔에만 출력합니다
 
 --- 시스템 프롬프트 ---
@@ -215,15 +247,15 @@ persona_id: kp-000123
 
 --- 질문 1: 이 서비스 쓰실 의향 있나요? ---
 응답: 음, 회사 다니면서 저녁 챙겨먹기 힘들거든요. 월 4만원이면 한 번 시도해 볼 만한 것 같아요.
-지연: 9.2s
+지연: 1.6s
 
 --- 질문 2: 월 얼마면 적당한가요? ---
 응답: 솔직히 4만원도 살짝 부담이라, 3만원대 초반이면 바로 결제할 것 같아요.
-지연: 8.7s
+지연: 1.4s
 
 --- 질문 3: 거절한다면 왜요? ---
 응답: 반찬 종류가 단조로우면 금방 질릴 것 같아요. 알레르기 옵션도 신경 쓰이고요.
-지연: 9.5s
+지연: 1.7s
 
 --- 구조화 요약 ---
 {
@@ -237,14 +269,13 @@ persona_id: kp-000123
 종료 코드: 0
 ```
 
-#### 2.3.3. 오류 출력(서버 다운, 헬스체크 실패)
+#### 2.3.3. 오류 출력(헬스체크 실패)
 
 ```text
-[ERR] MLX 서버가 응답하지 않습니다. 인터뷰를 시작하지 않습니다.
-  Base URL: http://localhost:8080/v1
-  원인: Connection refused
-  조치: 별도 터미널에서 아래 명령을 실행해 주세요.
-    mlx_lm.server --model mlx-community/Qwen2.5-14B-Instruct-4bit --port 8080
+[ERR] OpenAI API 응답에 실패했습니다. 인터뷰를 시작하지 않습니다.
+  Base URL: https://api.openai.com/v1
+  원인: HTTP 401 Unauthorized
+  조치: OPENAI_API_KEY 환경변수를 확인하거나 https://platform.openai.com/api-keys 에서 키를 재발급해 주세요.
 종료 코드: 1
 ```
 
@@ -277,9 +308,9 @@ persona_id: kp-000123
   결과 저장: outputs/interview_korea-persona-interview_20260502_143000.json
   실패 사유 분포:
     - timeout: 14건
-    - http_5xx: 3건
+    - http_429: 3건
     - refused: 1건
-  조치: MLX 서버 메모리 점유와 동시성을 점검하고 재실행해 주세요.
+  조치: OpenAI 사용량 한도와 네트워크 상태를 점검하고 재실행해 주세요.
         v1은 --resume 옵션을 제공하지 않으므로 동일 시드로 다시 실행합니다.
 종료 코드: 3
 ```
@@ -320,9 +351,9 @@ persona_id: kp-000123
 ```text
 [INFO] 입력 JSON: outputs/interview_korea-persona-interview_20260502_143000.json
 [INFO] 인터뷰 메타: 30명 요청, 28명 완료, 1명 거부, 1명 실패, 0명 드리프트
-[INFO] 모델: mlx-community/Qwen2.5-14B-Instruct-4bit, 시드: 42
+[INFO] 모델: gpt-4o-mini, 시드: 42
 [INFO] 정량 집계: 정상 record 28명 사용
-[INFO] 정성 인사이트 생성 중(모델 호출 1회)... 완료(지연 14.3s)
+[INFO] 정성 인사이트 생성 중(모델 호출 1회)... 완료(지연 2.8s)
 [INFO] 리포트 저장: outputs/report_korea-persona-interview_20260502_143000.md
 
 종료 코드: 0
@@ -375,13 +406,15 @@ PRD §5.8 실패 모드와 §5.9 종료 코드를 기준으로 메시지를 통�
 
 | 예외/조건 | 메시지 본문 | 발생 명령 | 종료 코드 |
 | --- | --- | --- | --- |
-| ServerNotReachableError | MLX 서버가 응답하지 않습니다. 별도 터미널에서 `mlx_lm.server --model {model} --port 8080`을 실행해 주세요 | healthcheck, interview | 1 |
-| ServerTimeoutError | MLX 서버 응답이 120초 안에 오지 않았습니다. 모델 크기와 동시성을 점검해 주세요 | interview(record 단위), healthcheck | 1 또는 record `failed` |
+| ServerNotReachableError | OpenAI API에 도달할 수 없습니다. 인터넷 연결과 https://status.openai.com 을 확인해 주세요 | healthcheck, interview | 1 |
+| ServerTimeoutError | OpenAI API 응답이 120초 안에 오지 않았습니다. 잠시 후 다시 시도해 주세요 | interview(record 단위), healthcheck | 1 또는 record `failed` |
+| AuthenticationError | OpenAI API 키가 유효하지 않습니다. https://platform.openai.com/api-keys 에서 키를 확인하거나 재발급 후 export OPENAI_API_KEY=sk-... 로 설정해 주세요 | healthcheck, interview | 1 |
+| RateLimitError | OpenAI API 사용량 한도를 초과했습니다. 잠시 후 다시 시도해 주세요 | healthcheck(즉시 실패), interview(record 단위 retry) | 1 또는 record `failed` |
 | FilterMatchedZeroError | 필터 조건에 맞는 페르소나가 없습니다. 필터를 완화해 주세요 | list-personas, interview | 2 |
 | FilterMatchedTooFewError | 필터 결과가 요청 수보다 적습니다. --n을 줄이거나 필터를 완화해 주세요 | interview | 2 |
 | DatasetUnavailableError | 데이터셋을 로드하지 못했습니다. 인터넷 연결과 ~/.cache/huggingface 권한을 확인해 주세요 | list-personas, interview | 1 |
 | DatasetSchemaError | 데이터셋 컬럼 구조가 config.yaml의 field_map과 다릅니다. 매핑을 갱신해 주세요 | list-personas, interview | 1 |
-| ConfigError | config.yaml 설정이 올바르지 않습니다: {필드명} | 모든 명령 | 1 |
+| ConfigError | config.yaml 설정이 올바르지 않습니다: {필드명}. 또는 OPENAI_API_KEY 환경변수가 설정되어 있지 않습니다. https://platform.openai.com/api-keys 에서 발급 후 export OPENAI_API_KEY=sk-... 로 설정해 주세요 | 모든 명령 | 1 |
 | InvalidFilterError | 필터 표현식이 올바르지 않습니다: {표현식}. 형식은 `key:value,key:value`입니다 | list-personas, interview | 1 |
 | ConcurrencyOutOfRangeError | 동시성은 1-3 범위만 허용합니다. 입력값: {n} | interview | 1 |
 | InputFileNotFoundError | 입력 파일을 읽지 못했습니다. 경로를 확인해 주세요 | report | 1 |
@@ -396,9 +429,9 @@ PRD §5.8 실패 모드와 §5.9 종료 코드를 기준으로 메시지를 통�
 ### 3.2. 메시지 작성 원칙
 
 - 한 메시지는 "무엇이 일어났는지" + "사용자가 무엇을 해야 하는지"를 한 문장씩 쓴다
-- 명령행 예시가 필요하면 백틱 안에 그대로 적는다(`mlx_lm.server --model ... --port 8080` 형태)
+- 명령행 예시가 필요하면 백틱 안에 그대로 적는다(`export OPENAI_API_KEY=sk-...` 형태)
 - 식별자(모델 ID, persona_id, 파일 경로)는 영문 원문을 그대로 두고 한국어 안에 인용한다
-- 약어를 풀어쓰는 경우만 괄호 병기를 허용한다(예: `MLX(Apple Silicon용 LLM 추론 프레임워크)`). 음차된 외래어 뒤에 영어를 병기하지 않는다
+- 약어를 풀어쓰는 경우만 괄호 병기를 허용한다(예: `MCP(Model Context Protocol)`). 음차된 외래어 뒤에 영어를 병기하지 않는다
 - 메시지 끝에 마침표는 본문 단락이면 찍고, 표 셀과 라벨이면 찍지 않는다
 
 ### 3.3. 일관성 점검 체크리스트
@@ -435,7 +468,7 @@ PRD §5.8 실패 모드와 §5.9 종료 코드를 기준으로 메시지를 통�
 | --- | --- |
 | 생성 시각 | 2026-05-02 14:42:18 KST |
 | 입력 JSON | outputs/interview_korea-persona-interview_20260502_143000.json |
-| 모델 | mlx-community/Qwen2.5-14B-Instruct-4bit |
+| 모델 | gpt-4o-mini(OpenAI Chat Completions API) |
 | 시드 | 42 |
 | 페르소나 | 요청 30명, 완료 28명, 거부 1명, 실패 1명, 드리프트 0명 |
 | 데이터셋 | nvidia/Nemotron-Personas-Korea(CC BY 4.0) |
@@ -610,11 +643,11 @@ H2: `## 4. 한계와 출처`. 합성 페르소나의 한계와 데이터셋 라�
 ```text
 ## 4. 한계와 출처
 
-본 리포트는 합성 페르소나 데이터(`nvidia/Nemotron-Personas-Korea`)와 로컬 LLM 추론 결과를 결합하여 생성되었습니다. 합성 페르소나의 분포는 실제 인구 통계 분포와 일치하지 않을 수 있고, 응답은 모델의 추론 결과이므로 실제 한국인 응답자의 의견을 대체하지 않습니다. 본 도구는 실제 인터뷰 직전 단계의 가설 검증과 질문지 점검 용도로 사용하시기 바랍니다.
+본 리포트는 합성 페르소나 데이터(`nvidia/Nemotron-Personas-Korea`)와 OpenAI Chat Completions API 추론 결과를 결합하여 생성되었습니다. 합성 페르소나의 분포는 실제 인구 통계 분포와 일치하지 않을 수 있고, 응답은 모델의 추론 결과이므로 실제 한국인 응답자의 의견을 대체하지 않습니다. 본 도구는 실제 인터뷰 직전 단계의 가설 검증과 질문지 점검 용도로 사용하시기 바랍니다. 사업 아이템 본문과 페르소나 정보는 OpenAI 서버로 송신되었으며 OpenAI 약관에 따라 처리됩니다.
 
 - 데이터셋 출처: nvidia/Nemotron-Personas-Korea(https://huggingface.co/datasets/nvidia/Nemotron-Personas-Korea)
 - 데이터셋 라이선스: CC BY 4.0
-- 추론 모델: mlx-community/Qwen2.5-14B-Instruct-4bit(로컬 MLX 서버)
+- 추론 모델: gpt-4o-mini(OpenAI Chat Completions API)
 ```
 
 ### 4.6. 섹션 트리 요약
@@ -652,16 +685,16 @@ GUI가 없는 도구이므로 WCAG의 시각적 항목은 비적용 대상이다
 
 - 모든 사용자 안내, 경고, 오류 메시지는 한국어를 기본으로 한다
 - 식별자(모델 ID, persona_id, 파일 경로, URL, HTTP 코드)는 영문 그대로 둔다
-- 약어 풀이만 괄호 병기를 허용한다(`MLX(Apple Silicon LLM 추론 프레임워크)`)
+- 약어 풀이만 괄호 병기를 허용한다(`API(Application Programming Interface)`)
 - 음차된 외래어 뒤에 영어 원문을 병기하지 않는다(예: "프리미엄(freemium)" 금지)
 
 ### 5.3. 한국어 + 영문 식별자 혼용 가독성
 
 - 한국어 본문 안에 영문 식별자가 들어갈 때는 식별자 앞뒤에 공백을 둔다
-  - O: "모델 mlx-community/Qwen2.5-14B-Instruct-4bit 로 호출했습니다"
-  - X: "모델mlx-community/Qwen2.5-14B-Instruct-4bit로호출했습니다"
+  - O: "모델 gpt-4o-mini 로 호출했습니다"
+  - X: "모델gpt-4o-mini로호출했습니다"
 - 식별자가 길면 인라인 코드(백틱)로 감싸서 식별자 영역을 시각적으로 분리한다
-  - O: 모델 `mlx-community/Qwen2.5-14B-Instruct-4bit`로 호출했습니다
+  - O: 모델 `gpt-4o-mini`로 호출했습니다
 - persona_id는 본문에서 `kp-NNNNNN` 형식 그대로 사용하고 한국어 명사("페르소나")를 앞에 붙인다(예: "페르소나 kp-000123이 응답을 거부했습니다")
 
 ### 5.4. 표 형식 출력의 가독성

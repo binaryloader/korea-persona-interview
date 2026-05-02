@@ -200,14 +200,16 @@ stdlib `logging` 모듈 위에 JSON Lines 포맷터를 얹는다. structlog 의�
 
 #### 2.5. src/llm_client.py
 
-OpenAI 호환 비동기 클라이언트다. `httpx.AsyncClient` 위에 재시도, 타임아웃, 로깅을 얹는다. `openai`/`anthropic` SDK는 사용하지 않는다(dependency.md §1).
+OpenAI Chat Completions API 비동기 클라이언트다. `httpx.AsyncClient` 위에 재시도, 타임아웃, 로깅을 얹는다. `openai`/`anthropic` SDK는 도입하지 않고 httpx 직접 호출을 유지한다(dependency.md §1, ADR-002 §2)
 
-- `MlxLLMClient`는 `__aenter__`/`__aexit__` 컨텍스트 매니저 패턴을 채택한다
+- 클래스명은 `LLMClient`로 둔다. ADR-002 이전 명칭 `LLMClient`는 백엔드 무관한 이름으로 정리한다
+- `__aenter__`/`__aexit__` 컨텍스트 매니저 패턴을 채택한다
 - `healthcheck()`는 `GET {base_url}/models`의 200 응답과 `data` 배열이 비어있지 않음을 검증한다
 - `chat(messages, max_tokens, temperature)`는 `POST {base_url}/chat/completions`로 호출한다
-- 재시도 정책은 HTTP 5xx, 타임아웃, 연결 실패에 한해 지수 백오프로 1초, 2초, 4초 간격을 두며 최대 3회 적용한다. 4xx는 즉시 실패한다. 재시도 간 jitter `random.uniform(0, 0.5)`를 추가한다(thundering herd 방지)
+- 재시도 정책은 HTTP 5xx, 429, 타임아웃, 연결 실패에 한해 지수 백오프로 1초, 2초, 4초 간격을 두며 최대 3회 적용한다. 401은 즉시 실패하고 `ConfigError`로 변환한다. 그 외 4xx는 즉시 실패한다. 재시도 간 jitter `random.uniform(0, 0.5)`를 추가한다(thundering herd 방지)
 - tenacity 의존을 회피한다(dependency.md §1, 6줄 정도면 직접 작성 가능)
-- `Authorization` 헤더는 코드에서 일체 다루지 않는다. base_url이 localhost가 아니면 chat 메서드 호출 자체를 차단한다(security.md)
+- `Authorization: Bearer ${OPENAI_API_KEY}` 헤더를 부착한다. 키는 환경변수 `OPENAI_API_KEY`(또는 fallback `KPI_OPENAI_API_KEY`)에서만 로드하고 코드/설정/로그에 하드코딩하지 않는다(security.md §1). 키 미설정은 `ConfigError`로 변환한다
+- 로그 출력 시 `Authorization` 헤더는 `Bearer sk-***` 형식으로 마스킹한다(logging.md §2)
 
 #### 2.6. src/interview.py
 
@@ -384,9 +386,9 @@ def load_config(
 #### 3.3. src/llm_client.py
 
 ```python
-class MlxLLMClient:
-    def __init__(self, config: LlmConfig): ...
-    async def __aenter__(self) -> "MlxLLMClient": ...
+class LLMClient:
+    def __init__(self, config: LlmConfig, api_key: str): ...
+    async def __aenter__(self) -> "LLMClient": ...
     async def __aexit__(self, exc_type, exc, tb) -> None: ...
     async def healthcheck(self) -> list[str]: ...  # 사용 가능한 모델 ID 리스트
     async def chat(
@@ -396,6 +398,8 @@ class MlxLLMClient:
         temperature: float | None = None,
     ) -> tuple[str, int]: ...  # (response, latency_ms)
 ```
+
+`api_key`는 환경변수 `OPENAI_API_KEY`(또는 fallback `KPI_OPENAI_API_KEY`)에서 로드하여 생성자에 주입한다. 코드 내부에서 환경변수를 직접 읽지 않고 호출부에서 명시 주입하는 방식으로 테스트 용이성을 확보한다.
 
 #### 3.4. src/load_personas.py
 
@@ -434,7 +438,7 @@ class InterviewSession:
         product: str,
         questions: list[str],
         follow_up_questions: list[str],
-        client: MlxLLMClient,
+        client: LLMClient,
         config: AppConfig,
     ): ...
     async def run(self) -> InterviewRecord: ...
@@ -462,7 +466,7 @@ def truncate_history(
 
 async def summarize_interview(
     messages: list[MessageEntry],
-    client: MlxLLMClient,
+    client: LLMClient,
     config: LlmConfig,
 ) -> StructuredSummary | None: ...
 ```
@@ -477,7 +481,7 @@ class BatchRunner:
         product: str,
         questions: list[str],
         follow_up_questions: list[str],
-        client: MlxLLMClient,
+        client: LLMClient,
         config: AppConfig,
     ): ...
     async def run(self) -> BatchResult: ...
@@ -495,7 +499,7 @@ class ReportOptions:
     output_dir: Path | None
 
 class ReportGenerator:
-    def __init__(self, client: MlxLLMClient, config: AppConfig): ...
+    def __init__(self, client: LLMClient, config: AppConfig): ...
     async def generate(self, result_path: Path, options: ReportOptions) -> Path: ...
 
 # 정량 집계 순수 함수
@@ -533,8 +537,10 @@ error-handling.md(예외 비우지 않기, 비즈니스 vs 시스템 구분)을 
 
 | 예외 | CLI 종료 코드 | 안내 메시지 패턴 |
 | --- | --- | --- |
-| `ConfigError` | 1 | `설정 파일을 읽을 수 없습니다: {원인}` |
-| `ServerNotReachableError` | 1 | `MLX 서버가 응답하지 않습니다. 별도 터미널에서 mlx_lm.server --model {model} --port 8080을 실행해 주세요` |
+| `ConfigError` | 1 | `설정이 올바르지 않습니다: {원인}`. OPENAI_API_KEY 미설정도 본 예외로 변환하며 안내 메시지에 발급 URL과 export 명령을 포함한다 |
+| `ServerNotReachableError` | 1 | `OpenAI API에 도달할 수 없습니다. 인터넷 연결과 https://status.openai.com 을 확인해 주세요` |
+| `AuthenticationError` | 1 | `OpenAI API 키가 유효하지 않습니다. https://platform.openai.com/api-keys 에서 키를 확인하거나 재발급해 주세요` |
+| `RateLimitError` | 1(헬스체크) 또는 record `failed`(인터뷰 단위 retry 후 실패) | `OpenAI API 사용량 한도를 초과했습니다. 잠시 후 다시 시도해 주세요` |
 | `DatasetUnavailableError` | 1 | `데이터셋을 로드할 수 없습니다: {원인}. 인터넷 연결과 ~/.cache/huggingface 권한을 확인해 주세요` |
 | `FilterMatchedZeroError` | 2 | `필터 결과 X명, 요청 N명. 필터를 완화해 주세요` |
 
@@ -606,11 +612,13 @@ PRD §7.2에서 v1 Should로 상향된 두 가드레일이다.
 
 #### 8.2. 페르소나 깨짐 감지
 
-- 영어 비율은 `re.findall(r"[A-Za-z]+", text)` 글자 수를 전체 글자 수(공백/구두점 제외)로 나눠 0.30 초과를 임계로 본다
-- 정면 모순 휴리스틱은 연령대, 성별, 지역 세 축으로 적용한다
+- 영어 비율은 `re.findall(r"[A-Za-z]+", text)` 글자 수를 전체 글자 수(공백/구두점 제외)로 나눠 0.30 초과를 임계로 본다. 페르소나 메타(`occupation`, `bachelors_field` 등)에 등장하는 영문 토큰은 분모/분자에서 모두 제외한다(false positive 방지). 직업명이 `IT 컨설턴트`인 페르소나가 응답에 `IT`를 자연스럽게 사용해도 drift로 판정되지 않게 한다
+- 한자 비율은 `re.findall(r"[一-鿿]", text)` 글자 수를 전체 한국어 글자(한글+한자) 수로 나눠 0.05 초과를 임계로 본다. OpenAI 응답이 어쩌다 중국어/일본어 한자를 혼입하는 회귀를 잡는 안전망이다. 페르소나 메타에 등장하는 한자 토큰은 분모/분자에서 모두 제외한다
+- 정면 모순 휴리스틱은 연령대, 성별, 지역, 거주 형태 네 축으로 적용한다
   - 연령대 축은 페르소나가 70대(70 이상 80 미만)인데 응답에 `저는 20대`, `저는 학생인데`, `미성년자` 등이 등장하는 케이스를 본다. 연령 구간은 10대, 20대, 30대, 40대, 50대, 60대 이상의 6개로 산출한다. 자기 구간이 아닌 구간을 자기소개로 단언하면 매칭한다
   - 성별 축은 페르소나가 `여자`인데 응답에 `저는 남자`/`아저씨`를 단언하거나, `남자`인데 `저는 여자`/`아줌마`를 단언하는 케이스를 본다
   - 지역 축은 페르소나가 `서울`인데 응답에 `저는 부산 사람`을 단언하는 케이스를 본다. 17개 시도 중 자기 시도가 아닌 시도를 거주지로 단언하면 매칭한다
+  - 거주 형태 축은 페르소나의 `family_type`이 `1인가구`인데 응답에 `남편이`, `아내가`, `우리 아이`, `가족과 함께` 같은 동거 단언이 등장하면 매칭한다. 반대로 `family_type`이 `배우자와 거주`/`부모와 거주`/`자녀와 거주`인데 응답에 `저는 1인 가구`, `혼자 살고 있어서` 같은 1인 가구 단언이 등장하면 매칭한다. 25세 1인 가구 페르소나가 ``1인 가구가 아니라서 필요성을 못 느끼겠네요``로 응답하는 회귀 사례를 잡는 핵심 가드다(PRD §5.2)
 - 매칭 휴리스틱은 `re.search(rf"저는\s*{대안_시도}\s*(사람|에서|살고)", text)` 형태의 정규식 묶음으로 구현한다
 - LLM 기반 감지는 v1에서 제외한다(비용/지연 문제). 필요하면 v1.1에서 도입한다
 - 결과는 `status="drift"`와 `flags.persona_drift=True`로 기록한다. 정량 집계에서 자동 제외하며 `--include-drift` 플래그로 선택적 포함이 가능하다
@@ -665,7 +673,7 @@ click==8.1.*
 aiohttp>=3.13.5,<3.14
 ```
 
-- httpx는 비동기 HTTP를 담당한다. aiohttp 대신 동기/비동기 양쪽을 지원하며 OpenAI/Anthropic SDK도 내부적으로 사용한다
+- httpx는 비동기 HTTP를 담당한다. OpenAI Chat Completions API 호출도 httpx로 직접 수행한다. `openai` 공식 SDK는 도입하지 않는다(ADR-002 §2, dependency.md §1 leftpad 안티패턴 회피와 직접 통제 목적). 트랜지티브 의존 폭증을 막고 인증 헤더/재시도/타임아웃을 본 도구의 정책으로 일관 관리한다
 - datasets는 Hugging Face 표준이다. 캐시, 스트리밍, 필터를 모두 지원한다
 - pyyaml은 설정 파일 파싱을 담당한다
 - tqdm은 진행률 표시를 담당한다
@@ -698,25 +706,27 @@ dependency.md §1 leftpad 안티패턴 회피와 직접 통제 목적으로 아�
 - pydantic은 dataclass와 `__post_init__` 검증으로 충분하다(도메인 모델 30개 미만 필드)
 - structlog는 stdlib `logging`과 `JsonLineFormatter` 50줄로 커버 가능하다
 - tenacity는 지수 백오프 재시도 6줄 직접 구현으로 커버 가능하다
-- openai와 anthropic SDK는 PRD §6.5에 명시되어 있다. httpx로 직접 POST한다
+- openai와 anthropic SDK는 PRD §6.5와 ADR-002에 명시되어 있다. httpx로 직접 POST한다. OpenAI 백엔드 전환 후에도 본 결정을 유지한다
 - rich와 colorama는 click 자체에 컬러 옵션이 있고 `--no-color` 처리가 충분하다
 
 ### 12. API 인터페이스(LLM HTTP 계약)
 
-본 도구는 외부 API를 제공하지 않는다. LLM 서버에 대한 호출은 OpenAI Chat Completions API를 그대로 따른다.
+본 도구는 외부 API를 제공하지 않는다. LLM 서버에 대한 호출은 OpenAI Chat Completions API를 따른다(ADR-002).
 
 #### 12.1. 헬스체크
 
 ```
 GET {base_url}/models
+Authorization: Bearer ${OPENAI_API_KEY}
 ```
 
-응답은 200 상태 코드와 body `{"data": [{"id": "string", ...}, ...]}`를 기대한다. 200이 아니거나 data 배열이 비면 `ServerNotReachableError`를 발생시킨다.
+`base_url`은 기본 `https://api.openai.com/v1`이며 `config.yaml` 또는 환경변수로 변경 가능하다. 응답은 200 상태 코드와 body `{"data": [{"id": "string", ...}, ...]}`를 기대한다. 200이 아니거나 data 배열이 비면 상태 코드별로 분기 변환한다(401 → `AuthenticationError`/`ConfigError`, 429 → `RateLimitError`, 5xx/타임아웃/연결 실패 → `ServerNotReachableError`).
 
 #### 12.2. Chat Completions
 
 ```
 POST {base_url}/chat/completions
+Authorization: Bearer ${OPENAI_API_KEY}
 Content-Type: application/json
 ```
 
@@ -724,13 +734,14 @@ Request body는 아래와 같다.
 
 ```json
 {
-  "model": "string",
+  "model": "gpt-4o-mini",
   "messages": [{"role": "system|user|assistant", "content": "string"}],
   "max_tokens": 500,
-  "temperature": 0.8,
-  "chat_template_kwargs": {"enable_thinking": false}
+  "temperature": 0.8
 }
 ```
+
+`chat_template_kwargs`(Qwen3 thinking 토글) 같은 OSS 추론 서버 전용 파라미터는 도입하지 않는다. OpenAI API 표준 파라미터(`model`, `messages`, `max_tokens`, `temperature`, 필요 시 `response_format`)만 사용한다.
 
 Response body는 아래와 같다.
 
@@ -739,39 +750,38 @@ Response body는 아래와 같다.
   "choices": [
     {
       "message": {"role": "assistant", "content": "string"},
-      "finish_reason": "stop|length"
+      "finish_reason": "stop|length|content_filter"
     }
-  ]
+  ],
+  "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 }
 ```
 
-`choices[0].message.content`만 사용한다. `usage` 필드는 v1에서 사용하지 않는다(MLX 서버 구현마다 누락 가능).
+`choices[0].message.content`를 사용한다. `usage`는 비용 추적/관측에 활용 가능하나 v1에서는 로깅에만 사용하고 사용자 노출 출력에는 포함하지 않는다(과추적 노출 회피).
 
-#### 12.2.1. Qwen3 thinking 토글(chat_template_kwargs) 보강
+#### 12.2.1. Qwen3 thinking 토글 단락 supersede
 
-GATE-1에서 검증된 사실은 아래와 같다.
+ADR-002 채택으로 백엔드가 OpenAI Chat Completions API로 전환되어 Qwen3 전용 `chat_template_kwargs: {"enable_thinking": ...}` 처리는 더 이상 필요하지 않다. 본 단락은 이력 보존 목적으로만 남긴다. 코드는 `chat_template_kwargs`를 보내지 않으며, MLX 백엔드 회귀가 발생하면 ADR-002 supersede ADR을 새로 작성한다.
 
-- 정본 모델 `unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit`는 chat template default가 thinking on이다. 본 도구의 chat 호출은 항상 `chat_template_kwargs: {"enable_thinking": <config>}`를 body에 포함한다. config의 default 값은 False다
-- `enable_thinking=true`로 호출하면 응답이 `{role, content, reasoning}` 3키 구조로 오며 영문 reasoning이 토큰 예산(`max_tokens`)을 모두 소진해 `content`가 빈 문자열로 반환되는 사례가 다수다. v1은 default False로 둬서 본 사례를 회피한다
-- `enable_thinking=false`로 호출한 정상 응답은 `finish_reason: stop`을 반환하고 message는 `role`과 `content` 두 키만 포함한다. content는 한국어 자연스러운 페르소나 답변으로 채워진다(예시: `가격이 합리적이라 믿었지만 저는 이미 치킨이나 피자 같은 배달 음식에 지출하고 있어서 반찬 구독까지 쓸 돈이 없습니다. 1인 가구라 식재료를 남기거나 보관하는 게 귀찮아서 오히려 불필요한 구독이 될까 봐 걱정되네요`)
-- `enable_thinking=true`를 사용자가 의도적으로 켤 때 reasoning은 분석 가치가 있어 `ChatResponse.reasoning_trace`에 보존한다. False면 reasoning 필드가 와도 무시한다
-- 후보였던 27B unsloth 6bit 빌드는 토크나이저 EOS 인식 실패로 토큰 루프(`券后` 반복)가 발생해 후보에서 제외했다. 캐시도 메인 세션에서 삭제 완료했다. 정본 모델은 35B-A3B 그대로 유지한다
+OpenAI gpt-4o-mini는 EOS 토큰 인식이 안정적이라 토큰 루프 사례(`券后` 반복 등)가 거의 발생하지 않는다. 그래도 회귀 안전망으로 응답 본문에 동일 토큰/구절이 max_tokens 한도까지 반복되는 패턴을 감지하는 토큰 루프 가드를 둔다(PRD §5.8). 가드 트리거 시 `RetryExhaustedError`로 처리되며 record는 `status="failed"`가 된다.
 
 빈 content 응답은 `EmptyResponseError`로 변환해 retry 대상으로 본다. 동일 페르소나에 대해 retry가 모두 실패하면 `RetryExhaustedError`로 승격되어 record는 `status="failed"`가 된다(TDD §5.2).
 
 #### 12.3. 에러 매핑
 
-- HTTP 5xx, 타임아웃, 연결 실패는 재시도 대상이다. 지수 백오프로 1초, 2초, 4초 간격을 두고 최대 3회 적용한다. 모두 실패 시 `RetryExhaustedError`로 변환한다
-- HTTP 4xx는 즉시 실패한다. 재시도하지 않으며 `ConfigError`로 변환한다(서버 측 요청 거부)
+- HTTP 5xx, 429, 타임아웃, 연결 실패는 재시도 대상이다. 지수 백오프로 1초, 2초, 4초 간격을 두고 최대 3회 적용한다. 모두 실패 시 `RetryExhaustedError`로 변환한다(헬스체크 단계의 429는 재시도 대신 `RateLimitError`로 즉시 변환하여 사용자에게 안내한다)
+- HTTP 401은 즉시 실패한다. 재시도하지 않으며 `AuthenticationError`(헬스체크) 또는 `ConfigError`(인터뷰 시작 시점)로 변환한다
+- HTTP 400/404 등 그 외 4xx는 즉시 실패한다. 재시도하지 않으며 `ConfigError`로 변환한다(잘못된 모델 ID, 잘못된 요청 등)
 - HTTP 200이지만 `choices`가 비거나 `content`가 빈 문자열이면 `RetryExhaustedError`로 처리한다. 2회 재시도 후 실패로 본다
 
 ### 13. 보안과 관측성
 
-security.md §1(시크릿), §3(입력 검증), §4(데이터 보호)와 PRD §6.3(보안과 개인정보)을 따른다.
+security.md §1(시크릿), §3(입력 검증), §4(데이터 보호)와 PRD §6.3(보안과 개인정보), ADR-002를 따른다.
 
-- API 키 코드는 일체 부재하다. `Authorization` 헤더는 코드에서 다루지 않는다
-- `base_url`이 localhost(`http://localhost`, `http://127.0.0.1`)가 아니면 `chat()` 호출을 차단한다(`healthcheck()`만 허용). 사용자가 실수로 외부 URL을 넣어도 사업 아이템 본문이 외부로 송신되지 않게 강제 가드한다. 환경변수 또는 CLI로 `KPI_ALLOW_REMOTE=1`을 명시 설정한 경우만 허용하는 hook만 둔다(v1 Won't 범위)
-- product 본문 마스킹은 로그에 `mask_product()`를 적용한다. 결과 JSON에는 원문 그대로 저장한다(로컬 파일이므로 외부 노출 위험 없음)
+- API 키는 환경변수 `OPENAI_API_KEY`(또는 fallback `KPI_OPENAI_API_KEY`)에서만 로드한다. 코드/설정/.env 파일/로그에 하드코딩하지 않는다(security.md §1)
+- `Authorization: Bearer ${OPENAI_API_KEY}` 헤더를 chat과 healthcheck 양쪽 모두에 부착한다. 로그 출력 시 헤더는 `Bearer sk-***` 형식으로 마스킹한다(logging.md §2)
+- `base_url`은 OpenAI 엔드포인트(`https://api.openai.com/v1`)를 기본 허용한다. ADR-002 이전의 localhost-only chat 가드는 OpenAI 백엔드 전환과 함께 제거한다. 다만 잘못된 base_url(예: 오타로 다른 도메인 지정)에 키와 사업 아이템이 송신되는 사고를 막기 위해 base_url을 INFO 로그에 명시 출력하여 사용자가 실행 직후 검증할 수 있게 한다. 향후 사용자 정의 OpenAI 호환 엔드포인트(예: Azure OpenAI, 사내 프록시) 지원이 필요하면 별도 ADR로 도입한다
+- product 본문 마스킹은 로그에 `mask_product()`를 적용한다(첫 30자 + 길이). 결과 JSON에는 원문 그대로 저장한다(로컬 파일이므로 외부 노출 위험 없음). 단 product 본문은 OpenAI 서버로 송신되므로 사용자가 실행 전 인지해야 한다(README와 도구 첫 실행 메시지에서 명시)
 - 페르소나 이름 마스킹은 로그에만 적용한다. 결과 JSON의 `persona_meta.name`은 원문을 보존한다(분석 시 필요)
 - `outputs/`는 `.gitignore` 처리한다. 결과 JSON과 로그 파일은 커밋되지 않는다
 - 사용자 입력 검증 정책은 아래와 같다. `--filter` DSL 파싱 시 알 수 없는 키는 `ConfigError`로 처리한다. `--concurrency` 4 이상은 `ConfigError`로 처리한다. `--n` 0 이하는 `ConfigError`로 처리한다
@@ -890,7 +900,7 @@ PRD §6.8과 dependency.md §10(빌드 도구 핀)을 따른다.
 - 핵심 테스트 케이스는 아래와 같다
   - `test_filter_dsl.py`는 AND/OR 결합, 별칭(`F` → `여자`, `서울특별시` → `서울`), 잘못된 키 거부, 시군구 부분 매칭을 검증한다
   - `test_persona_loader.py`는 시드 고정 샘플링 재현성(같은 시드면 같은 인덱스)과 persona_meta 매핑 정확성을 검증한다
-  - `test_llm_client.py`는 200 정상, 5xx 재시도 3회 후 실패, 4xx 즉시 실패, 타임아웃 재시도, healthcheck 200 또는 실패, localhost 외 base_url에서 chat 차단을 검증한다
+  - `test_llm_client.py`는 200 정상, 5xx/429 재시도 3회 후 실패, 401 즉시 `AuthenticationError`, 그 외 4xx 즉시 `ConfigError`, 타임아웃 재시도, healthcheck 200 또는 실패, `Authorization: Bearer ${OPENAI_API_KEY}` 헤더 부착, 키 미설정 시 `ConfigError`, 로그 마스킹(`Bearer sk-***`)을 검증한다. mock URL은 `https://api.openai.com/v1/chat/completions`다(pytest-httpx)
   - `test_interview_session.py`는 멀티턴 messages 누적, system 메시지 보존, truncation 동작(8001 토큰 입력 시 가장 오래된 페어 제거), 자동 follow-up 1회 상한, 거부 키워드 status 변환을 검증한다
   - `test_persona_drift.py`는 영어 비율 30% 임계값과 정면 모순 휴리스틱(연령대/성별/지역) 6개 케이스를 검증한다
   - `test_batch_runner.py`는 동시성 2 정확 적용, 한 task 실패가 다른 task를 죽이지 않음, SIGINT 시 partial 저장을 검증한다
@@ -901,11 +911,12 @@ PRD §6.8과 dependency.md §10(빌드 도구 핀)을 따른다.
 
 ### 17. 인프라 변경
 
-본 도구는 로컬 CLI라 클라우드 인프라 변경이 없다. 사용자 환경 요구사항만 명시한다.
+본 도구는 클라이언트 사이드 CLI라 클라우드 인프라 변경이 없다. 사용자 환경 요구사항만 명시한다.
 
-- Apple Silicon Mac(M1 이상)이 필요하다. 16GB 이상 통합 메모리를 권장한다(14B 4bit 모델 기준 약 8-10GB 점유)
-- Python 3.10 이상이 필요하다. `pyenv` 또는 `uv`로 관리하기를 권장한다
-- mlx-lm 패키지는 별도 설치한다. 사용자가 별도 터미널에서 서버를 기동한다
+- 운영 체제 제약은 없다(macOS, Linux, Windows 모두 가능). ADR-002 이전의 Apple Silicon 전용 제약은 OpenAI 백엔드 전환과 함께 제거한다
+- Python 3.12가 필요하다. `.python-version` 파일로 고정한다. `uv`로 관리하기를 권장한다
+- 인터넷 접근이 필요하다. OpenAI API(`https://api.openai.com/v1`)와 Hugging Face Hub에 도달할 수 있어야 한다
+- OpenAI API 키가 필요하다. 환경변수 `OPENAI_API_KEY`(또는 fallback `KPI_OPENAI_API_KEY`)로 설정한다
 - `~/.cache/huggingface` 디렉토리에 쓰기 권한이 필요하다(데이터셋 캐시 약 4-6GB)
 
 배포 변경, Kubernetes, GitHub Actions, AWS 인프라는 v1에서 모두 비대상이다.
@@ -914,8 +925,8 @@ PRD §6.8과 dependency.md §10(빌드 도구 핀)을 따른다.
 
 architecture.md §10(변경 영향과 테스트), security.md, PRD §6의 통합 정리는 아래와 같다.
 
-- 외부 호출이 없다. localhost MLX 서버만 호출한다
-- 동시성은 1-3 범위로 강제한다. 4 이상은 `ConfigError`로 차단한다
+- 외부 호출은 OpenAI Chat Completions API와 Hugging Face Hub(데이터셋 첫 로드)로 한정된다
+- 동시성은 1-3 범위로 강제한다. 4 이상은 `ConfigError`로 차단한다(OpenAI rate limit 부하와 비용 폭증 방지)
 - 진행률은 tqdm 콘솔 출력으로 표시한다. 100명 배치 시 1초마다 업데이트된다
 - 로그는 stderr와 `outputs/logs/run_{ts}.jsonl` 두 핸들러로 출력한다. JSON Lines로 기록되어 grep과 jq에 친화적이다
 - 마스킹은 product 본문(첫 30자와 길이)과 페르소나 이름에 적용한다. 로그에만 적용한다
@@ -930,8 +941,8 @@ architecture.md §10(변경 영향과 테스트), security.md, PRD §6의 통합
 | --- | --- | --- | --- | --- |
 | T1 | 프로젝트 스캐폴드(디렉토리, requirements, .gitignore, config.yaml 골격) | ml-engineer | 2h | - |
 | T2 | 횡단 모듈(models.py 도메인 모델/예외, config.py 로드 우선순위, logging_setup.py JSON 포맷터+마스킹) | ml-engineer | 5h | T1 |
-| T3 | llm_client.py(httpx 비동기, healthcheck, chat, 재시도, localhost 가드) | ml-engineer | 4h | T2 |
-| 게이트 1 | MLX 서버 기동 확인(사용자 휴먼 검증) | 사용자 | - | T3 |
+| T3 | llm_client.py(httpx 비동기, healthcheck, chat, 재시도, OpenAI Authorization 헤더, 401/429 분기) | ml-engineer | 4h | T2 |
+| 게이트 1 | OPENAI_API_KEY 설정 확인(사용자 휴먼 검증) | 사용자 | - | T3 |
 | T4 | load_personas.py(데이터셋 로드, PersonaFilter DSL, 정규화, 시드 샘플링) | ml-engineer | 6h | T2 |
 | 게이트 2 | 데이터셋 컬럼 매핑 휴먼 검증(TDD §1과 일치 확인) | 사용자 | - | T4 |
 | T5 | interview.py(InterviewSession, 시스템 프롬프트 빌드, 자동 follow-up, drift/refusal 감지, 토큰 truncation, 구조화 요약) | ml-engineer | 8h | T3, T4 |
@@ -980,10 +991,10 @@ T1 스캐폴드
 - 위험은 데이터셋에 별도 `name` 컬럼이 없다는 점이다(§1.3 매핑표). PRD §5.4 스키마는 `persona_meta.name`을 string으로 정의했지만 실제로는 `null`이 된다
 - 완화는 TDD에서 `name: str | None`으로 타입을 변경하는 것이다. v1.1에서 `professional_persona` 본문에서 정규식으로 이름 추출(`(?P<name>[가-힣]{2,4})\s*씨는`)을 실험적으로 추가하는 안을 검토한다. 이 결정은 ADR로 기록하지 않는다(번복 가능성 낮음)
 
-### 3. MLX 서버 컨텍스트 윈도우 초과
+### 3. 컨텍스트 윈도우와 토큰 누적
 
-- 위험은 14B 4bit 모델의 컨텍스트 윈도우가 8K로 설정된 인스턴스가 있어 멀티턴과 긴 페르소나 토글 시 초과 가능성이 있다는 것이다
-- 완화는 TDD §7의 truncation 정책과 `llm.context_budget` 설정값으로 8000 기본값을 두는 것이다. `mlx_lm.server` 기동 명령에 `--max-context`를 명시하도록 README에 안내한다
+- 위험은 멀티턴과 긴 페르소나 토글 시 누적 토큰이 늘어 비용과 지연이 증가하는 것이다. OpenAI gpt-4o-mini의 컨텍스트는 128K로 사실상 여유가 크지만 토큰 누적은 곧 비용이라 보수적으로 관리해야 한다
+- 완화는 TDD §7의 truncation 정책과 `llm.context_budget` 설정값으로 8000 기본값을 두는 것이다. 본 정책은 백엔드 무관하게 적용한다(ADR-002로 백엔드를 OpenAI로 전환했어도 토큰 누적 통제는 그대로 유지)
 
 ### 4. 페르소나 깨짐 휴리스틱의 false positive
 

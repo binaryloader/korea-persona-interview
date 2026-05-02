@@ -7,6 +7,7 @@
 - [prd/korea-persona-interview.md](prd/korea-persona-interview.md) - 제품 요구사항(배경/목표/스토리/수용 기준/기능/비기능/우선순위/제외/지표/리스크)
 - [tdd/korea-persona-interview.md](tdd/korea-persona-interview.md) - 기술 설계(데이터셋 컬럼 매핑/모듈 책임/시그니처/JSON 스키마/에러/로깅/멀티턴/동시성/의존성/CLI/테스트/작업 분해)
 - [adr/2026-05-02-multiturn-strategy.md](adr/2026-05-02-multiturn-strategy.md) - 멀티턴 + 단일턴 구조화 요약 채택 결정
+- [adr/2026-05-02-openai-backend-migration.md](adr/2026-05-02-openai-backend-migration.md) - 로컬 MLX → OpenAI Chat Completions API 백엔드 전환 결정
 - [ui/korea-persona-interview.md](ui/korea-persona-interview.md) - CLI 사용자 흐름과 콘솔 출력 명세, 한국어 에러 메시지 사전, 리포트 마크다운 섹션 트리
 - [tasks/korea-persona-interview.md](tasks/korea-persona-interview.md) - 작업 표(T1-T11 + GATE-1/2), 의존성 그래프, 마일스톤
 
@@ -20,21 +21,22 @@
 
 ## 3. 정합성 결정값 요약
 
-- 종료 코드: 0 정상, 1 서버/입력 오류, 2 표본/필터 결과 0건, 3 부분 실패, 130 SIGINT
+- 종료 코드: 0 정상, 1 키 미설정/API 오류/입력 오류, 2 표본/필터 결과 0건, 3 부분 실패, 130 SIGINT
 - 동시성: 기본 2, 한계 1-3(4 이상 차단)
 - 토큰 윈도우: 8000(system + 최근 N턴 보존, 가장 오래된 user/assistant 페어부터 truncate)
 - 자동 follow-up 상한: 1회
-- 페르소나 깨짐 임계값: 영어 단어 비율 30% 초과 또는 페르소나 정보 정면 모순
+- 페르소나 깨짐 임계값: 영어 단어 비율 30% 초과 또는 한자 비율 5% 초과 또는 페르소나 정보(연령/성별/지역/거주 형태) 정면 모순
 - 코호트 마스킹 임계값: 셀별 표본 3명 미만
-- base_url: `http://localhost:8080/v1`(localhost 외 chat 차단)
-- 모델 ID: `unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit`(프로젝트 오너 결정. 콘솔 출력 샘플도 본 ID로 통일)
-- enable_thinking: false(Qwen3 reasoning 토큰 폭증 회피, 검증된 35B-A3B 조합)
+- base_url: `https://api.openai.com/v1`(OpenAI Chat Completions API)
+- 모델 ID: `gpt-4o-mini`(기본값. `config.yaml`의 `llm.model` 또는 환경변수 `KPI_LLM_MODEL`로 변경 가능)
+- 환경변수: `OPENAI_API_KEY`(표준), `KPI_OPENAI_API_KEY`(fallback). 코드에 하드코딩 금지(security.md §1)
 - 시스템 프롬프트 출처: HANDOFF.md §시스템 프롬프트 템플릿
 - 환경 도구: uv(가상 환경은 .venv, Python 3.12 고정)
 
 ## 4. ADR 인덱스
 
 - [ADR-001 (2026-05-02)](adr/2026-05-02-multiturn-strategy.md) - 멀티턴 + 단일턴 구조화 요약 채택. 후속 supersede 후보: 단일턴 + 사후 요약(100명 30분 SLO 위반 시)
+- [ADR-002 (2026-05-02)](adr/2026-05-02-openai-backend-migration.md) - 로컬 MLX → OpenAI Chat Completions API(`gpt-4o-mini`) 백엔드 전환. ADR-001 멀티턴 정책은 백엔드 무관이라 supersede 대상 아님. 후속 supersede 후보: drift 5% 초과 시 gpt-4o 상향, 비용 부담 시 로컬 백엔드 회귀
 
 ## 5. 갱신 이력
 
@@ -49,3 +51,7 @@
 - 2026-05-02 환경 도구 uv 채택, .python-version 3.12 고정
 - 2026-05-02 GATE-2 통과(데이터셋 컬럼 26개 + 인구 통계 13개 표기 100% 일치 확인)
 - 2026-05-02 의존성 lock 파일(`requirements.lock`, `requirements-dev.lock`) 추가, aiohttp는 GHSA-9548-qrrj-x5pj 대응으로 `>=3.13.5,<3.14` 명시 핀(3.14 정식 릴리즈 시 재핀)
+- 2026-05-02 PRD §5.2 페르소나 주입에 `family_type`/`housing_type` 명시 추가(거주 형태 추측 회귀 방지)
+- 2026-05-02 페르소나 깨짐 감지 재설계 - 한자 비율 임계값 5% 추가, false positive 방지를 위해 페르소나 메타에 등장하는 영문/한자 토큰을 분모에서 제외
+- 2026-05-02 토큰 루프 가드 도입(동일 토큰/구절이 max_tokens 한도까지 반복되는 응답 감지 및 `status: "failed"` 처리)
+- 2026-05-02 ADR-002 채택, 백엔드 OpenAI Chat Completions API(`gpt-4o-mini`)로 전환. 환경변수 `OPENAI_API_KEY`/`KPI_OPENAI_API_KEY` 표준화. PRD §6.3 보안 정책 갱신(외부 송신 사실 명시), §6.5 호환성에서 mlx-lm 의존 제거, §10.4/§10.5/§10.6 리스크 갱신, §10.7/§10.8 재번호. INDEX, UI, README, LICENSE 동시 갱신
