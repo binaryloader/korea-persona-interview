@@ -53,6 +53,61 @@ logger = logging.getLogger(__name__)
 AUTO_FOLLOW_UP_PROMPT = "조금만 더 자세히 말씀해 주실 수 있을까요?"
 
 
+# 단일턴 모드 응답 분리 정규식. ``1. ``, ``2) ``, ``3.`` 같은 줄 시작 번호
+# 마커를 분리자로 본다. 멀티라인 + DOTALL을 함께 사용해 다음 번호 마커가
+# 등장할 때까지를 한 응답으로 본다. 본 정규식은 줄 시작에만 매칭하므로 본문
+# 안의 ``1. 첫 번째``류 인용은 분리자로 잡지 않는다.
+_NUMBERED_SEGMENT_RE = re.compile(
+    r"^\s*(\d+)[.)]\s*(.+?)(?=^\s*\d+[.)]|\Z)",
+    re.MULTILINE | re.DOTALL,
+)
+
+
+def _parse_single_turn_response(text: str, expected_count: int) -> tuple:
+    """단일턴 응답 텍스트를 question_index별 응답 리스트로 분리한다.
+
+    Args:
+        text: LLM 응답 본문(시스템 프롬프트 지침에 따라 ``1. ... 2. ...`` 형식).
+        expected_count: 기대하는 응답 개수(질문 + 사용자 정의 follow-up 합).
+
+    Returns:
+        ``(answers, parse_failed)``. ``answers``는 길이 ``expected_count``의
+        리스트. 파싱 성공 시 각 항목은 1번부터 N번 응답 본문이며 trailing
+        whitespace는 제거된다. 파싱 실패 시 마지막 인덱스에 통째 텍스트를
+        담고 그 외는 빈 문자열, ``parse_failed=True``를 반환한다.
+    """
+
+    if expected_count <= 0:
+        return [], False
+
+    matches = _NUMBERED_SEGMENT_RE.finditer(text or "")
+    found: dict = {}
+    for m in matches:
+        try:
+            idx = int(m.group(1))
+        except ValueError:
+            continue
+        # 1-based 번호를 0-based question_index로 변환한다.
+        zero_idx = idx - 1
+        if 0 <= zero_idx < expected_count:
+            # 같은 번호가 두 번 등장하면 마지막 매칭이 우선이다(LLM이 자가
+            # 정정해 다시 적는 사례를 흡수).
+            found[zero_idx] = m.group(2).strip()
+
+    # 모든 인덱스를 채웠는지 확인. 하나라도 빠지면 fallback.
+    if len(found) == expected_count and all(
+        i in found for i in range(expected_count)
+    ):
+        return [found[i] for i in range(expected_count)], False
+
+    # fallback: 통째 텍스트를 마지막 question에 담고 나머지는 빈 문자열로.
+    # 데이터를 잃지 않으면서도 parse_failed 플래그로 사후 분석에서 식별
+    # 가능하게 한다.
+    fallback_answers = [""] * expected_count
+    fallback_answers[-1] = (text or "").strip()
+    return fallback_answers, True
+
+
 # 구조화 요약 출력 스키마. 모델이 자유 서술 대신 정해진 JSON만 출력하도록 강제한다.
 # 키 순서/타입은 PRD §5.4와 ``StructuredSummary`` dataclass에 맞춘다.
 _SUMMARY_SCHEMA_HINT = (
@@ -893,9 +948,20 @@ class InterviewSession:
     async def run(self) -> InterviewRecord:
         """인터뷰 1회를 끝까지 진행하고 ``InterviewRecord``를 반환한다.
 
+        ``config.batch.single_turn``이 True면 모든 질문을 한 번의 chat 호출에
+        묶어 처리하는 단일턴 흐름으로 진입한다(``_run_single_turn``). 그렇지
+        않으면 v1 기본 멀티턴 흐름(``_run_multi_turn``)을 사용한다.
+
         에러 처리는 TDD §5.2에 따른다. 내부 예외는 ``status``/``flags``/``error``
         로 변환하고 외부로 누출하지 않는다.
         """
+
+        if self._config.batch.single_turn:
+            return await self._run_single_turn()
+        return await self._run_multi_turn()
+
+    async def _run_multi_turn(self) -> InterviewRecord:
+        """멀티턴 인터뷰(v1 기본). 질문별로 user/assistant 턴을 누적한다."""
 
         started_at = _now_iso()
         system_prompt = build_system_prompt(
@@ -921,6 +987,7 @@ class InterviewSession:
                 "product": mask_product(self._product),
                 "questions_count": len(self._questions),
                 "follow_ups_count": len(self._follow_ups),
+                "mode": "multi_turn",
             },
         )
 
@@ -1145,6 +1212,212 @@ class InterviewSession:
             chat_response.retry_count,
             chat_response.usage,
         )
+
+    async def _run_single_turn(self) -> InterviewRecord:
+        """단일턴 인터뷰 흐름(PRD §5.1, §5.9의 ``--single-turn``).
+
+        모든 질문을 한 번의 chat 호출에 묶어 처리한다. 자동 follow-up은
+        비활성화한다(한 번에 다 묶어서 진행하므로). 사용자 정의 follow-up은
+        같은 묶음 끝에 추가 질문으로 합쳐진다.
+
+        시스템 프롬프트는 멀티턴과 동일한 ``build_system_prompt``를 사용하되
+        본 메서드에서 "각 질문에 번호 순서대로 답변" 형식 지침을 추가 user
+        메시지에 넣는다. 응답 텍스트는 ``^\\s*(\\d+)[.)]\\s*...`` 정규식으로
+        question_index별 응답으로 분리한다. 파싱이 한 항목이라도 실패하면
+        flags.parse_failed=True로 표시하고, 통째 텍스트를 마지막 question에
+        담아 fallback한다(데이터를 잃지 않음).
+
+        Returns:
+            ``InterviewRecord``. 멀티턴과 같은 스키마.
+        """
+
+        started_at = _now_iso()
+        system_prompt = build_system_prompt(
+            self._persona,
+            self._product,
+            self._config.batch.persona_fields,
+            self._config.dataset.field_map,
+        )
+        all_questions = list(self._questions) + list(self._follow_ups)
+
+        # 단일턴 user 메시지: 모든 질문을 번호 순서로 나열하고 동일 형식의 답변
+        # 출력을 강제한다. 멀티턴과 비교해 messages 배열이 항상 [system, user,
+        # assistant] 3개라 prompt cache 히트가 잘 잡히고 비용이 약 1/N으로
+        # 줄어든다(N은 질문 수, 누적 컨텍스트 미발생 가정).
+        numbered = "\n".join(
+            f"{i + 1}. {q}" for i, q in enumerate(all_questions)
+        )
+        user_prompt = (
+            "아래 질문들에 번호 순서대로 답변해 주세요. 각 답변은 새 줄에서 "
+            "`1. ...`, `2. ...` 형식으로 시작하고, 본문은 한 단락으로 짧게 답해 "
+            "주세요. 질문 번호를 빠뜨리거나 합쳐 답하지 말아 주세요.\n"
+            "\n"
+            f"{numbered}"
+        )
+        messages: list = [
+            MessageEntry(role="system", content=system_prompt),
+            MessageEntry(role="user", content=user_prompt),
+        ]
+        flags = Flags()
+        status = "completed"
+        error_payload: Optional[dict] = None
+        raw_responses: list = []
+
+        logger.info(
+            "인터뷰 시작",
+            extra={
+                "persona_id": self._persona.persona_id,
+                "persona_name": mask_name(self._persona.name),
+                "persona_age": self._persona.age,
+                "persona_gender": self._persona.gender,
+                "persona_region": self._persona.region,
+                "product": mask_product(self._product),
+                "questions_count": len(self._questions),
+                "follow_ups_count": len(self._follow_ups),
+                "mode": "single_turn",
+            },
+        )
+
+        try:
+            (
+                response_text,
+                latency_ms,
+                retry_count,
+                usage,
+            ) = await self._call_llm(messages)
+            messages.append(
+                MessageEntry(role="assistant", content=response_text)
+            )
+
+            # 거부 감지(가장 강한 신호. 즉시 status 갱신, 파싱은 시도하지 않음).
+            if detect_refusal(response_text, self._interview_cfg.refusal_keywords):
+                flags = dataclasses.replace(flags, refusal_detected=True)
+                status = "refused"
+                # refused여도 raw_responses에 응답 1건은 보존(분석 가능성).
+                raw_responses.append(
+                    RawResponse(
+                        question_index=0,
+                        response=response_text,
+                        latency_ms=latency_ms,
+                        retry_count=retry_count,
+                        usage=usage,
+                    )
+                )
+            else:
+                # 페르소나 깨짐 감지(중단 없이 플래그만).
+                if detect_persona_drift(response_text, self._persona):
+                    flags = dataclasses.replace(flags, persona_drift=True)
+                    status = "drift"
+                    logger.warning(
+                        "페르소나 깨짐 감지(단일턴)",
+                        extra={"persona_id": self._persona.persona_id},
+                    )
+
+                parsed, parse_failed = _parse_single_turn_response(
+                    response_text, len(all_questions)
+                )
+                if parse_failed:
+                    flags = dataclasses.replace(flags, parse_failed=True)
+                    logger.warning(
+                        "단일턴 응답 번호 파싱 실패. fallback으로 마지막 "
+                        "question에 통째 텍스트 저장",
+                        extra={
+                            "persona_id": self._persona.persona_id,
+                            "questions_count": len(all_questions),
+                        },
+                    )
+
+                # usage는 단일 호출이므로 첫 응답에만 박는다(중복 합산 회피).
+                # latency도 마찬가지다. 두 번째 이후 응답은 같은 호출의 분리
+                # 결과라 latency_ms=0, retry_count=0, 빈 usage로 둔다.
+                first = True
+                for q_index, segment in enumerate(parsed):
+                    raw_responses.append(
+                        RawResponse(
+                            question_index=q_index,
+                            response=segment,
+                            latency_ms=latency_ms if first else 0,
+                            retry_count=retry_count if first else 0,
+                            usage=usage if first else TokenUsage(),
+                        )
+                    )
+                    first = False
+
+        except RetryExhaustedError as exc:
+            status = "failed"
+            error_payload = {
+                "type": "retry_exhausted",
+                "message": str(exc),
+            }
+            logger.error(
+                "인터뷰 실패(재시도 한도 초과, 단일턴)",
+                extra={
+                    "persona_id": self._persona.persona_id,
+                    "reason": str(exc),
+                },
+            )
+        except ServerNotReachableError as exc:
+            status = "failed"
+            error_payload = {
+                "type": "server_not_reachable",
+                "message": str(exc),
+            }
+            logger.error(
+                "인터뷰 실패(서버 응답 없음, 단일턴)",
+                extra={
+                    "persona_id": self._persona.persona_id,
+                    "reason": str(exc),
+                },
+            )
+
+        # 구조화 요약(멀티턴과 동일 정책).
+        structured_summary: Optional[StructuredSummary] = None
+        if status in ("completed", "drift", "refused") and raw_responses:
+            try:
+                structured_summary = await summarize_interview(
+                    messages, self._client, self._llm_cfg
+                )
+            except (
+                RetryExhaustedError,
+                ServerNotReachableError,
+                ConfigError,
+                StructuredSummaryParseError,
+            ) as exc:
+                logger.warning(
+                    "구조화 요약 단계 예외(structured_summary=None로 보존, 단일턴)",
+                    extra={
+                        "persona_id": self._persona.persona_id,
+                        "reason": str(exc),
+                    },
+                )
+                structured_summary = None
+
+        finished_at = _now_iso()
+        record = InterviewRecord(
+            persona_id=self._persona.persona_id,
+            persona_meta=self._persona,
+            started_at=started_at,
+            finished_at=finished_at,
+            status=status,
+            messages=list(messages),
+            raw_responses=list(raw_responses),
+            structured_summary=structured_summary,
+            flags=flags,
+            error=error_payload,
+        )
+
+        logger.info(
+            "인터뷰 종료",
+            extra={
+                "persona_id": self._persona.persona_id,
+                "status": status,
+                "responses_count": len(raw_responses),
+                "flags": dataclasses.asdict(flags),
+                "summary_present": structured_summary is not None,
+                "mode": "single_turn",
+            },
+        )
+        return record
 
 
 # ---------------------------------------------------------------------------

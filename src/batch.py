@@ -658,7 +658,7 @@ async def run_batch(
         "max_tokens": config.llm.max_tokens,
         "timeout": config.llm.timeout,
         "context_budget": config.llm.context_budget,
-        "single_turn": False,
+        "single_turn": bool(config.batch.single_turn),
         "persona_fields": list(config.batch.persona_fields),
     }
 

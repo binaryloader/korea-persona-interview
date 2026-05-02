@@ -23,6 +23,7 @@ from src.interview import (
     AUTO_FOLLOW_UP_PROMPT,
     InterviewSession,
     _build_summary_messages,
+    _parse_single_turn_response,
     _parse_summary_payload,
     build_system_prompt,
     detect_persona_drift,
@@ -1101,3 +1102,305 @@ async def test_summarize_interview_파싱_실패_2회후_None(
         result = await summarize_interview(msgs, client, config.llm)
 
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# 단일턴 파서 단위 테스트
+# ---------------------------------------------------------------------------
+
+
+def test_parse_single_turn_response_정상_3개_분리() -> None:
+    """3개 질문에 대한 정상 응답을 번호별로 분리한다."""
+
+    text = (
+        "1. 가격이 합리적이라 한번 시도해 볼 만합니다.\n"
+        "2. 월 3만 원 정도면 좋겠어요.\n"
+        "3. 너무 비싸면 안 쓸 것 같아요."
+    )
+    answers, parse_failed = _parse_single_turn_response(text, 3)
+
+    assert parse_failed is False
+    assert len(answers) == 3
+    assert "합리적" in answers[0]
+    assert "3만 원" in answers[1]
+    assert "비싸면" in answers[2]
+
+
+def test_parse_single_turn_response_괄호_번호_지원() -> None:
+    """``1)`` 형식 번호도 인식한다."""
+
+    text = "1) 첫 답변\n2) 두 번째 답변"
+    answers, parse_failed = _parse_single_turn_response(text, 2)
+
+    assert parse_failed is False
+    assert answers[0] == "첫 답변"
+    assert answers[1] == "두 번째 답변"
+
+
+def test_parse_single_turn_response_부분_파싱_실패_fallback() -> None:
+    """기대 3개인데 2개만 파싱되면 parse_failed=True + fallback."""
+
+    text = "1. 첫 답변\n2. 두 번째 답변"  # 3번이 없음
+    answers, parse_failed = _parse_single_turn_response(text, 3)
+
+    assert parse_failed is True
+    assert len(answers) == 3
+    # fallback: 마지막 인덱스에 통째 텍스트 보존
+    assert text in answers[-1]
+
+
+def test_parse_single_turn_response_번호_없는_응답_fallback() -> None:
+    """번호 형식이 전혀 없으면 통째 텍스트를 마지막 question에 담는다."""
+
+    text = "그냥 자유 서술 답변입니다. 번호를 안 붙였네요."
+    answers, parse_failed = _parse_single_turn_response(text, 2)
+
+    assert parse_failed is True
+    assert answers[0] == ""
+    assert text in answers[-1]
+
+
+def test_parse_single_turn_response_여러_단락_본문_보존() -> None:
+    """다음 번호 마커 전까지의 본문(여러 단락)을 한 응답으로 합친다."""
+
+    text = (
+        "1. 첫 번째 답변입니다.\n"
+        "이어지는 두 번째 줄도 같은 답변에 속합니다.\n"
+        "2. 두 번째 답변."
+    )
+    answers, parse_failed = _parse_single_turn_response(text, 2)
+
+    assert parse_failed is False
+    assert "이어지는 두 번째 줄" in answers[0]
+    assert answers[1] == "두 번째 답변."
+
+
+# ---------------------------------------------------------------------------
+# 단일턴 인터뷰 흐름 통합 테스트(InterviewSession._run_single_turn)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_interview_single_turn_정상_파싱(
+    httpx_mock,
+    fake_persona_meta,
+    make_app_config,
+) -> None:
+    """단일턴: 질문 3개 → 한 번의 chat 호출로 응답 → 번호별 분리."""
+
+    multi_answer = (
+        "1. 가격이 적당하면 한번 써볼 의향이 있어요.\n"
+        "2. 월 3만 원 정도면 좋겠습니다.\n"
+        "3. 너무 비싸면 거절할 것 같아요."
+    )
+    _add_chat_response(httpx_mock, multi_answer)
+    _add_chat_response(
+        httpx_mock,
+        json.dumps(
+            {
+                "intent": "positive",
+                "willingness_to_pay": 30000,
+                "willingness_to_pay_currency": "KRW",
+                "rejection_reasons": ["가격"],
+                "one_line": "긍정",
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    config = make_app_config(single_turn=True)
+    async with MlxLLMClient(config.llm) as client:
+        record = await run_interview(
+            persona=fake_persona_meta,
+            product="반찬 정기배송",
+            questions=["쓸 의향?", "월 얼마?", "거절 이유?"],
+            follow_ups=[],
+            llm=client,
+            config=config,
+        )
+
+    assert record.status == "completed"
+    assert record.flags.parse_failed is False
+    # raw_responses 3개 = 질문 3개. messages는 system + user + assistant 3개.
+    assert len(record.raw_responses) == 3
+    assert len(record.messages) == 3
+    assert record.messages[0].role == "system"
+    assert record.messages[1].role == "user"
+    assert record.messages[2].role == "assistant"
+    # 첫 응답에만 latency_ms/usage가 박혀 있고 나머지는 0/빈 usage.
+    assert record.raw_responses[0].latency_ms > 0 or record.raw_responses[0].latency_ms == 0
+    assert record.raw_responses[1].latency_ms == 0
+    assert record.raw_responses[2].latency_ms == 0
+    assert "적당" in record.raw_responses[0].response
+    assert "3만 원" in record.raw_responses[1].response
+    assert "비싸" in record.raw_responses[2].response
+
+
+@pytest.mark.asyncio
+async def test_run_interview_single_turn_부분_파싱_fallback(
+    httpx_mock,
+    fake_persona_meta,
+    make_app_config,
+) -> None:
+    """단일턴: 응답에 번호가 빠지면 parse_failed=True + 마지막에 통째 본문."""
+
+    bad_answer = "1. 첫 답변만 적었네요."  # 2번이 없음
+    _add_chat_response(httpx_mock, bad_answer)
+    _add_chat_response(
+        httpx_mock,
+        json.dumps(
+            {
+                "intent": "neutral",
+                "willingness_to_pay": None,
+                "willingness_to_pay_currency": "KRW",
+                "rejection_reasons": [],
+                "one_line": "fallback",
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    config = make_app_config(single_turn=True)
+    async with MlxLLMClient(config.llm) as client:
+        record = await run_interview(
+            persona=fake_persona_meta,
+            product="반찬",
+            questions=["Q1", "Q2"],
+            follow_ups=[],
+            llm=client,
+            config=config,
+        )
+
+    assert record.status == "completed"
+    assert record.flags.parse_failed is True
+    assert len(record.raw_responses) == 2
+    assert bad_answer in record.raw_responses[-1].response
+
+
+@pytest.mark.asyncio
+async def test_run_interview_single_turn_drift_감지(
+    httpx_mock,
+    fake_persona_meta,
+    make_app_config,
+) -> None:
+    """단일턴: 응답에 drift(영어 비율)가 섞이면 status=drift."""
+
+    drift_answer = (
+        "1. I think this product is good but I will pass for now.\n"
+        "2. Maybe thirty thousand won is fine for me."
+    )
+    _add_chat_response(httpx_mock, drift_answer)
+    _add_chat_response(
+        httpx_mock,
+        json.dumps(
+            {
+                "intent": "neutral",
+                "willingness_to_pay": 30000,
+                "willingness_to_pay_currency": "KRW",
+                "rejection_reasons": [],
+                "one_line": "drift",
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    config = make_app_config(single_turn=True)
+    async with MlxLLMClient(config.llm) as client:
+        record = await run_interview(
+            persona=fake_persona_meta,
+            product="반찬",
+            questions=["Q1", "Q2"],
+            follow_ups=[],
+            llm=client,
+            config=config,
+        )
+
+    assert record.status == "drift"
+    assert record.flags.persona_drift is True
+
+
+@pytest.mark.asyncio
+async def test_run_interview_single_turn_chat_호출_1회_멀티턴_대비_절감(
+    httpx_mock,
+    fake_persona_meta,
+    make_app_config,
+) -> None:
+    """단일턴: 질문 N개라도 chat 호출은 1회(요약 1회 별도). 비용 절감 검증."""
+
+    answer = "1. 좋아요.\n2. 적당해요.\n3. 별로요."
+    _add_chat_response(httpx_mock, answer)
+    _add_chat_response(
+        httpx_mock,
+        json.dumps(
+            {
+                "intent": "neutral",
+                "willingness_to_pay": None,
+                "willingness_to_pay_currency": "KRW",
+                "rejection_reasons": [],
+                "one_line": "단일턴",
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    config = make_app_config(single_turn=True)
+    async with MlxLLMClient(config.llm) as client:
+        record = await run_interview(
+            persona=fake_persona_meta,
+            product="제품",
+            questions=["Q1", "Q2", "Q3"],
+            follow_ups=[],
+            llm=client,
+            config=config,
+        )
+
+    assert record.status == "completed"
+    # chat 호출 횟수: 본 인터뷰 1회 + 구조화 요약 1회 = 2회.
+    # 멀티턴이라면 질문 3개 + 요약 = 최소 4회였을 것. 절반.
+    requests = httpx_mock.get_requests()
+    chat_calls = [
+        r for r in requests if "chat/completions" in str(r.url)
+    ]
+    assert len(chat_calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_run_interview_single_turn_자동_follow_up_비활성화(
+    httpx_mock,
+    fake_persona_meta,
+    make_app_config,
+) -> None:
+    """단일턴은 자동 follow-up 미실행(짧은 답변이어도 1회 호출만)."""
+
+    short_answer = "1. 그래요.\n2. 싫어요."  # 짧지만 단일턴이라 follow-up 안 함
+    _add_chat_response(httpx_mock, short_answer)
+    _add_chat_response(
+        httpx_mock,
+        json.dumps(
+            {
+                "intent": "neutral",
+                "willingness_to_pay": None,
+                "willingness_to_pay_currency": "KRW",
+                "rejection_reasons": [],
+                "one_line": "짧음",
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    config = make_app_config(single_turn=True)
+    async with MlxLLMClient(config.llm) as client:
+        record = await run_interview(
+            persona=fake_persona_meta,
+            product="제품",
+            questions=["Q1", "Q2"],
+            follow_ups=[],
+            llm=client,
+            config=config,
+        )
+
+    assert record.flags.auto_follow_up_used is False
+    requests = httpx_mock.get_requests()
+    chat_calls = [r for r in requests if "chat/completions" in str(r.url)]
+    # 인터뷰 1회 + 요약 1회 = 2. follow-up 호출 없음.
+    assert len(chat_calls) == 2

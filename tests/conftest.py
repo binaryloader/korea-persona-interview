@@ -286,9 +286,12 @@ def make_app_config():
         api_key: str = "test-key",
         concurrency: int = 2,
         persona_fields: tuple = ("summary",),
+        single_turn: bool = False,
         output_dir: Path = Path("outputs/"),
         log_level: str = "INFO",
         no_color: bool = True,
+        short_answer_threshold: int = 20,
+        english_ratio_threshold: float = 0.30,
         ambiguous_keywords: tuple = ("글쎄요", "잘 모르겠습니다", "딱히"),
         refusal_keywords: tuple = (
             "답변할 수 없습니다",
@@ -311,6 +314,7 @@ def make_app_config():
         batch = BatchConfig(
             concurrency=concurrency,
             persona_fields=persona_fields,
+            single_turn=single_turn,
         )
         dataset = DatasetConfig(
             name="nvidia/Nemotron-Personas-Korea",
@@ -345,8 +349,8 @@ def make_app_config():
             },
         )
         interview = InterviewConfig(
-            short_answer_threshold=20,
-            english_ratio_threshold=0.30,
+            short_answer_threshold=short_answer_threshold,
+            english_ratio_threshold=english_ratio_threshold,
             ambiguous_keywords=ambiguous_keywords,
             refusal_keywords=refusal_keywords,
         )

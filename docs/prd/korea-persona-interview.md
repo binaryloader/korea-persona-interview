@@ -87,7 +87,7 @@
   - 자동 follow-up: 답변 길이가 20자 미만이거나 모호한 키워드(예: "글쎄요", "잘 모르겠습니다", "딱히")만 포함되면 시스템이 "조금만 더 자세히 말씀해 주실 수 있을까요?" 류 follow-up을 1회 추가한다(상한 1회)
   - 사용자 정의 follow-up: 명령행 인자 `--follow-up "질문 1" "질문 2"`로 모든 페르소나에 공통 적용되는 후속 질문을 추가할 수 있다
 - 인터뷰 종료 후 별도 프롬프트로 구조화 요약을 생성한다(2단계 흐름)
-- 멀티턴은 v1의 기본값이다. 단일턴 옵션은 `--single-turn` 플래그로 명시한 경우에만 동작한다(빠른 dry-run, 토큰 절약 목적)
+- 멀티턴은 v1의 기본값이다. 단일턴 옵션은 `--single-turn` 플래그로 명시한 경우에만 동작한다(빠른 dry-run, 토큰 절약 목적). 단일턴 모드는 모든 질문(메인 + 사용자 정의 follow-up)을 한 번의 chat 호출에 묶어 보내고, 모델 응답 텍스트를 `1. ... 2. ... 3. ...` 번호 형식으로 question_index별 분리한다. 자동 follow-up은 단일턴에서 비활성화된다(한 번에 다 묶어 보내므로). 응답 번호 파싱이 실패하면 `flags.parse_failed: true`로 표시하고 마지막 question에 통째 텍스트를 fallback으로 저장해 데이터를 잃지 않는다
 
 ### 5.2. 페르소나 주입
 
@@ -165,7 +165,8 @@
         "persona_drift": false,
         "auto_follow_up_used": false,
         "refusal_detected": false,
-        "truncated": false
+        "truncated": false,
+        "parse_failed": false
       },
       "error": null
     }
@@ -173,7 +174,7 @@
 }
 ```
 
-스키마 미세 조정 근거는 데이터셋 실제 컬럼 확인 결과(TDD §1)를 반영한 결정이다. `persona_meta.name`은 데이터셋에 별도 이름 컬럼이 없어 v1에서 `null`을 채택한다. `persona_meta.marital`과 `persona_meta.education`은 데이터셋의 `marital_status`, `education_level` 컬럼을 분석 가치를 위해 보존한다. `flags.truncated`는 멀티턴 누적 컨텍스트가 토큰 윈도우(8000)를 초과해 가장 오래된 페어를 제거한 경우를 표시한다(ADR-001 §2, TDD §7).
+스키마 미세 조정 근거는 데이터셋 실제 컬럼 확인 결과(TDD §1)를 반영한 결정이다. `persona_meta.name`은 데이터셋에 별도 이름 컬럼이 없어 v1에서 `null`을 채택한다. `persona_meta.marital`과 `persona_meta.education`은 데이터셋의 `marital_status`, `education_level` 컬럼을 분석 가치를 위해 보존한다. `flags.truncated`는 멀티턴 누적 컨텍스트가 토큰 윈도우(8000)를 초과해 가장 오래된 페어를 제거한 경우를 표시한다(ADR-001 §2, TDD §7). `flags.parse_failed`는 단일턴 모드 응답에서 번호 파싱이 실패해 fallback으로 마지막 question에 통째 텍스트를 저장한 경우를 표시한다(라운드 B1 추가).
 
 JSON 스키마 결정 근거는 아래와 같다.
 

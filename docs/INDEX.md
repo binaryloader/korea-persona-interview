@@ -55,3 +55,4 @@
 - 2026-05-02 페르소나 깨짐 감지 재설계 - 한자 비율 임계값 5% 추가, false positive 방지를 위해 페르소나 메타에 등장하는 영문/한자 토큰을 분모에서 제외
 - 2026-05-02 토큰 루프 가드 도입(동일 토큰/구절이 max_tokens 한도까지 반복되는 응답 감지 및 `status: "failed"` 처리)
 - 2026-05-02 ADR-002 채택, 백엔드 OpenAI Chat Completions API(`gpt-4o-mini`)로 전환. 환경변수 `OPENAI_API_KEY`/`KPI_OPENAI_API_KEY` 표준화. PRD §6.3 보안 정책 갱신(외부 송신 사실 명시), §6.5 호환성에서 mlx-lm 의존 제거, §10.4/§10.5/§10.6 리스크 갱신, §10.7/§10.8 재번호. INDEX, UI, README, LICENSE 동시 갱신
+- 2026-05-02 라운드 B1 단일턴 모드 정식 구현(`--single-turn`). 모든 질문을 한 번의 chat 호출로 묶어 보내고 응답 텍스트를 번호별로 분리한다. 자동 follow-up은 단일턴에서 비활성. 파싱 실패 시 `flags.parse_failed=true` + fallback으로 마지막 question에 통째 텍스트 저장. PRD §5.1, §5.4 스키마 갱신

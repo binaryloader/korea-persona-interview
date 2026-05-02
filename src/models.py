@@ -161,12 +161,18 @@ class StructuredSummary:
 
 @dataclass(frozen=True)
 class Flags:
-    """record 단위 부가 플래그. truncated는 TDD §7과 ADR-001 §2에서 추가됐다."""
+    """record 단위 부가 플래그.
+
+    truncated는 TDD §7과 ADR-001 §2에서 추가됐다. parse_failed는 단일턴 모드
+    응답에서 번호 파싱이 실패해 fallback으로 마지막 question에 통째 텍스트를
+    넣은 경우를 표시한다(라운드 B1 추가).
+    """
 
     persona_drift: bool = False
     auto_follow_up_used: bool = False
     refusal_detected: bool = False
     truncated: bool = False
+    parse_failed: bool = False
 
 
 @dataclass(frozen=True)
