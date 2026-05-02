@@ -591,6 +591,7 @@ def test_json_mode_list_personas_정상_stdout_JSON(
     )
     assert result.exit_code == 0, result.stdout + result.stderr
     payload = _stdout_json(result)
+    assert payload["ok"] is True
     assert payload["count"] == 2
     assert len(payload["personas"]) == 2
     # 첫 페르소나에 핵심 키들이 들어 있고 raw는 빠져 있다(요약 응답).
@@ -618,8 +619,29 @@ def test_json_mode_list_personas_필터_0건_error_payload(
     )
     assert result.exit_code == 2
     payload = _stdout_json(result)
+    assert payload["ok"] is False
     assert payload["error"]["code"] == "filter_matched_zero"
     assert payload["error"]["exit_code"] == 2
+
+
+def test_json_mode_error_payload_ok_false_일관성(tmp_path: Path) -> None:
+    """모든 ``--json`` 모드 에러 응답에 ``ok: false`` 필드가 박힌다.
+
+    healthcheck/interview/report 정상 응답의 ``ok: true``와 같은 위치에서 외부
+    에이전트가 단일 키로 성공/실패를 분기할 수 있게 한다.
+    """
+
+    runner = _make_json_runner()
+    # API 키 미설정으로 healthcheck 실패 → ConfigError 매핑.
+    result = runner.invoke(
+        cli,
+        ["--json", "healthcheck"],
+        env={"KPI_OUTPUT_DIR": str(tmp_path)},
+    )
+    assert result.exit_code == 1
+    payload = _stdout_json(result)
+    assert payload["ok"] is False
+    assert payload["error"]["exit_code"] == 1
 
 
 def test_json_mode_interview_정상_3명_stdout_JSON(

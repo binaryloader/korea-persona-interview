@@ -127,17 +127,20 @@ def _emit_json(payload: dict) -> None:
 def _emit_json_error(code: str, message: str, *, exit_code: int) -> None:
     """``--json`` 모드 에러 응답. stdout JSON + non-zero exit.
 
-    페이로드 형태는 ``{"error": {"code": ..., "message": ..., "exit_code": N}}``로
-    고정한다. 호출 후 ``sys.exit(exit_code)``는 호출자가 수행한다.
+    페이로드 형태는 ``{"ok": false, "error": {"code": ..., "message": ...,
+    "exit_code": N}}``로 고정한다. ``ok`` 필드는 healthcheck/interview/report 정상
+    응답과 같은 위치에 놓여 외부 에이전트가 단일 키로 성공/실패를 분기할 수
+    있다. 호출 후 ``sys.exit(exit_code)``는 호출자가 수행한다.
     """
 
     _emit_json(
         {
+            "ok": False,
             "error": {
                 "code": code,
                 "message": message,
                 "exit_code": int(exit_code),
-            }
+            },
         }
     )
 
@@ -509,6 +512,7 @@ def list_personas(
     if json_mode:
         _emit_json(
             {
+                "ok": True,
                 "personas": [_persona_to_json_dict(p) for p in personas],
                 "count": len(personas),
                 "filter": filter_spec,

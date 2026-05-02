@@ -178,14 +178,19 @@ _REPORT_SCHEMA: dict = {
 
 
 def _error_payload(code: str, message: str, *, exit_code: int = 1) -> dict:
-    """Build a uniform error response dict for any tool handler."""
+    """Build a uniform error response dict for any tool handler.
+
+    The ``ok: false`` field mirrors the CLI ``--json`` mode envelope so MCP
+    clients can branch on a single key when reading tool outputs.
+    """
 
     return {
+        "ok": False,
         "error": {
             "code": code,
             "message": message,
             "exit_code": int(exit_code),
-        }
+        },
     }
 
 

@@ -115,6 +115,7 @@ def test_input_schema_타입과_required_필드() -> None:
 async def test_dispatch_unknown_tool_에러_응답() -> None:
     result = await dispatch_tool("does_not_exist", {})
     assert "error" in result
+    assert result["ok"] is False
     assert result["error"]["code"] == "unknown_tool"
 
 
@@ -122,6 +123,7 @@ async def test_dispatch_unknown_tool_에러_응답() -> None:
 async def test_dispatch_arguments_dict가_아니면_에러() -> None:
     result = await dispatch_tool("healthcheck", "not-a-dict")  # type: ignore[arg-type]
     assert "error" in result
+    assert result["ok"] is False
     assert result["error"]["code"] == "invalid_arguments"
 
 
@@ -133,6 +135,7 @@ async def test_dispatch_핸들러_예외_안전망(monkeypatch: pytest.MonkeyPat
     monkeypatch.setitem(_TOOL_HANDLERS, "healthcheck", _broken_handler)
     result = await dispatch_tool("healthcheck", {})
     assert "error" in result
+    assert result["ok"] is False
     assert result["error"]["code"] == "unhandled_exception"
     assert "boom" in result["error"]["message"]
 
