@@ -137,6 +137,16 @@ dataset:
     제주특별자치도: "제주"
 ```
 
+#### 1.7. GATE-2 통과 사실(2026-05-02)
+
+PRD §5.10 게이트 2를 메인 세션에서 통과 처리했다. dev-planner가 viewer 직접 조회로 박은 §1.1, §1.2의 매핑값과 실제 `datasets.load_dataset` 결과가 100% 일치하는 것을 두 경로(in-memory + streaming)로 교차 확인한 결과다. 일치 항목은 아래와 같다.
+
+- 컬럼 26개 전체 일치(`uuid`, 7개 페르소나 자유 서술, 6개 부가 자유 서술, 9개 인구 통계, 3개 지역)
+- 인구 통계 13개 키와 값 표기 일치(특히 `sex`는 `남자`/`여자` 한국어 2진, `age`는 int, `marital_status`는 `배우자있음` 등 한국어 자연어, `district`는 `광주-서구` 형식의 시도-시군구 결합형, `province`는 `광주`/`서울` 등 짧은 17개 표기, `country`는 `대한민국`)
+- `dev-planner`가 작성한 §1.6의 `dataset.field_map` 초기값을 그대로 코드에 박아둔 상태로 정합성 위반이 없음
+
+별도 코드 갱신은 필요하지 않다. 본 섹션은 후속 작업(T5-T11)이 컬럼 매핑 가정을 그대로 사용해도 된다는 안전 신호다. 데이터셋 갱신 시에는 본 섹션의 GATE-2를 다시 통과해야 한다.
+
 ### 2. 모듈 책임 경계(계층 분리)
 
 architecture.md §1의 계층 분리 원칙을 단일 도메인 CLI에 맞춰 4계층으로 단순화한다. 모놀리식이지만 모듈 단위로 컨텍스트를 분리한다(architecture.md §5).
@@ -640,7 +650,11 @@ config.yaml은 일부 섹션만 정의해도 default와 머지된다. dataset.fi
 
 dependency.md §1, §2(lock 파일, 안정 버전)에 따라 production/dev를 분리하고 안정 버전을 핀한다.
 
-#### 11.1. requirements.txt(production)
+#### 11.1. 환경 도구
+
+환경 도구는 uv를 사용한다. 글로벌 룰 `~/.claude/rules/python.md` §1을 따른다. 가상 환경은 프로젝트 로컬 `.venv`에 두고 `uv venv --python 3.12`로 생성한다. 의존성 설치는 `source .venv/bin/activate && uv pip install -r requirements.txt -r requirements-dev.txt`로 수행하며 활성화 없이 `uv run`을 사용해도 된다. Python 버전은 프로젝트 루트의 `.python-version`에 `3.12`로 고정한다(`uv venv --python 3.12`와 호환). 시스템 Python 또는 다른 패키지 매니저(pip 직접, poetry, pipenv, conda)는 본 프로젝트에 도입하지 않는다.
+
+#### 11.2. requirements.txt(production)
 
 ```
 httpx==0.27.*
@@ -656,7 +670,7 @@ click==8.1.*
 - tqdm은 진행률 표시를 담당한다
 - click은 CLI 프레임워크다. argparse 대비 데코레이터 기반으로 가독성에서 우위를 갖는다
 
-#### 11.2. requirements-dev.txt
+#### 11.3. requirements-dev.txt
 
 ```
 -r requirements.txt
@@ -665,7 +679,7 @@ pytest-asyncio==0.23.*
 pytest-httpx==0.30.*
 ```
 
-#### 11.3. 도입을 거부하는 의존성과 근거
+#### 11.4. 도입을 거부하는 의존성과 근거
 
 dependency.md §1 leftpad 안티패턴 회피와 직접 통제 목적으로 아래 라이브러리는 도입하지 않는다.
 

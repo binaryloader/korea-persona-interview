@@ -30,6 +30,7 @@
 - 모델 ID: `unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit`(프로젝트 오너 결정. 콘솔 출력 샘플도 본 ID로 통일)
 - enable_thinking: false(Qwen3 reasoning 토큰 폭증 회피, 검증된 35B-A3B 조합)
 - 시스템 프롬프트 출처: HANDOFF.md §시스템 프롬프트 템플릿
+- 환경 도구: uv(가상 환경은 .venv, Python 3.12 고정)
 
 ## 4. ADR 인덱스
 
@@ -45,3 +46,5 @@
 - 2026-05-02 PRD §5.4 결과 JSON 스키마 갱신(`name` 옵셔널, `marital`/`education`/`truncated` 추가)
 - 2026-05-02 PRD §5.5 필터 DSL 별칭 메커니즘 명시(서울 ↔ 서울특별시, F ↔ 여자, M ↔ 남자)
 - 2026-05-02 TDD §12.2.1 Qwen3 thinking 토글(chat_template_kwargs) 보강 추가, GATE-1 검증 결과 반영
+- 2026-05-02 환경 도구 uv 채택, .python-version 3.12 고정
+- 2026-05-02 GATE-2 통과(데이터셋 컬럼 26개 + 인구 통계 13개 표기 100% 일치 확인)
