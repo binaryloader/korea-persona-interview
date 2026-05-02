@@ -51,10 +51,23 @@ from src.report import (
 
 # 한국어 단일 출처 메시지 사전(UI §3.1). 동일 예외가 명령마다 다른 문구로
 # 출력되지 않도록 본 사전만 사용한다.
+#
+# v1.x부터 백엔드는 OpenAI Chat Completions API다. ``server_not_reachable``과
+# ``api_key_missing``은 분리해 사용자가 어떤 문제인지 즉시 식별할 수 있게 한다.
 MESSAGES = {
     "server_not_reachable": (
-        "MLX 서버가 응답하지 않습니다. 별도 터미널에서 "
-        "`mlx_lm.server --model {model} --port 8080`을 실행해 주세요"
+        "OpenAI 서버에 연결할 수 없습니다. 인터넷 연결과 base_url, "
+        "OPENAI_API_KEY 환경변수를 확인해 주세요(현재 모델: {model})"
+    ),
+    "api_key_missing": (
+        "OpenAI API 키가 설정되지 않았습니다. "
+        "https://platform.openai.com/api-keys 에서 발급 후 환경변수 "
+        "OPENAI_API_KEY로 셸에 적용하거나(`export OPENAI_API_KEY=sk-...`) "
+        "프로젝트 루트의 .env 파일에 `OPENAI_API_KEY=...` 형식으로 저장해 주세요"
+    ),
+    "api_key_invalid": (
+        "OpenAI API 키가 유효하지 않거나 권한이 없습니다. "
+        "환경변수 OPENAI_API_KEY를 다시 확인해 주세요"
     ),
     "config_error": "설정 파일을 읽을 수 없습니다: {reason}",
     "dataset_unavailable": (
@@ -245,11 +258,11 @@ def cli(ctx: click.Context, config_path: Optional[Path], no_color: bool, log_lev
 # ---------------------------------------------------------------------------
 
 
-@cli.command(help="MLX 서버 응답과 모델 가용성을 확인합니다.")
+@cli.command(help="OpenAI 서버 응답과 모델 가용성을 확인합니다.")
 @click.option(
     "--base-url",
     default=None,
-    help="MLX 서버 base URL(기본: config.yaml의 llm.base_url).",
+    help="OpenAI 호환 서버 base URL(기본: config.yaml의 llm.base_url).",
 )
 @click.pass_context
 def healthcheck(ctx: click.Context, base_url: Optional[str]) -> None:
@@ -283,25 +296,25 @@ def healthcheck(ctx: click.Context, base_url: Optional[str]) -> None:
         console.err(MESSAGES["server_not_reachable"].format(model=config.llm.model))
         console.hint(f"Base URL: {config.llm.base_url}")
         console.hint(f"원인: {exc}")
-        console.hint(
-            "조치: 별도 터미널에서 아래 명령을 실행해 주세요."
-        )
-        console.hint(
-            f"  mlx_lm.server --model {config.llm.model} --port 8080"
-        )
         click.echo("종료 코드: 1")
         sys.exit(1)
     except ConfigError as exc:
-        console.err(MESSAGES["config_error"].format(reason=exc))
+        # API 키 누락/무효는 ConfigError 메시지에 키워드가 포함된다.
+        # 사용자에게 명확히 분리 안내한다.
+        message = str(exc)
+        if "API 키" in message or "OPENAI_API_KEY" in message:
+            console.err(message)
+        else:
+            console.err(MESSAGES["config_error"].format(reason=exc))
         sys.exit(1)
     except KeyboardInterrupt:
         console.warn(MESSAGES["user_interrupted"])
         sys.exit(130)
 
-    console.ok("MLX 서버 응답 정상")
+    console.ok("OpenAI 서버 응답 정상")
     console.hint(f"Base URL: {config.llm.base_url}")
     if models:
-        console.hint(f"사용 가능한 모델: {', '.join(models[:5])}")
+        console.hint(f"사용 가능한 모델 일부: {', '.join(models[:5])}")
     click.echo("종료 코드: 0")
     sys.exit(0)
 

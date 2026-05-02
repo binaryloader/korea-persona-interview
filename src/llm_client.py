@@ -41,9 +41,10 @@ _JITTER_MAX_SECONDS = 0.5
 # OpenAI API 키 누락 시 사용자에게 보여줄 한국어 안내. main.py의
 # MESSAGES 사전과 별개이며 서버/키 둘을 분리해 안내한다(error-handling.md §1).
 _MISSING_API_KEY_MESSAGE = (
-    "OpenAI API 키가 설정되지 않았습니다. 환경변수 OPENAI_API_KEY를 "
-    "설정해 주세요. https://platform.openai.com/api-keys 에서 발급 후 "
-    "`export OPENAI_API_KEY=sk-...` 형태로 셸에 적용하면 됩니다"
+    "OpenAI API 키가 설정되지 않았습니다. https://platform.openai.com/api-keys "
+    "에서 발급 후 환경변수 OPENAI_API_KEY로 셸에 적용하거나"
+    "(`export OPENAI_API_KEY=sk-...`) 프로젝트 루트의 .env 파일에 "
+    "`OPENAI_API_KEY=...` 형식으로 저장해 주세요"
 )
 
 _INVALID_API_KEY_MESSAGE = (
