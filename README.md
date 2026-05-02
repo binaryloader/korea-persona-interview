@@ -540,7 +540,7 @@ korea-persona-interview/
 │   └── report.py              # Quantitative aggregation, qualitative insight via LLM
 ├── tests/
 │   ├── conftest.py            # Shared fixtures, env isolation, dataset mock
-│   ├── test_*.py              # 509 tests (round A+B+C regression + sampling backend)
+│   ├── test_*.py              # 555 tests (rounds A-G regression: backends, persona id pinning, resume, streaming, drift judge)
 │   └── manual/smoke_e2e.py    # Live OpenAI smoke test (excluded from default run)
 ├── examples/
 │   └── mcp/                   # Drop-in mcp.json snippets for Claude Code and Cursor
@@ -574,7 +574,7 @@ Run the full test suite with pytest. The suite mocks the OpenAI API with `pytest
 pytest tests/ -v
 ```
 
-The current regression covers 509 tests including OpenAI, Anthropic Claude, and MCP sampling backend coverage (config, filter DSL, persona loader, LLM client, LLM backend selection, interview session, persona drift, batch runner, report quant, MCP dispatch, error messages, logging, and CLI integration).
+The current regression covers 555 tests including OpenAI, Anthropic Claude, and MCP sampling backend coverage (config, filter DSL, persona loader, LLM client, LLM backend selection, interview session, persona drift, batch runner, report quant, MCP dispatch, error messages, logging, and CLI integration).
 
 Manual smoke tests that exercise a real LLM API call live under `tests/manual/` and are excluded from the default run. They expect `OPENAI_API_KEY` (or `ANTHROPIC_API_KEY`) in the environment.
 
@@ -630,7 +630,7 @@ The OpenAI Chat Completions API does not require attribution. The default model 
 
 Pull requests are welcome. Before opening one.
 
-- Run `pytest tests/ -v` and confirm all 509 tests pass
+- Run `pytest tests/ -v` and confirm all 555 tests pass
 - Use Conventional Commits
 - For substantive changes, open an issue first to discuss the approach
 

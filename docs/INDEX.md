@@ -11,7 +11,7 @@
 - [adr/2026-05-02-multi-provider-backend.md](adr/2026-05-02-multi-provider-backend.md) - multi-provider 백엔드(OpenAI / Anthropic / 로컬 LLM / MCP sampling) 결정. ADR-002 supersede
 - [ui/korea-persona-interview.md](ui/korea-persona-interview.md) - CLI 사용자 흐름과 콘솔 출력 명세, 한국어 에러 메시지 사전, 리포트 마크다운 섹션 트리
 - [tasks/korea-persona-interview.md](tasks/korea-persona-interview.md) - 작업 표(T1-T11 + GATE-1/2), 의존성 그래프, 마일스톤
-- [backlog/v1.1.md](backlog/v1.1.md) - v1.1로 미룬 백로그 항목과 동기
+- [backlog/v1.2.md](backlog/v1.2.md) - v1.2로 미룬 백로그 항목과 동기
 
 본 도구의 코드 진입점, 설정, 보조 자산은 아래 위치를 참고한다.
 
@@ -109,7 +109,7 @@
 
 - uv(가상 환경은 .venv, Python 3.12 고정)다
 - `pyproject.toml`(라운드 C4)이 PEP 621 메타와 console script(`kpi`, `kpi-mcp-server`)를 등록한다. requirements 계열을 정본으로 두고 pyproject는 동기화 상태를 유지한다
-- 회귀 테스트는 509개로 multi-provider, MCP sampling 전용, AnthropicBackend까지 포함한다
+- 회귀 테스트는 555개로 multi-provider, MCP sampling 전용, AnthropicBackend, --persona-id, --resume, streaming 응답, LLM-as-judge drift, structured_summary v2까지 포함한다
 
 ## 4. ADR 인덱스
 
@@ -154,3 +154,4 @@
 - 2026-05-02 배포 전 README/docs 최종 정비. README를 실제 배포용으로 전면 재작성(Quick Start 5단계, Usage Examples 5종, CLI Reference 옵션 표 4종 + Filter DSL, Output Format 섹션, Customization 섹션, Project Structure 풀 트리, Roadmap, Contributing 추가). docs/INDEX 정합성 결정값을 라운드 A+B+C 결과로 8개 소절 재구성. v1.1 백로그를 별도 문서(`docs/backlog/v1.1.md`)로 분리해 15개 항목 동기/영향 범위와 함께 정리
 - 2026-05-02 multi-provider + MCP sampling 전용 단순화. ADR-003 채택. `LlmConfig.provider`(openai/anthropic) 도입, `AnthropicBackend` 추가(httpx 직접, anthropic SDK 의존 없음), 로컬 LLM은 provider=openai + `--base-url` override 패턴. CLI에 `--provider`/`--base-url` 옵션 추가. MCP 서버는 sampling 전용으로 단순화(host LLM 위임, 키 불필요). `LlmConfig.backend` 토글 제거. `src/_pricing.py`에 Claude 단가 추가(haiku/sonnet/opus). 콘솔 메시지 사전을 provider-agnostic하게 갱신("OpenAI 서버" → "LLM 서버"). 코드 주석을 SDK 공개 수준으로 재작성(internal-only 한국어 주석 정리, 영어 docstring 통일). 회귀 504 → 521개. 본 라운드 ADR-002 supersede
 - 2026-05-02 버전 1.0.0 안정 릴리즈, 비용 추정 제거. `src/_pricing.py` 모듈, `BatchResultEnvelope.estimated_cost_usd` 필드, `meta_extra.estimated_cost_usd` JSON 키, 콘솔 "비용 추정: $X.XXXX" 한 줄, 리포트 헤더 비용 행, `--json` 응답의 `estimated_cost_usd` 필드를 모두 제거. 토큰 사용량(prompt/completion/cached) 노출은 유지. 단가 표가 자주 변하고 추정치와 실제 청구 금액이 일치하지 않아 신뢰성을 해친다는 판단. 회귀 521 → 509개. `pyproject.toml`/`src/__init__.py`/README/CHANGELOG/CONTRIBUTING/SECURITY/PRD/TDD/ADR/v1.1 백로그 동기 갱신
+- 2026-05-02 버전 1.1.0 릴리즈, 라운드 G 27개 항목 일괄 적용. 기능 추가는 `--persona-id` 명시 페르소나 고정, `--resume` 부분 실패 재시도, `--insight-model` 단계별 모델 분리, `--json` 응답에 `ok` 필드, Anthropic prompt caching `cache_control` 마커, `llm.extra_chat_kwargs` 자유 양식 dict, OpenAI streaming SSE 응답, LLM-as-judge drift 옵트인, `acceptable_price_signal` 정성 신호 필드(BREAKING `schema_version` 1→2), `LLMClient` 클래스명(BREAKING, `MlxLLMClient` 제거), `_run_dry_run` 모듈 분리, prompts 패키지 fallback. 보안/관측성으로 `persona_id` 해시 마스킹, 인구통계 DEBUG 격하, `--output` 경로 정규화 경고, `outputs/` 0700 + 결과 파일 0600, product/질문 길이 상한과 시스템 프롬프트 마커 escape, `gender_aliases` 역방향 정규화. 휴리스틱 정밀화로 region/age/gender 축에 family_type과 같은 같은 문장 단위 정밀 정규식 + 부정문 가드 + 3인칭 제외, 직업명 영문 화이트리스트. 패키징 정리로 `requirements.txt`를 `-e .`로 단순화하고 `pyproject.toml`을 단일 정본으로. 회귀 509 → 555개. v1.1 backlog 27개 처리 완료, v1.2 backlog로 4개 항목(FastAPI REST, keychain, Batch API, multi-model A/B + 신규 streaming 저장 + provider 품질 검증) 이관

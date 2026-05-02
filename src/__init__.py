@@ -13,4 +13,4 @@ CLI entry points are exposed via ``main.py`` (``kpi`` console script) and the
 MCP stdio server lives in ``src.mcp_server`` (``kpi-mcp-server``).
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
