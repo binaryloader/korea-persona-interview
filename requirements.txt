@@ -5,6 +5,11 @@ datasets==3.6.0
 pyyaml==6.0.3
 tqdm==4.66.6
 click==8.1.8
+# MCP(Model Context Protocol) 공식 Python SDK. 외부 에이전트(Claude Code,
+# Cursor, Codex 등)가 본 도구를 stdio 기반 도구로 등록해 자연어로 호출할 수
+# 있도록 한다(라운드 C1). 직접 JSON-RPC 구현보다 표준 호환성과 유지보수
+# 관점에서 공식 SDK를 선택한다(dependency.md §1, leftpad 회피).
+mcp==1.27.0
 # datasets가 트랜지티브로 끌어오는 aiohttp의 명시적 상한 핀(security.md §1,
 # dependency.md §4). GHSA-9548-qrrj-x5pj는 upstream 3.14+에서 패치 예정이지만
 # 작성 시점 PyPI 가용 정식 릴리즈는 3.13.5가 최신이라 그 버전을 강제한다.
