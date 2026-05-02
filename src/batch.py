@@ -37,7 +37,6 @@ from typing import TYPE_CHECKING, Optional
 
 from tqdm import tqdm
 
-from ._pricing import estimate_cost_usd
 from .config import AppConfig
 from .interview import run_interview
 
@@ -120,12 +119,10 @@ class BatchResultEnvelope:
 
     ``BatchResult``는 직렬화 단위지만 CLI는 종료 코드 판정과 사용자 안내에
     추가 메타가 필요하다. 본 envelope에 partial/cancelled/저장 경로/누적 토큰
-    사용량/추정 비용을 담아 main.py가 sys.exit 처리와 비용 표시를 수행한다.
+    사용량을 담아 main.py가 sys.exit 처리와 사용량 표시를 수행한다.
 
     ``usage``는 본 배치의 모든 chat 호출(인터뷰 멀티턴 + 자동 follow-up + 구조화
-    요약 + 정성 인사이트는 별도 단계라 미포함) 합산이다. ``estimated_cost_usd``는
-    해당 사용량과 모델 단가로 추정한 비용으로, 정확한 청구 단가와 다를 수 있다
-    (호출자에서 "추정" 표기 명시).
+    요약 + 정성 인사이트는 별도 단계라 미포함) 합산이다.
     """
 
     result: BatchResult
@@ -135,7 +132,6 @@ class BatchResultEnvelope:
     cancelled: bool
     failure_reason_counts: dict
     usage: TokenUsage = field(default_factory=lambda: TokenUsage())
-    estimated_cost_usd: float = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -660,7 +656,6 @@ async def run_batch(
         )
 
     aggregated_usage = _aggregate_usage(list(records))
-    estimated_cost = estimate_cost_usd(aggregated_usage, config.llm.model)
 
     config_snapshot = {
         "concurrency": concurrency,
@@ -696,7 +691,6 @@ async def run_batch(
             "failure_reason_counts": failure_reasons,
             "product_masked": mask_product(product),
             "usage": dataclasses.asdict(aggregated_usage),
-            "estimated_cost_usd": round(estimated_cost, 6),
         }
         output_path = save_batch_result(
             result,
@@ -720,7 +714,6 @@ async def run_batch(
             "prompt_tokens": aggregated_usage.prompt_tokens,
             "completion_tokens": aggregated_usage.completion_tokens,
             "cached_tokens": aggregated_usage.cached_tokens,
-            "estimated_cost_usd": round(estimated_cost, 6),
         },
     )
 
@@ -737,5 +730,4 @@ async def run_batch(
         cancelled=cancelled,
         failure_reason_counts=failure_reasons,
         usage=aggregated_usage,
-        estimated_cost_usd=round(estimated_cost, 6),
     )

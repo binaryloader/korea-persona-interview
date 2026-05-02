@@ -498,7 +498,6 @@ async def _handle_interview(arguments: dict) -> dict:
             "total_tokens": usage.total_tokens,
             "cached_tokens": usage.cached_tokens,
         },
-        "estimated_cost_usd": envelope.estimated_cost_usd,
         "model": config.llm.model,
         "backend": "mcp_sampling",
         "failure_reason_counts": dict(envelope.failure_reason_counts),

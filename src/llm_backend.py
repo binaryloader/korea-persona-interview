@@ -137,7 +137,7 @@ class AnthropicBackend:
     - ``max_tokens`` is required.
     - Authentication uses the ``x-api-key`` header plus ``anthropic-version``.
 
-    Token usage maps as follows for cost accounting parity with OpenAI:
+    Token usage maps as follows for parity with OpenAI:
 
     - ``usage.input_tokens`` -> ``TokenUsage.prompt_tokens``
     - ``usage.output_tokens`` -> ``TokenUsage.completion_tokens``
@@ -400,8 +400,7 @@ class McpSamplingBackend:
 
     Used exclusively by the MCP server entry point. The host agent (Claude
     Code, Cursor, ...) generates the response using its own LLM, so no API
-    key is required server-side and ``estimated_cost_usd`` is always 0 for
-    runs that use this backend.
+    key is required server-side.
 
     Constraints:
 

@@ -80,9 +80,8 @@ class TokenUsage:
     """단일 호출의 토큰 사용량.
 
     OpenAI 응답의 ``usage`` 필드 매핑이다. ``cached_tokens``는 prompt caching
-    적용 시 입력 토큰 중 캐시에서 재사용된 양으로, OpenAI는 본 토큰을 입력
-    단가의 50%에 청구한다. cached_tokens 비율이 높을수록 비용 절감 효과가
-    크다(prompt prefix가 1024 토큰 이상 + 동일 prefix 반복 시 자동 적용).
+    적용 시 입력 토큰 중 캐시에서 재사용된 양으로, prompt prefix가 1024 토큰
+    이상이고 동일 prefix가 반복 호출될 때 자동 적용된다.
 
     합산은 ``add``로 수행한다. 동일한 frozen dataclass를 누적할 때 새 인스턴스
     를 만들어 반환한다.
@@ -107,7 +106,7 @@ class RawResponse:
     """질문 단위 응답 메타. 지연/재시도/토큰 사용량 분석 용도.
 
     ``usage``는 본 응답을 생성한 단일 chat 호출의 토큰 사용량이다. 인터뷰 종료
-    후 record/배치 단위로 합산해 비용 추정에 사용한다(``src._pricing``).
+    후 record/배치 단위로 합산해 ``BatchResultEnvelope.usage``로 노출한다.
     """
 
     question_index: int

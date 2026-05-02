@@ -1144,8 +1144,8 @@ def render_markdown(
 ) -> str:
     """마크다운 문자열을 만든다(UI §4.6 트리).
 
-    ``usage_summary``가 있으면 헤더 표에 토큰 사용량과 비용 추정을 추가한다
-    (배치 결과 JSON의 ``meta_extra.usage``/``meta_extra.estimated_cost_usd``).
+    ``usage_summary``가 있으면 헤더 표에 토큰 사용량 행을 추가한다
+    (배치 결과 JSON의 ``meta_extra.usage``).
 
     ``bar_width``/``cohort_min_cell``은 ``ReportConfig`` 값이다. 명시되지 않으면
     모듈 default(30/3)를 사용한다.
@@ -1179,13 +1179,9 @@ def render_markdown(
         prompt_t = int(usage_summary.get("prompt_tokens", 0) or 0)
         completion_t = int(usage_summary.get("completion_tokens", 0) or 0)
         cached_t = int(usage_summary.get("cached_tokens", 0) or 0)
-        cost_usd = float(usage_summary.get("estimated_cost_usd", 0.0) or 0.0)
         header_rows.append(
             f"| 토큰 사용량 | prompt {prompt_t:,} / completion {completion_t:,} / "
-            f"cached {cached_t:,}(추정) |"
-        )
-        header_rows.append(
-            f"| 비용 추정 | ${cost_usd:.4f}({model} 단가 기준, 실제 청구와 다를 수 있음) |"
+            f"cached {cached_t:,} |"
         )
     header_table = "| 항목 | 값 |\n| --- | --- |\n" + "\n".join(header_rows) + "\n"
 
@@ -1360,7 +1356,7 @@ async def generate_report(
 
     summary = _records_summary(payload, records)
 
-    # 토큰 사용량/비용 추정은 인터뷰 단계의 ``meta_extra``에서 가져온다.
+    # 토큰 사용량은 인터뷰 단계의 ``meta_extra``에서 가져온다.
     usage_summary: Optional[dict] = None
     extra = payload.get("meta_extra") or {}
     if isinstance(extra, dict):
@@ -1370,7 +1366,6 @@ async def generate_report(
                 "prompt_tokens": usage_raw.get("prompt_tokens", 0),
                 "completion_tokens": usage_raw.get("completion_tokens", 0),
                 "cached_tokens": usage_raw.get("cached_tokens", 0),
-                "estimated_cost_usd": extra.get("estimated_cost_usd", 0.0),
             }
 
     markdown_text = render_markdown(

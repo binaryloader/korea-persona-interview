@@ -531,8 +531,8 @@ def test_render_markdown_데이터셋_라이선스_푸터() -> None:
     assert "test-model" in md  # 모델 ID
 
 
-def test_render_markdown_usage_summary_있을때_헤더에_토큰_비용_표시() -> None:
-    """``usage_summary`` 인자를 받으면 헤더 표에 토큰 사용량과 비용 추정 행이 추가된다."""
+def test_render_markdown_usage_summary_있을때_헤더에_토큰_표시() -> None:
+    """``usage_summary`` 인자를 받으면 헤더 표에 토큰 사용량 행이 추가된다."""
 
     quant = _make_quant_for_render()
     insights = QualitativeInsights()
@@ -548,20 +548,16 @@ def test_render_markdown_usage_summary_있을때_헤더에_토큰_비용_표시(
             "prompt_tokens": 1500,
             "completion_tokens": 300,
             "cached_tokens": 1200,
-            "estimated_cost_usd": 0.0042,
         },
     )
     assert "토큰 사용량" in md
     assert "1,500" in md
     assert "300" in md
     assert "1,200" in md
-    assert "비용 추정" in md
-    assert "$0.0042" in md
-    assert "추정" in md  # "단가 기준, 실제 청구와 다를 수 있음" 명시
 
 
 def test_render_markdown_usage_summary_없으면_헤더에_미표시() -> None:
-    """``usage_summary``가 None이면 토큰 사용량/비용 행이 생략된다(이전 v1.0 호환)."""
+    """``usage_summary``가 None이면 토큰 사용량 행이 생략된다."""
 
     quant = _make_quant_for_render()
     insights = QualitativeInsights()
@@ -576,7 +572,6 @@ def test_render_markdown_usage_summary_없으면_헤더에_미표시() -> None:
         usage_summary=None,
     )
     assert "토큰 사용량" not in md
-    assert "비용 추정" not in md
 
 
 def test_render_markdown_drift_포함_안내() -> None:

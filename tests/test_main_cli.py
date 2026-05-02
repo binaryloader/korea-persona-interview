@@ -796,13 +796,13 @@ def test_interview_model_override_CLI(
     assert payload["model"] == "gpt-4o"
 
 
-def test_interview_콘솔_토큰_비용_한_줄_표시(
+def test_interview_콘솔_토큰_한_줄_표시(
     httpx_mock, fake_load_dataset, tmp_path: Path
 ) -> None:
-    """interview 명령 종료 시 콘솔에 토큰 사용량 + 비용 추정 한 줄이 노출된다.
+    """interview 명령 종료 시 콘솔에 토큰 사용량 한 줄이 노출된다.
 
-    배치 응답에 ``usage``가 포함되면 envelope.usage가 누적되고 ``$0.XXXX`` 형태의
-    비용 추정이 콘솔에 출력된다(파일 JSON에는 meta_extra.usage로 보존).
+    배치 응답에 ``usage``가 포함되면 envelope.usage가 누적되어 prompt/completion/
+    cached 카운트가 콘솔에 출력된다(파일 JSON에는 meta_extra.usage로 보존).
     """
 
     httpx_mock.add_response(
@@ -857,11 +857,11 @@ def test_interview_콘솔_토큰_비용_한_줄_표시(
         },
     )
     assert result.exit_code == 0, result.output
-    # 토큰 한 줄과 비용 한 줄이 같이 노출된다(prefix가 같은 [INFO] 안에 있음).
+    # 토큰 한 줄이 노출되며 비용 표기는 더 이상 출력되지 않는다.
     assert "토큰 사용량" in result.output
     assert "prompt 1,500" in result.output
     assert "cached 1,200" in result.output
-    assert "비용 추정: $" in result.output
+    assert "비용 추정" not in result.output
 
 
 def test_interview_dry_run은_자동_리포트도_안만든다(

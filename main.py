@@ -909,8 +909,7 @@ def interview(
             console.info(
                 f"토큰 사용량: prompt {usage.prompt_tokens:,} / "
                 f"completion {usage.completion_tokens:,} / "
-                f"cached {usage.cached_tokens:,} / "
-                f"비용 추정: ${envelope.estimated_cost_usd:.4f}"
+                f"cached {usage.cached_tokens:,}"
             )
         if output_path:
             console.info(f"결과 저장: {output_path}")
@@ -938,7 +937,6 @@ def interview(
                         "total_tokens": usage.total_tokens,
                         "cached_tokens": usage.cached_tokens,
                     },
-                    "estimated_cost_usd": envelope.estimated_cost_usd,
                     "model": config.llm.model,
                     "failure_reason_counts": dict(envelope.failure_reason_counts),
                     "report_path": None,
@@ -1018,7 +1016,6 @@ def interview(
                     "total_tokens": usage.total_tokens,
                     "cached_tokens": usage.cached_tokens,
                 },
-                "estimated_cost_usd": envelope.estimated_cost_usd,
                 "model": config.llm.model,
             }
         )

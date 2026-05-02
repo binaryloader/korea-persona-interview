@@ -445,23 +445,21 @@ async def test_run_batch_정상_3명_completed(
     for r in payload["records"]:
         assert r["status"] == "completed"
 
-    # envelope.usage / estimated_cost_usd가 채워진다(모킹 응답에 usage 없으면 0).
+    # envelope.usage가 채워진다(모킹 응답에 usage 없으면 0).
     assert isinstance(envelope.usage, TokenUsage)
-    assert envelope.estimated_cost_usd >= 0.0
-    # meta_extra에도 usage/cost가 직렬화된다.
+    # meta_extra에도 usage가 직렬화된다.
     extra = payload.get("meta_extra") or {}
     assert "usage" in extra
-    assert "estimated_cost_usd" in extra
 
 
 @pytest.mark.asyncio
-async def test_run_batch_usage_누적_및_비용_추정_envelope(
+async def test_run_batch_usage_누적_envelope(
     httpx_mock,
     make_app_config,
     tmp_path: Path,
 ) -> None:
     """실제 OpenAI 응답처럼 usage가 채워진 응답을 받으면 envelope.usage가
-    합산되고 estimated_cost_usd가 0보다 크다."""
+    합산된다."""
 
     _add_models_response(httpx_mock)
 
@@ -505,8 +503,6 @@ async def test_run_batch_usage_누적_및_비용_추정_envelope(
     assert envelope.usage.prompt_tokens == 1500
     assert envelope.usage.completion_tokens == 50
     assert envelope.usage.cached_tokens == 1200
-    # gpt-4o-mini가 아닌 test-model이라 fallback 단가 사용. 비용은 0보다 크다.
-    assert envelope.estimated_cost_usd > 0.0
 
 
 @pytest.mark.asyncio
