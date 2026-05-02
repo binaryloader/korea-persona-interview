@@ -1,13 +1,13 @@
-"""Dry-run console renderer for the ``interview --dry-run`` flow.
+"""``interview --dry-run`` 흐름 전용 dry-run 콘솔 렌더러.
 
-Single-persona interview executor that prints the system prompt, persona
-meta, per-question response, and structured summary to stdout for fast
-prompt-debugging cycles. The same code path is used for both the human
-console output and the ``--json`` mode wrapper (which suppresses the
-human-facing dump and emits a JSON payload from the caller).
+단일 페르소나 인터뷰 실행기다. 시스템 프롬프트, 페르소나 메타, 질문별
+응답, 구조화 요약을 stdout에 찍어 빠른 프롬프트 디버깅 사이클을 지원한다.
+사람이 읽는 콘솔 출력과 ``--json`` 모드 래퍼가 같은 코드 경로를 공유한다
+(``--json`` 모드에서는 사람용 dump를 생략하고 caller가 JSON 페이로드를
+한 번에 출력한다).
 
-Lives separately from ``main.py`` so the click entry point stays focused on
-routing and the dry-run rendering logic can be tested in isolation.
+click 진입점이 라우팅 책임에 집중하고 dry-run 렌더 로직은 격리해 단위
+테스트할 수 있도록 ``main.py``에서 분리해 본 모듈에 둔다.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from .interview import InterviewSession
 from .llm_backend import build_cli_backend
 from .models import PersonaMeta
 
-if TYPE_CHECKING:  # pragma: no cover - type-only import
+if TYPE_CHECKING:  # pragma: no cover - 타입 체크 전용 import
     pass
 
 
@@ -34,26 +34,25 @@ async def run_dry_run(
     console: Console,
     json_mode: bool = False,
 ) -> None:
-    """Run a one-persona interview and print the result to ``console``.
+    """단일 페르소나 인터뷰를 실행해 결과를 ``console``에 찍어 준다.
 
-    Args:
-        persona: Persona to interview.
-        product: Business idea sentence used as the interview topic.
-        questions: Main question list (1 or more).
-        follow_ups: Optional shared follow-up questions.
-        config: Application config (llm, batch, dataset, interview, report).
-        console: Console renderer used for the human-facing dump.
-        json_mode: When ``True``, skip the human-facing dump entirely. The
-            caller is expected to emit the persona meta and result envelope
-            as a single JSON payload after this coroutine returns.
+    인자:
+        persona: 인터뷰 대상 페르소나
+        product: 인터뷰 주제로 사용되는 사업 아이템 한 문장
+        questions: 메인 질문 리스트(1개 이상)
+        follow_ups: 공유 follow-up 질문 리스트(선택)
+        config: 애플리케이션 설정(llm, batch, dataset, interview, report)
+        console: 사람 대상 dump를 위한 콘솔 렌더러
+        json_mode: ``True``면 사람용 dump 출력을 모두 생략한다. caller가 본
+            코루틴 종료 후 페르소나 메타와 결과 envelope을 단일 JSON 페이로드로
+            출력하는 흐름을 가정한다.
     """
 
     if not json_mode:
         console.info("dry-run 모드: JSON 저장 없이 콘솔에만 출력합니다")
 
     async with build_cli_backend(config.llm) as client:
-        # Health-check is implicit so server failures surface before the
-        # interview runs.
+        # 인터뷰 시작 전에 서버 장애가 먼저 표면화되도록 healthcheck를 암묵 호출한다.
         await client.healthcheck()
 
         session = InterviewSession(
@@ -67,10 +66,10 @@ async def run_dry_run(
         record = await session.run()
 
     if json_mode:
-        # The caller emits a JSON payload covering persona meta and result.
+        # caller가 페르소나 메타와 결과를 묶은 JSON 페이로드를 출력한다.
         return
 
-    # System prompt(record.messages[0])
+    # 시스템 프롬프트(record.messages[0])
     if record.messages and record.messages[0].role == "system":
         console.echo("--- 시스템 프롬프트 ---")
         console.echo(record.messages[0].content)

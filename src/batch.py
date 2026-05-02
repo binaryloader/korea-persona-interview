@@ -1,34 +1,32 @@
-"""Concurrent batch interview runner.
+"""동시성 배치 인터뷰 실행기.
 
-Runs ``run_interview`` for N personas in parallel and aggregates the results
-into a ``BatchResult``. Concurrency is gated by ``asyncio.Semaphore``; the
-progress bar uses tqdm in manual-update mode so partial-failure WARN lines
-can be printed above the bar without breaking the carriage return.
+페르소나 N명에 대해 ``run_interview``를 병렬 실행하고 결과를 ``BatchResult``로
+취합한다. 동시성은 ``asyncio.Semaphore``로 제어한다. 진행률 표시는 수동 update
+모드의 tqdm을 사용해 부분 실패 WARN 라인을 progress bar 위에 carriage return을
+깨뜨리지 않고 출력할 수 있다.
 
-This is the application layer that wires the LLM transport (``LLMBackend``)
-to the domain model (``InterviewRecord``, ``RunMeta``, ``BatchResult``). A
-single persona's failure must not take down sibling tasks, so each task is
-wrapped in a try/except inside ``_run_single`` that converts known domain
-exceptions into ``status=failed`` records. ``client.healthcheck()`` is
-invoked once before the first persona starts so server outages surface
-fast.
+본 모듈은 LLM transport(``LLMBackend``)와 도메인 모델(``InterviewRecord``,
+``RunMeta``, ``BatchResult``)을 잇는 application 계층이다. 한 페르소나의 실패가
+형제 task를 함께 죽이면 안 되므로 ``_run_single`` 내부에서 try/except로
+알려진 도메인 예외를 흡수해 ``status=failed`` record로 변환한다. 첫 페르소나가
+시작하기 전에 ``client.healthcheck()``를 한 번 호출해 서버 장애를 빠르게
+표면화한다.
 
-SIGINT handling has two stages, mirroring the documented UX in the UI
-spec. First Ctrl+C: ``cancel_event.set()`` so no new task starts; tasks
-already running finish their current chat call and save a partial JSON.
-Second Ctrl+C: bubble ``KeyboardInterrupt`` and let the asyncio loop tear
-everything down immediately.
+SIGINT 처리는 UI 명세에 정의된 UX 그대로 두 단계로 동작한다. Ctrl+C 1회:
+``cancel_event.set()``으로 새 task 시작을 막는다. 이미 진행 중인 task는 현재
+chat 호출을 끝까지 마치고 partial JSON을 저장한다. Ctrl+C 2회:
+``KeyboardInterrupt``를 그대로 전파해 asyncio 루프가 즉시 모든 작업을
+종료한다.
 
-Result JSON files land at ``outputs/interview_{slug}_{YYYYMMDD_HHMMSS}.json``
-with ``partial: true`` marked in ``meta_extra`` when SIGINT or partial-
-failure conditions hit. Serialization is plain ``dataclasses.asdict`` plus
-``json.dumps(..., ensure_ascii=False, indent=2)`` so Korean content stays
-readable in the file.
+결과 JSON 파일은 ``outputs/interview_{slug}_{YYYYMMDD_HHMMSS}.json`` 위치에
+저장된다. SIGINT나 부분 실패 조건에 걸리면 ``meta_extra``에 ``partial: true``가
+표기된다. 직렬화는 ``dataclasses.asdict`` + ``json.dumps(..., ensure_ascii=False,
+indent=2)`` 조합이라 파일 안 한국어 본문이 그대로 사람이 읽기 좋게 남는다.
 
-Resume mode (``resume_records=...``) reads a previous run's records, keeps
-the completed/refused/drift entries verbatim, and only retries persona
-ids whose status was ``failed``. The merged JSON gets a fresh timestamp
-and ``meta_extra.previous_run_id`` linking back to the source run.
+resume 모드(``resume_records=...``)는 이전 run의 record를 읽어
+completed/refused/drift 항목을 그대로 보존하고 ``status=failed`` 페르소나 ID만
+재시도한다. 합쳐진 JSON에는 새 timestamp가 부여되고 ``meta_extra.previous_run_id``로
+원본 run으로 거슬러 올라갈 수 있다.
 """
 
 from __future__ import annotations
@@ -51,7 +49,7 @@ from tqdm import tqdm
 from .config import AppConfig
 from .interview import run_interview
 
-if TYPE_CHECKING:  # pragma: no cover - type-only import
+if TYPE_CHECKING:  # pragma: no cover - 타입 체크 전용 import
     from .llm_backend import LLMBackend
 from .logging_setup import mask_persona_id, mask_product
 from .models import (
@@ -69,10 +67,9 @@ from .models import (
 )
 
 
-# Maps known domain exception classes to the ``error.type`` string surfaced
-# in the partial-failure summary. Anything not matched here drops into
-# ``unhandled_exception`` so unexpected exceptions are still grouped in the
-# distribution, just under a generic bucket.
+# 알려진 도메인 예외 클래스를 부분 실패 안내에 노출되는 ``error.type``
+# 문자열로 매핑한다. 매핑되지 않은 예외는 ``unhandled_exception`` 버킷으로
+# 떨어져, 예상 못한 예외도 사유 분포에 함께 집계된다.
 _DOMAIN_EXC_TYPE_MAP: dict = {
     ServerNotReachableError: "server_not_reachable",
     RetryExhaustedError: "retry_exhausted",
@@ -85,21 +82,20 @@ _DOMAIN_EXC_TYPE_MAP: dict = {
 logger = logging.getLogger(__name__)
 
 
-# Fallback threshold for the partial-failure verdict. If the ratio of
-# completed/drift/refused records dips below this value, the CLI exits with
-# code 3 and the result JSON gets ``partial: true`` written into the meta.
-# The single source of truth is ``BatchConfig.partial_failure_threshold``;
-# this constant only kicks in on call paths that bypass yaml/CLI overrides.
+# 부분 실패 판정용 fallback 임계값. completed/drift/refused 비율이 본 값
+# 미만이면 CLI가 exit code 3으로 종료하고, 결과 JSON의 meta에
+# ``partial: true``가 박힌다. 단일 정본은 ``BatchConfig.partial_failure_threshold``
+# 이며, 본 상수는 yaml/CLI override를 거치지 않는 호출 경로에만 적용된다.
 _PARTIAL_SUCCESS_RATIO = 0.5
 
 
 @dataclass(frozen=True)
 class BatchSummary:
-    """Lightweight aggregate used by the tqdm postfix and the end-of-run line.
+    """tqdm postfix와 종료 라인이 사용하는 경량 집계 dataclass.
 
-    ``success_count`` includes refused and drift because the model returned a
-    response in both cases; only ``failed`` (LLM call exhausted retries or
-    raised a domain exception) counts as a hard failure.
+    ``success_count``는 refused와 drift도 포함한다. 두 경우 모두 모델이 응답을
+    돌려준 케이스이기 때문이다. ``failed``(LLM 호출이 retry를 모두 소진했거나
+    도메인 예외가 raise된 경우)만 hard failure로 본다.
     """
 
     requested: int
@@ -111,36 +107,35 @@ class BatchSummary:
 
     @property
     def total_done(self) -> int:
-        """Records that finished, excluding cancellations."""
+        """취소된 record를 제외한 완료 record 수."""
 
         return self.completed + self.refused + self.failed + self.drift
 
     @property
     def success_count(self) -> int:
-        """Successful records for the tqdm right-side counter."""
+        """tqdm 우측 카운터용 성공 record 수."""
 
         return self.completed + self.refused + self.drift
 
     @property
     def failure_count(self) -> int:
-        """Hard-failure records for the tqdm right-side counter."""
+        """tqdm 우측 카운터용 hard failure record 수."""
 
         return self.failed
 
 
 @dataclass(frozen=True)
 class BatchResultEnvelope:
-    """Return container for ``run_batch``.
+    """``run_batch``의 반환 컨테이너.
 
-    ``BatchResult`` is the serialization unit, but the CLI also needs the
-    output path, partial/cancellation flags, the failure-reason histogram,
-    and the aggregated token usage to render the exit message and pick the
-    exit code. This envelope bundles all of that so ``main.py`` does not have
-    to reach into the result structure.
+    직렬화 단위는 ``BatchResult``지만, CLI가 종료 메시지를 그리고 exit code를
+    결정하려면 출력 경로, partial/cancellation 플래그, 실패 사유 히스토그램,
+    합산 토큰 사용량까지 함께 필요하다. 본 envelope이 그 전부를 묶어
+    ``main.py``가 결과 구조 내부로 손을 뻗지 않아도 되게 한다.
 
-    ``usage`` covers every chat call inside the batch (multi-turn interview
-    plus auto follow-up). Structured-summary and qualitative-insight calls
-    happen in separate stages and are not folded in here.
+    ``usage``는 배치 내부의 모든 chat 호출을 합산한다(멀티턴 인터뷰 + 자동
+    follow-up). 구조화 요약과 정성 인사이트 호출은 별도 단계라 본 합산에
+    포함되지 않는다.
     """
 
     result: BatchResult
@@ -158,13 +153,13 @@ class BatchResultEnvelope:
 
 
 def _now_iso() -> str:
-    """ISO 8601 UTC timestamp truncated to seconds."""
+    """초 단위로 자른 ISO 8601 UTC 타임스탬프를 반환한다."""
 
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def _timestamp_filename() -> str:
-    """``YYYYMMDD_HHMMSS`` UTC string used in result file names."""
+    """결과 파일명에 쓰이는 ``YYYYMMDD_HHMMSS`` UTC 문자열."""
 
     return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
 
@@ -175,12 +170,12 @@ def _serialize_batch(
     partial: bool,
     extra_meta: Optional[dict] = None,
 ) -> str:
-    """Serialize a ``BatchResult`` to a JSON string for disk storage.
+    """``BatchResult``를 디스크 저장용 JSON 문자열로 직렬화한다.
 
-    ``ensure_ascii=False`` keeps Korean text readable on disk. Masking
-    policy applies to log lines only - the result JSON intentionally retains
-    the verbatim ``--product`` body and persona names so that downstream
-    analysis tools can use the raw fields.
+    ``ensure_ascii=False``로 한국어 본문을 그대로 보존한다. 마스킹 정책은
+    로그 라인에만 적용된다. 결과 JSON은 의도적으로 ``--product`` 원문과
+    페르소나 이름을 그대로 보존해, 다운스트림 분석 도구가 원본 필드를
+    그대로 사용할 수 있게 한다.
     """
 
     payload = dataclasses.asdict(result)
@@ -200,25 +195,25 @@ def save_batch_result(
     partial: bool = False,
     extra_meta: Optional[dict] = None,
 ) -> Path:
-    """Atomically write a ``BatchResult`` to ``outputs/interview_{slug}_{ts}.json``.
+    """``BatchResult``를 ``outputs/interview_{slug}_{ts}.json``에 atomic하게 저장한다.
 
-    Args:
-        result: ``BatchResult`` to serialize.
-        output_dir: Destination directory. Created if missing.
-        slug: File-name slug.
-        timestamp: ``YYYYMMDD_HHMMSS`` UTC string. Defaults to ``now``.
-        partial: When True, ``partial=True`` is added to the JSON meta.
-        extra_meta: Additional meta block (SIGINT reason, env info, ...).
+    인자:
+        result: 직렬화할 ``BatchResult``
+        output_dir: 저장 디렉토리. 없으면 생성한다.
+        slug: 파일명 슬러그
+        timestamp: ``YYYYMMDD_HHMMSS`` UTC 문자열. 기본값은 ``now``.
+        partial: True면 JSON meta에 ``partial=True``가 추가된다.
+        extra_meta: 추가 meta 블록(SIGINT 사유, 환경 정보 등)
 
-    Returns:
-        Absolute path the JSON was written to.
+    반환:
+        JSON이 기록된 절대 경로
     """
 
     ts = timestamp or _timestamp_filename()
     output_dir.mkdir(parents=True, exist_ok=True)
-    # Tighten outputs/ to mode 0700 so other local users cannot read interview
-    # bodies that we already shipped to an external LLM. chmod is a no-op on
-    # Windows but the call itself is safe.
+    # outputs/ 권한을 0700으로 조여, 같은 호스트의 다른 로컬 사용자가 외부
+    # LLM에 이미 송신한 인터뷰 본문을 읽지 못하게 한다. Windows에서는 chmod가
+    # no-op이지만 호출 자체는 안전하다.
     try:
         os.chmod(output_dir, 0o700)
     except (PermissionError, OSError):
@@ -228,14 +223,14 @@ def save_batch_result(
 
     serialized = _serialize_batch(result, partial=partial, extra_meta=extra_meta)
 
-    # Atomic write via tmp + os.replace. A naive ``write_text`` can leave a
-    # truncated JSON behind if SIGINT or kill -9 lands mid-write; the rename
-    # guarantees readers either see the full file or the previous version.
+    # tmp + os.replace로 atomic write를 수행한다. 단순 ``write_text``는 쓰기
+    # 도중 SIGINT나 kill -9가 들어오면 절단된 JSON을 남길 수 있다. rename
+    # 패턴은 reader가 항상 완성된 파일 또는 이전 버전 중 하나를 보게 한다.
     tmp_target = target.with_suffix(target.suffix + ".tmp")
     tmp_target.write_text(serialized, encoding="utf-8")
     os.replace(tmp_target, target)
-    # 0600 on the result file matches the 0700 directory bound: prevents other
-    # users on the same host from reading the response body.
+    # 결과 파일 0600은 디렉토리 0700과 짝을 이룬다. 같은 호스트의 다른
+    # 사용자가 응답 본문을 읽지 못하게 한다.
     try:
         os.chmod(target, 0o600)
     except (PermissionError, OSError):
@@ -584,48 +579,46 @@ async def run_batch(
     resume_records: Optional[list] = None,
     resume_run_id: Optional[str] = None,
 ) -> BatchResultEnvelope:
-    """Run batch interviews for the given personas concurrently.
+    """주어진 페르소나에 대해 배치 인터뷰를 동시 실행한다.
 
-    Concurrency comes from ``config.batch.concurrency``. ``BatchConfig``
-    enforces the 1-10 bound at construction time; we re-check here so direct
-    callers (tests, scripts) cannot bypass it.
+    동시성은 ``config.batch.concurrency``에서 결정된다. ``BatchConfig``는
+    생성 시점에 1-10 범위를 강제하지만, 본 함수에서도 한 번 더 검증해 직접
+    호출(tests, scripts)이 우회하지 못하게 한다.
 
-    First SIGINT sets ``cancel_event`` so no new persona starts; in-flight
-    calls finish their current chat round-trip and the partial result is
-    written when ``save=True``. Second SIGINT bubbles ``KeyboardInterrupt``.
+    SIGINT 1회는 ``cancel_event``를 set해 새 페르소나가 시작되지 않게 한다.
+    이미 진행 중인 호출은 현재 chat round-trip을 끝까지 마치고 ``save=True``
+    일 때 partial 결과가 디스크에 기록된다. SIGINT 2회는 ``KeyboardInterrupt``를
+    그대로 전파한다.
 
-    Resume mode reuses an earlier run's records: ``resume_records`` carries
-    the previous ``InterviewRecord`` list, ``resume_run_id`` is stored in
-    ``meta_extra.previous_run_id``. Personas whose previous status was not
-    ``failed`` are kept verbatim and skipped in the new batch; only failed
-    persona ids are retried, preserving stable identifiers for downstream
-    diffing.
+    resume 모드는 이전 run의 record를 재사용한다. ``resume_records``에 이전
+    ``InterviewRecord`` 리스트를 넣고, ``resume_run_id``는
+    ``meta_extra.previous_run_id``에 저장된다. 이전 status가 ``failed``가 아닌
+    페르소나는 그대로 보존되고 새 배치에서 건너뛴다. 실패한 persona ID만 재시도되어
+    다운스트림 diff용 안정 식별자를 유지한다.
 
-    Args:
-        personas: Personas to interview.
-        product: One-line product description.
-        questions: Main question list (1 or more).
-        follow_ups: User-defined common follow-ups (may be empty).
-        llm: An ``LLMBackend`` already open in an ``async with`` block.
-        config: Top-level ``AppConfig``; only ``llm``/``batch``/``interview``
-            are touched here.
-        output_dir: Result JSON directory.
-        slug: File-name slug; defaults to ``korea-persona-interview``.
-        seed: Stored on ``RunMeta.seed`` for traceability. Sampling itself
-            happens upstream in ``load_personas``.
-        save: When True, both clean and partial completions are persisted
-            via ``save_batch_result``.
-        progress_disable: Disable the tqdm bar (tests, dry-run).
-        resume_records: Previous-run records for resume mode (optional).
-        resume_run_id: ``interview_id`` of the previous run; written into
-            ``meta_extra.previous_run_id`` when set.
+    인자:
+        personas: 인터뷰 대상 페르소나
+        product: 한 줄 product 설명
+        questions: 메인 질문 리스트(1개 이상)
+        follow_ups: 사용자 정의 공통 follow-up(빈 리스트 허용)
+        llm: ``async with`` 블록 안에서 이미 열린 ``LLMBackend``
+        config: 최상위 ``AppConfig``. 본 함수는 ``llm``/``batch``/``interview``만 사용한다.
+        output_dir: 결과 JSON 저장 디렉토리
+        slug: 파일명 슬러그(기본값 ``korea-persona-interview``)
+        seed: 추적용으로 ``RunMeta.seed``에 보존된다. 실제 샘플링은 상위
+            ``load_personas`` 단계에서 발생한다.
+        save: True면 정상 완료/partial 완료 모두 ``save_batch_result``로 저장한다.
+        progress_disable: tqdm bar를 끈다(tests, dry-run 용).
+        resume_records: resume 모드용 이전 run의 record(선택).
+        resume_run_id: 이전 run의 ``interview_id``. 지정 시
+            ``meta_extra.previous_run_id``에 기록된다.
 
-    Returns:
-        ``BatchResultEnvelope``. The CLI uses this to pick the exit code.
+    반환:
+        ``BatchResultEnvelope``. CLI가 본 값으로 exit code를 결정한다.
 
-    Raises:
-        ConfigError: Empty personas list or concurrency outside [1, 10].
-        ServerNotReachableError: Pre-flight health check failed.
+    raise:
+        ConfigError: 페르소나 리스트가 비었거나 concurrency가 [1, 10] 밖.
+        ServerNotReachableError: 사전 healthcheck가 실패한 경우.
     """
 
     if not personas:
@@ -633,10 +626,10 @@ async def run_batch(
     if not questions:
         raise ConfigError("questions가 비어 있다. 1개 이상 지정해 주세요")
 
-    # Resume branch: keep every previously-completed record (completed,
-    # refused, drift) untouched and only retry persona ids whose status was
-    # ``failed``. The caller is expected to re-sample personas with the same
-    # seed/filter so that persona ids match across the two runs.
+    # resume 분기: 이전에 완료된 record(completed, refused, drift)는 그대로
+    # 보존하고, status가 ``failed``인 persona ID만 재시도한다. caller는 같은
+    # seed/필터로 페르소나를 재샘플링해 두 run 사이에서 persona ID가 일치하도록
+    # 책임진다.
     resume_completed_records: list = []
     if resume_records:
         completed_persona_ids: set = set()

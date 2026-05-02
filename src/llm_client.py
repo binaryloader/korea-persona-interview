@@ -1,12 +1,12 @@
-"""OpenAI Chat Completions HTTP client.
+"""OpenAI Chat Completions HTTP 클라이언트.
 
-Async client built on ``httpx.AsyncClient`` with retry, timeout, and content
-extraction. The official ``openai`` SDK is intentionally not used to keep
-dependencies minimal; backoff is a six-line in-house implementation.
+``httpx.AsyncClient``를 기반으로 retry, timeout, 응답 본문 추출을 묶은 async
+클라이언트다. 공식 ``openai`` SDK는 의존성을 최소화하기 위해 의도적으로
+사용하지 않는다. backoff 로직은 6줄짜리 자체 구현이다.
 
-The same client is used unchanged for OpenAI-compatible local servers
-(``mlx_lm.server``, ``vLLM``, ``llama.cpp``). Configure ``base_url`` and any
-non-empty ``api_key`` to talk to those.
+OpenAI 호환 로컬 서버(``mlx_lm.server``, ``vLLM``, ``llama.cpp``)에도 본
+클라이언트를 그대로 사용한다. ``base_url``과 비어 있지 않은 ``api_key``만
+설정하면 동일한 인터페이스로 호출된다.
 """
 
 from __future__ import annotations
@@ -35,14 +35,13 @@ logger = logging.getLogger(__name__)
 _JITTER_MAX_SECONDS = 0.5
 
 def _parse_streaming_body(body_text: str) -> tuple:
-    """Aggregate an OpenAI Server-Sent Events stream body into ``(content, usage)``.
+    """OpenAI Server-Sent Events 스트림 본문을 ``(content, usage)``로 합산한다.
 
-    The streaming response is a sequence of ``data: {...}`` lines terminated
-    by ``data: [DONE]``. Each chunk's ``choices[0].delta.content`` is
-    appended; the final chunk's ``usage`` block (when the request opts into
-    ``stream_options.include_usage``) becomes the response usage. Lines that
-    do not parse as JSON, or that lack the expected fields, are skipped so a
-    partial chunk cannot poison the aggregate.
+    스트리밍 응답은 ``data: {...}`` 라인 시퀀스이며 ``data: [DONE]``으로
+    끝난다. 각 chunk의 ``choices[0].delta.content``를 이어 붙이고, 마지막
+    chunk의 ``usage`` 블록(요청 시 ``stream_options.include_usage``를 켠 경우)
+    을 응답 usage로 사용한다. JSON 파싱이 실패하거나 기대 필드가 없는 라인은
+    건너뛴다. 부분 chunk가 합산 결과를 오염시키지 못하게 한 안전 장치다.
     """
 
     import json as _json
@@ -108,25 +107,27 @@ _INVALID_API_KEY_MESSAGE = (
 
 
 class LLMClient:
-    """Async client for the OpenAI Chat Completions API and compatible servers.
+    """OpenAI Chat Completions API와 호환 서버용 async 클라이언트.
 
-    The class is provider-agnostic in name (the legacy ``MlxLLMClient`` alias
-    has been removed in v1.1). New code should depend on the ``LLMBackend``
-    protocol from ``llm_backend`` rather than this concrete class so the
-    underlying transport (OpenAI / Anthropic / MCP sampling) stays swappable.
+    클래스 이름은 provider-agnostic하다(레거시 alias ``MlxLLMClient``는
+    v1.1.0에서 제거됐다). 신규 코드는 본 구체 클래스가 아니라 ``llm_backend``의
+    ``LLMBackend`` 프로토콜에 의존해, 하위 transport(OpenAI / Anthropic /
+    MCP sampling)를 교체 가능하게 유지하는 것이 권장된다.
 
-    Example::
+    사용 예시는 아래와 같다.
+
+    ::
 
         async with LLMClient(cfg.llm) as client:
             models = await client.healthcheck()
             response = await client.chat(messages, max_tokens=500)
 
-    Retry policy: HTTP 5xx, 429, timeouts, and connect failures are retried
-    with exponential backoff up to ``retry_max_attempts`` times. 401 and other
-    4xx responses fail fast. ``RetryExhaustedError`` is raised when retries
-    are exhausted.
+    retry 정책은 다음과 같다. HTTP 5xx, 429, timeout, connect 실패는
+    ``retry_max_attempts``까지 exponential backoff로 재시도한다. 401과 그 외
+    4xx 응답은 fast-fail이다. retry가 모두 소진되면 ``RetryExhaustedError``를
+    raise한다.
 
-    A missing API key is rejected with ``ConfigError`` before any HTTP call.
+    API 키가 없으면 HTTP 호출 전에 ``ConfigError``로 차단한다.
     """
 
     def __init__(self, config: LlmConfig) -> None:
@@ -143,14 +144,14 @@ class LLMClient:
             self._client = None
 
     async def healthcheck(self) -> list:
-        """Verify connectivity by listing models.
+        """모델 목록 조회로 연결성을 검증한다.
 
-        Returns:
-            Model ids extracted from ``data[*].id``.
+        반환:
+            ``data[*].id``에서 추출한 모델 ID 리스트
 
-        Raises:
-            ServerNotReachableError: Network failure, 5xx, or empty payload.
-            ConfigError: 401 or other 4xx response, or missing API key.
+        raise:
+            ServerNotReachableError: 네트워크 실패, 5xx, 또는 빈 응답.
+            ConfigError: 401 등 4xx 응답이거나 API 키 누락.
         """
 
         self._require_api_key()
@@ -213,18 +214,17 @@ class LLMClient:
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
     ) -> ChatResponse:
-        """Send a chat completion request and return the response.
+        """chat completion 요청을 보내고 응답을 반환한다.
 
-        Args:
-            messages: OpenAI-shaped messages array.
-            max_tokens: Per-call override of ``LlmConfig.max_tokens``.
-            temperature: Per-call override of ``LlmConfig.temperature``.
+        인자:
+            messages: OpenAI 형식 messages 배열
+            max_tokens: 호출 단위 ``LlmConfig.max_tokens`` override
+            temperature: 호출 단위 ``LlmConfig.temperature`` override
 
-        Raises:
-            ConfigError: Missing or invalid API key, or 4xx response.
-            ServerNotReachableError: Single-call network failure.
-            RetryExhaustedError: 5xx, 429, timeout, or empty content beyond
-                the configured retry limit.
+        raise:
+            ConfigError: API 키가 없거나 유효하지 않거나, 4xx 응답.
+            ServerNotReachableError: 단발 네트워크 실패.
+            RetryExhaustedError: 5xx/429/timeout/빈 응답이 설정된 retry 한도를 넘은 경우.
         """
 
         self._require_api_key()
@@ -243,23 +243,24 @@ class LLMClient:
         }
         if self._config.streaming:
             body["stream"] = True
-            # Ask OpenAI for an aggregated usage block on the final stream
-            # chunk so streaming and non-streaming responses surface the same
-            # token counts. Gated behind ``stream_options.include_usage``.
+            # OpenAI에 마지막 stream chunk에서 합산 usage 블록을 함께 보내달라고
+            # 요청한다. streaming과 non-streaming 응답이 같은 토큰 카운트를
+            # 노출하게 한다. ``stream_options.include_usage`` 옵션 게이트 뒤에
+            # 있다.
             body["stream_options"] = {"include_usage": True}
-        # ``extra_chat_kwargs`` forwards backend-specific request fields that
-        # fall outside the OpenAI Chat Completions spec - the canonical use
-        # case is ``chat_template_kwargs`` for mlx_lm.server / vLLM thinking
-        # toggles on Qwen3 models. Reserved keys are intentionally skipped so
-        # users cannot accidentally override the canonical body shape.
+        # ``extra_chat_kwargs``는 OpenAI Chat Completions 스펙 밖에 있는
+        # backend 고유 요청 필드를 그대로 forward한다. 표준 use case는
+        # mlx_lm.server / vLLM의 Qwen3 모델 thinking 토글용
+        # ``chat_template_kwargs``다. 예약 키는 의도적으로 skip해, 사용자가
+        # 표준 body 모양을 실수로 override하지 못하게 한다.
         extras = self._config.extra_chat_kwargs_dict()
         for key, value in extras.items():
             if key in body:
                 continue
             body[key] = value
 
-        # Message bodies stay out of the structured log per security policy.
-        # Only counts and character totals are recorded.
+        # 보안 정책상 메시지 본문은 구조화 로그에 남기지 않는다. count와 글자
+        # 합계만 기록한다.
         logger.debug(
             "chat 요청 시작",
             extra={
@@ -392,11 +393,11 @@ class LLMClient:
 
     @staticmethod
     def _extract_usage(response: httpx.Response) -> TokenUsage:
-        """Extract ``TokenUsage`` from an OpenAI ``usage`` block.
+        """OpenAI ``usage`` 블록에서 ``TokenUsage``를 추출한다.
 
-        Returns zeros for mocked responses or compatible servers that omit
-        the field. ``cached_tokens`` lives under
-        ``usage.prompt_tokens_details.cached_tokens`` per the OpenAI schema.
+        모킹 응답이나 본 필드를 생략한 호환 서버 응답에는 0으로 채워 반환한다.
+        ``cached_tokens``는 OpenAI 스키마에 따라
+        ``usage.prompt_tokens_details.cached_tokens`` 위치에 있다.
         """
 
         try:

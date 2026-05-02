@@ -30,7 +30,7 @@ from ._json_utils import extract_json_object
 from .config import AppConfig, InterviewConfig, LlmConfig
 from .logging_setup import mask_name, mask_persona_id, mask_product
 
-if TYPE_CHECKING:  # pragma: no cover - type-only import
+if TYPE_CHECKING:  # pragma: no cover - 타입 체크 전용 import
     from .llm_backend import LLMBackend
 from .models import (
     ChatResponse,
@@ -51,19 +51,18 @@ from .models import (
 logger = logging.getLogger(__name__)
 
 
-# Default user utterance appended when the auto follow-up trigger fires.
-# The single source of truth is ``InterviewConfig.auto_follow_up_text``;
-# ``InterviewSession`` always reads from config. This module-level constant is
-# kept for backward import compatibility only.
+# 자동 follow-up trigger가 발동했을 때 모델에 추가로 보내는 기본 user 발화.
+# 단일 정본은 ``InterviewConfig.auto_follow_up_text``이며, ``InterviewSession``은
+# 항상 config에서 읽는다. 본 모듈 레벨 상수는 backward import 호환을 위해
+# 그대로 둔다.
 AUTO_FOLLOW_UP_PROMPT = "조금만 더 자세히 말씀해 주실 수 있을까요?"
 
 
-# Splitter regex for the single-turn response format. Matches a line that
-# starts with a number followed by ``.`` or ``)`` (e.g. ``1.``, ``2)``,
-# ``3.``) and grabs the body until the next numbered marker or end of input.
-# MULTILINE plus DOTALL together let us span newlines while anchoring on
-# line starts only - a numbered citation that appears mid-sentence will not
-# be misread as a delimiter.
+# 단일턴 응답 포맷 분리용 정규식. 라인 시작에 숫자와 ``.`` 또는 ``)``가 오는
+# 패턴(예: ``1.``, ``2)``, ``3.``)을 잡고 다음 번호 마커 또는 입력 끝까지를
+# 본문으로 읽는다. MULTILINE + DOTALL 플래그를 함께 사용해 라인 시작 기준으로만
+# 앵커링하면서 줄바꿈을 가로지를 수 있다. 본문 중간에 등장하는 번호 인용이
+# 분리자로 오해되지 않도록 한 안전 장치다.
 _NUMBERED_SEGMENT_RE = re.compile(
     r"^\s*(\d+)[.)]\s*(.+?)(?=^\s*\d+[.)]|\Z)",
     re.MULTILINE | re.DOTALL,
@@ -71,20 +70,19 @@ _NUMBERED_SEGMENT_RE = re.compile(
 
 
 def _parse_single_turn_response(text: str, expected_count: int) -> tuple:
-    """Split a single-turn response text into per-question answer chunks.
+    """단일턴 응답 텍스트를 질문별 답변 청크로 분리한다.
 
-    Args:
-        text: LLM response body. The system prompt instructs the model to emit
-            ``1. ... 2. ... 3. ...`` numbered segments.
-        expected_count: How many segments the caller expects (main questions
-            plus shared follow-ups).
+    인자:
+        text: LLM 응답 본문. 시스템 프롬프트가 모델에게 ``1. ... 2. ... 3. ...``
+            번호 segment 형식을 출력하도록 지시한다.
+        expected_count: caller가 기대하는 segment 수(메인 질문 + 공유 follow-up).
 
-    Returns:
-        ``(answers, parse_failed)``. On success ``answers`` is a list of
-        length ``expected_count`` with trimmed segment bodies indexed 0..N-1.
-        On failure the last slot carries the entire response text, the rest
-        are empty strings, and ``parse_failed`` is True - this preserves the
-        raw output for post-mortem instead of dropping it.
+    반환:
+        ``(answers, parse_failed)``. 성공 시 ``answers``는 ``expected_count``
+        길이 리스트로, 각 슬롯 0..N-1에 trim된 segment 본문이 들어간다. 실패
+        시에는 마지막 슬롯에 전체 응답 텍스트가 들어가고 나머지는 빈 문자열,
+        ``parse_failed``는 True가 된다. 데이터를 잃지 않으면서 사후 분석에서
+        식별 가능하도록 하기 위함이다.
     """
 
     if expected_count <= 0:
@@ -132,11 +130,10 @@ _SUMMARY_SCHEMA_HINT = (
 )
 
 
-# Short-form names for the 17 Korean provinces. Used by drift detection to
-# spot a response that asserts living in a province other than the persona's
-# own (TDD section 8.2). The dataset only stores the short form, but a
-# response may use either the short or full form, so callers compare against
-# this list with substring semantics.
+# 17개 시도 짧은 표기. drift 감지가 응답에서 페르소나 거주지가 아닌 다른 시도에
+# 살고 있다고 단언하는 케이스를 잡는 데 사용한다(TDD §8.2). 데이터셋은 짧은
+# 표기만 저장하지만 응답은 짧거나 풀네임을 쓸 수 있으므로 caller가 substring
+# 의미로 본 리스트를 비교한다.
 _KOREAN_PROVINCES: tuple = (
     "서울",
     "부산",
@@ -158,15 +155,14 @@ _KOREAN_PROVINCES: tuple = (
 )
 
 
-# First-person subject tokens used by the gender / age / region drift axes.
-# The cohabitation axis uses dedicated precision regexes (_SOLO_ASSERTION_RE
-# / _COHABIT_ASSERTION_RE) instead of this pattern; reusing the broad pattern
-# for cohabitation would re-introduce the false positives we removed in
-# round G (a response that mentions ``1인 가구용`` as a product keyword would
-# trip the solo-living check).
+# gender/age/region drift 축이 사용하는 1인칭 주어 토큰 패턴. cohabitation 축은
+# 본 패턴 대신 전용 정밀 정규식(_SOLO_ASSERTION_RE / _COHABIT_ASSERTION_RE)을
+# 사용한다. cohabitation에서 본 광범위 패턴을 재사용하면 라운드 G에서 제거한
+# false positive가 재현된다(응답이 product 키워드로 ``1인 가구용``을 언급하면
+# 단독 거주 체크가 잘못 트리거되는 문제).
 #
-# The match window is bounded by sentence punctuation (``.``/``!``/``?``).
-# Earlier 30-character windows were too wide and bled across sentences.
+# 매치 윈도우는 문장 구두점(``.``/``!``/``?``)으로 제한된다. 이전 30자 윈도우는
+# 너무 넓어 문장 경계를 넘어 잘못 매칭되었다.
 _SELF_INTRO_PATTERN = re.compile(
     r"(?:저는|나는|제가|내가)\s*([^\.\?!\n,]{0,30})"
 )

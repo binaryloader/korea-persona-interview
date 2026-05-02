@@ -1,15 +1,13 @@
-"""Layered configuration loader.
+"""계층형 설정 로더.
 
-Precedence is built-in defaults, then ``config.yaml``, then ``.env`` file,
-then environment variables, then CLI overrides. The result is returned as a
-frozen ``AppConfig`` dataclass.
+우선순위는 내장 기본값, ``config.yaml``, ``.env`` 파일, 환경 변수, CLI
+오버라이드 순서로 적용한다. 결과는 frozen ``AppConfig`` dataclass로 반환한다.
 
-Secrets (``OPENAI_API_KEY``, ``ANTHROPIC_API_KEY``) come from the environment
-or a project-root ``.env`` file. The ``.env`` parser is implemented with the
-standard library to avoid a ``python-dotenv`` dependency. It supports
-``KEY=value`` lines, ``#`` comments, blank lines, single/double quoted values,
-and the ``export KEY=value`` shell prefix. Multiline values and escapes are
-intentionally not supported.
+시크릿(``OPENAI_API_KEY``, ``ANTHROPIC_API_KEY``)은 환경 변수나 프로젝트
+루트의 ``.env`` 파일에서 읽는다. ``.env`` 파서는 ``python-dotenv`` 의존성을
+피하기 위해 표준 라이브러리만으로 구현했다. ``KEY=value`` 라인, ``#`` 주석,
+빈 줄, 작은따옴표/큰따옴표 감싼 값, ``export KEY=value`` 쉘 접두어를
+지원한다. 여러 줄 값과 이스케이프는 의도적으로 지원하지 않는다.
 """
 
 from __future__ import annotations
@@ -32,19 +30,19 @@ _VALID_PROVIDERS = frozenset({"openai", "anthropic"})
 
 @dataclass(frozen=True)
 class LlmConfig:
-    """LLM HTTP client settings.
+    """LLM HTTP 클라이언트 설정.
 
-    ``provider`` selects between the OpenAI Chat Completions API and the
-    Anthropic Messages API. Local LLMs (mlx_lm.server, vLLM, llama.cpp) are
-    addressed through ``provider=openai`` with ``base_url`` overridden to
-    ``http://localhost:PORT/v1``; they accept any non-empty ``api_key``.
+    ``provider``는 OpenAI Chat Completions API와 Anthropic Messages API 중
+    하나를 선택한다. 로컬 LLM(mlx_lm.server, vLLM, llama.cpp)은
+    ``provider=openai``로 두고 ``base_url``을 ``http://localhost:PORT/v1``로
+    덮어쓰면 동작한다. 비어 있지 않은 ``api_key`` 값이면 모두 허용한다.
 
-    ``api_key`` is read from ``OPENAI_API_KEY`` (or ``ANTHROPIC_API_KEY`` for
-    ``provider=anthropic``). The yaml key is intentionally not honored so
-    secrets never land on disk or in shell history.
+    ``api_key``는 ``OPENAI_API_KEY``(또는 ``provider=anthropic``일 때
+    ``ANTHROPIC_API_KEY``)에서만 읽는다. yaml 키 값은 의도적으로 무시하므로
+    시크릿이 디스크나 쉘 히스토리에 남지 않는다.
 
-    The numeric ranges enforced in ``__post_init__`` are operational guard
-    rails against unrealistic yaml or environment values.
+    ``__post_init__``에서 강제하는 수치 범위는 비현실적인 yaml/환경 값에
+    대한 운영 안전장치다.
     """
 
     base_url: str
@@ -102,12 +100,12 @@ class LlmConfig:
 
 @dataclass(frozen=True)
 class BatchConfig:
-    """Batch interview concurrency and persona-toggle settings.
+    """배치 인터뷰 동시성과 페르소나 토글 설정.
 
-    Concurrency 1-10 is a soft cap intended to leave headroom under typical
-    OpenAI tier rate limits. ``partial_failure_threshold`` (0.0-1.0) is the
-    success ratio under which ``BatchResultEnvelope.partial_failure`` flips
-    true and the CLI exits with code 3.
+    동시성 1-10은 일반적인 OpenAI 티어 rate limit 아래에 여유를 두기 위한
+    soft cap이다. ``partial_failure_threshold``(0.0-1.0)는 이 비율 아래로
+    성공률이 떨어지면 ``BatchResultEnvelope.partial_failure``를 true로
+    뒤집고 CLI는 종료 코드 3으로 빠져나오는 임계값이다.
     """
 
     concurrency: int
@@ -129,7 +127,7 @@ class BatchConfig:
 
 @dataclass(frozen=True)
 class DatasetConfig:
-    """Hugging Face dataset name, split, and column-mapping aliases."""
+    """Hugging Face 데이터셋 이름, split, 컬럼 매핑 별칭."""
 
     name: str
     split: str
@@ -140,11 +138,11 @@ class DatasetConfig:
 
 @dataclass(frozen=True)
 class InterviewConfig:
-    """Interview heuristic thresholds and keyword lists.
+    """인터뷰 휴리스틱 임계값과 키워드 리스트.
 
-    Externalizing these lets users tune the auto follow-up trigger and persona
-    drift detector from yaml without touching code. Out-of-range values are
-    rejected in ``__post_init__``.
+    이 값들을 외부화하면 사용자는 코드를 건드리지 않고 yaml에서 자동
+    follow-up 트리거와 페르소나 drift 감지기를 조정할 수 있다. 범위를
+    벗어난 값은 ``__post_init__``에서 거부한다.
     """
 
     short_answer_threshold: int
@@ -185,7 +183,7 @@ class InterviewConfig:
 
 @dataclass(frozen=True)
 class ReportConfig:
-    """Report rendering thresholds and bin widths."""
+    """리포트 렌더링 임계값과 bin 폭."""
 
     cohort_min_cell: int = 3
     top_n_default: int = 10
@@ -219,7 +217,7 @@ class ReportConfig:
 
 @dataclass(frozen=True)
 class AppConfig:
-    """Top-level application configuration."""
+    """최상위 애플리케이션 설정."""
 
     llm: LlmConfig
     batch: BatchConfig
@@ -232,7 +230,7 @@ class AppConfig:
 
 
 def _default_dict() -> dict:
-    """Built-in defaults used as the lowest precedence merge layer."""
+    """가장 낮은 우선순위의 머지 레이어로 쓰이는 내장 기본값."""
 
     return {
         "llm": {
@@ -329,7 +327,7 @@ def _default_dict() -> dict:
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
-    """Recursively merge ``override`` into ``base``. ``override`` wins."""
+    """``override``를 ``base``에 재귀적으로 머지한다. 충돌 시 ``override``가 이긴다."""
 
     out = dict(base)
     for key, value in override.items():
@@ -345,7 +343,7 @@ def _deep_merge(base: dict, override: dict) -> dict:
 
 
 def _load_yaml(path: Path) -> dict:
-    """Read a yaml file into a dict. Missing files yield an empty dict."""
+    """yaml 파일을 dict로 읽는다. 파일이 없으면 빈 dict를 돌려준다."""
 
     if not path.exists():
         return {}
@@ -367,10 +365,10 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _load_dotenv(path: Optional[Path] = None) -> dict:
-    """Parse a ``.env`` file with the standard library only.
+    """표준 라이브러리만으로 ``.env`` 파일을 파싱한다.
 
-    Search order when ``path`` is ``None``: current working directory, then the
-    project root. Returns an empty dict when no file is found.
+    ``path``가 ``None``일 때 탐색 순서는 현재 작업 디렉토리, 그 다음 프로젝트
+    루트다. 파일이 없으면 빈 dict를 돌려준다.
     """
 
     candidates: list = []
@@ -417,14 +415,14 @@ def _parse_dotenv_file(path: Path) -> dict:
 
 
 def _apply_env(merged: dict) -> dict:
-    """Promote environment variables into the merged config dict.
+    """환경 변수를 머지된 설정 dict에 반영한다.
 
-    Only secrets and the output directory are honored:
+    시크릿과 출력 디렉토리만 인식한다.
 
-    - ``OPENAI_API_KEY`` (or ``KPI_OPENAI_API_KEY`` fallback): used when
-      ``llm.provider == "openai"``.
-    - ``ANTHROPIC_API_KEY``: used when ``llm.provider == "anthropic"``.
-    - ``KPI_OUTPUT_DIR``: convenience override for tests/CI.
+    - ``OPENAI_API_KEY``(또는 ``KPI_OPENAI_API_KEY`` 폴백)는
+      ``llm.provider == "openai"``일 때 사용한다
+    - ``ANTHROPIC_API_KEY``는 ``llm.provider == "anthropic"``일 때 사용한다
+    - ``KPI_OUTPUT_DIR``는 테스트/CI 편의용 오버라이드다
     """
 
     out = {k: dict(v) if isinstance(v, dict) else v for k, v in merged.items()}
@@ -452,15 +450,14 @@ def load_config(
     yaml_path: Optional[Path] = None,
     cli_overrides: Optional[dict] = None,
 ) -> AppConfig:
-    """Load and validate ``AppConfig`` from layered sources.
+    """계층화된 소스에서 ``AppConfig``를 로드하고 검증한다.
 
     Args:
-        yaml_path: Path to ``config.yaml``. Defaults to ``DEFAULT_YAML_PATH``.
-        cli_overrides: Partial dict from CLI options that overrides everything
-            else.
+        yaml_path: ``config.yaml`` 경로. 기본값은 ``DEFAULT_YAML_PATH``
+        cli_overrides: 다른 모든 레이어를 덮어쓰는 CLI 옵션의 부분 dict
 
     Raises:
-        ConfigError: yaml parse failure, type mismatch, or out-of-range value.
+        ConfigError: yaml 파싱 실패, 타입 불일치, 범위 초과 등
     """
 
     for key, value in _load_dotenv().items():
@@ -469,18 +466,18 @@ def load_config(
     yaml_path = yaml_path or DEFAULT_YAML_PATH
     merged = _default_dict()
     merged = _deep_merge(merged, _load_yaml(yaml_path))
-    # Drop legacy ``llm.backend`` entries so existing yaml files do not break
-    # construction. The toggle was removed when MCP became sampling-only.
+    # 기존 yaml 파일이 깨지지 않도록 legacy ``llm.backend`` 항목은 제거한다.
+    # MCP가 sampling 전용으로 바뀌면서 토글 자체가 사라졌다.
     if isinstance(merged.get("llm"), dict):
         merged["llm"].pop("backend", None)
     merged = _apply_env(merged)
     if cli_overrides:
         merged = _deep_merge(merged, cli_overrides)
-        # CLI may flip ``provider`` after the env pass already chose a key. Run
-        # the env pass once more so ``--provider anthropic`` picks up
-        # ``ANTHROPIC_API_KEY`` and ``--provider openai`` picks up
-        # ``OPENAI_API_KEY``. The CLI cannot supply ``api_key`` itself (yaml
-        # and CLI both reject it), so this never overwrites a user-set key.
+        # CLI가 환경 변수 패스 이후에 ``provider``를 뒤집을 수 있다. 그래서
+        # ``--provider anthropic``이면 ``ANTHROPIC_API_KEY``를,
+        # ``--provider openai``이면 ``OPENAI_API_KEY``를 다시 잡도록 환경
+        # 변수 패스를 한 번 더 돌린다. CLI 자체는 ``api_key``를 넘길 수 없고
+        # (yaml과 CLI 모두 거부) 사용자가 설정한 키는 덮어쓰지 않는다.
         merged = _apply_env(merged)
 
     try:
@@ -489,10 +486,10 @@ def load_config(
             str(api_key_raw) if api_key_raw not in (None, "") else None
         )
         provider = str(merged["llm"].get("provider", "openai")).strip().lower()
-        # When provider differs from the historical default, swap the matching
-        # default base_url and model so callers can flip with just
-        # ``--provider anthropic``. A user-customized ``base_url`` (anything
-        # other than the ``api.openai.com`` default) is respected as-is.
+        # provider가 기존 기본값과 달라지면 호출자가 ``--provider anthropic``
+        # 한 줄로 바꿀 수 있도록 매칭되는 기본 base_url과 model로 자동 전환
+        # 한다. 사용자가 별도로 지정한 ``base_url``(``api.openai.com`` 기본
+        # 값이 아닌 값)은 그대로 존중한다.
         base_url_raw = merged["llm"].get("base_url")
         if (
             provider == "anthropic"

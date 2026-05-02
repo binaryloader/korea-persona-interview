@@ -1,21 +1,20 @@
-"""LLM backend abstractions for the interview pipeline.
+"""인터뷰 파이프라인의 LLM 백엔드 추상화.
 
-Three backends are exposed:
+세 가지 백엔드를 노출한다.
 
-- ``OpenAIBackend``: OpenAI Chat Completions API and any OpenAI-compatible
-  endpoint (mlx_lm.server, vLLM, llama.cpp). Used by the CLI.
-- ``AnthropicBackend``: Anthropic Messages API. Used by the CLI when
-  ``provider=anthropic``.
-- ``McpSamplingBackend``: MCP ``sampling/createMessage`` request that delegates
-  inference to the host agent (Claude Code, Cursor, ...). Used exclusively by
-  the MCP server entry point.
+- ``OpenAIBackend``: OpenAI Chat Completions API와 모든 OpenAI 호환 엔드포인트
+  (mlx_lm.server, vLLM, llama.cpp)를 다룬다. CLI가 사용한다.
+- ``AnthropicBackend``: Anthropic Messages API. ``provider=anthropic``일 때
+  CLI가 사용한다.
+- ``McpSamplingBackend``: MCP ``sampling/createMessage`` 요청으로 추론을 host
+  agent(Claude Code, Cursor 등)에 위임한다. MCP 서버 진입점 전용.
 
-All three implementations satisfy the ``LLMBackend`` protocol so the
-application layer (``run_batch``, ``run_interview``, ``generate_report``) can
-swap them via dependency injection.
+세 구현 모두 ``LLMBackend`` 프로토콜을 만족하므로 application 계층
+(``run_batch``, ``run_interview``, ``generate_report``)이 의존성 주입으로
+교체 사용할 수 있다.
 
-The ``mcp`` SDK is imported lazily inside ``McpSamplingBackend`` so this module
-imports cleanly when the SDK is absent.
+``mcp`` SDK는 ``McpSamplingBackend`` 안에서 lazy import한다. SDK가 부재해도
+본 모듈 자체는 import 가능하게 하기 위함이다.
 """
 
 from __future__ import annotations
@@ -64,11 +63,11 @@ _MCP_SAMPLING_UNSUPPORTED_MESSAGE = (
 
 @runtime_checkable
 class LLMBackend(Protocol):
-    """Minimal interface used by the interview pipeline.
+    """인터뷰 파이프라인이 사용하는 최소 인터페이스.
 
-    Compatible with ``LLMClient`` so any object conforming to this protocol
-    is interchangeable in ``run_batch``/``run_interview``/``generate_report``.
-    Implementations must support the async context manager protocol.
+    ``LLMClient``와 호환되어, 본 프로토콜을 만족하는 객체는
+    ``run_batch``/``run_interview``/``generate_report`` 어디에서든 교체
+    사용 가능하다. 구현체는 async context manager 프로토콜을 지원해야 한다.
     """
 
     async def healthcheck(self) -> list:  # pragma: no cover - protocol stub
@@ -90,12 +89,12 @@ class LLMBackend(Protocol):
 
 
 class OpenAIBackend:
-    """Adapter for OpenAI Chat Completions and OpenAI-compatible servers.
+    """OpenAI Chat Completions와 OpenAI 호환 서버를 감싸는 어댑터.
 
-    Wraps ``LLMClient`` so the interview pipeline can also target
-    self-hosted OpenAI-compatible endpoints (mlx_lm.server, vLLM, llama.cpp)
-    by configuring ``base_url`` and ``api_key`` (the local servers usually
-    accept any string).
+    ``LLMClient``를 wrapping해 인터뷰 파이프라인이 self-hosted OpenAI 호환
+    엔드포인트(mlx_lm.server, vLLM, llama.cpp)에도 동일하게 동작하도록 한다.
+    ``base_url``과 ``api_key``만 설정하면 된다(로컬 서버는 보통 임의의 문자열을
+    api_key로 받아들인다).
     """
 
     def __init__(self, config: LlmConfig) -> None:
@@ -124,30 +123,29 @@ class OpenAIBackend:
 
 
 class AnthropicBackend:
-    """Adapter for the Anthropic Messages API.
+    """Anthropic Messages API 어댑터.
 
-    Implements ``POST /v1/messages`` directly over httpx. The official
-    ``anthropic`` SDK is intentionally not used to avoid the dependency. Caller
-    is responsible for providing ``api_key`` via the ``ANTHROPIC_API_KEY``
-    environment variable.
+    ``POST /v1/messages``를 httpx로 직접 호출한다. 의존성 회피를 위해 공식
+    ``anthropic`` SDK는 의도적으로 사용하지 않는다. caller가
+    ``ANTHROPIC_API_KEY`` 환경변수로 ``api_key``를 제공할 책임을 진다.
 
-    Notes on the request shape that differ from OpenAI:
+    OpenAI와 다른 요청 모양은 아래와 같다.
 
-    - ``system`` is a top-level field, not a message with ``role=system``.
-    - ``max_tokens`` is required.
-    - Authentication uses the ``x-api-key`` header plus ``anthropic-version``.
+    - ``system``은 ``role=system`` 메시지가 아니라 top-level 필드다
+    - ``max_tokens``는 필수다
+    - 인증은 ``x-api-key`` 헤더와 ``anthropic-version`` 헤더를 함께 쓴다
 
-    Token usage maps as follows for parity with OpenAI:
+    토큰 사용량은 OpenAI와의 통일성을 위해 아래와 같이 매핑한다.
 
     - ``usage.input_tokens`` -> ``TokenUsage.prompt_tokens``
     - ``usage.output_tokens`` -> ``TokenUsage.completion_tokens``
     - ``usage.cache_read_input_tokens`` -> ``TokenUsage.cached_tokens``
 
-    Anthropic prompt caching is enabled by default via the ``cache_control``
-    marker on the system prompt. Toggle off with ``llm.anthropic_cache_control:
-    false`` in yaml when targeting older Messages API revisions that reject the
-    marker. ``cache_creation_input_tokens`` and ``cache_read_input_tokens`` are
-    both surfaced in the response usage when caching is hit.
+    Anthropic prompt caching은 시스템 프롬프트에 ``cache_control`` 마커를 박아
+    기본 활성화한다. 마커를 거부하는 예전 Messages API 리비전을 사용하면 yaml
+    에서 ``llm.anthropic_cache_control: false``로 끄면 된다. 캐시가 hit하면
+    ``cache_creation_input_tokens``와 ``cache_read_input_tokens``가 응답 usage에
+    함께 노출된다.
     """
 
     _ANTHROPIC_VERSION = "2023-06-01"
@@ -166,12 +164,11 @@ class AnthropicBackend:
             self._client = None
 
     async def healthcheck(self) -> list:
-        """Verify connectivity by issuing a 1-token ping request.
+        """1-token ping 요청으로 연결성을 검증한다.
 
-        The Messages API does not expose a list-models endpoint, so the
-        healthcheck sends a minimal request and treats any 2xx response as
-        success. Returns the configured model id wrapped in a list to match
-        the OpenAI backend's contract.
+        Messages API는 모델 목록 엔드포인트를 노출하지 않으므로, 본 healthcheck는
+        최소 요청을 보내 2xx 응답이면 성공으로 본다. OpenAI 백엔드 계약과 같은
+        모양을 유지하기 위해 설정된 모델 ID를 리스트로 wrapping해 반환한다.
         """
 
         self._require_api_key()
@@ -217,7 +214,7 @@ class AnthropicBackend:
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
     ) -> ChatResponse:
-        """Call ``POST /v1/messages`` with retry/backoff parity with OpenAI."""
+        """OpenAI와 동일한 retry/backoff 정책으로 ``POST /v1/messages``를 호출한다."""
 
         self._require_api_key()
         client = self._require_client()
@@ -241,14 +238,13 @@ class AnthropicBackend:
             ),
         }
         if system_prompt:
-            # When Anthropic prompt caching is enabled, send the system prompt
-            # as a single text block annotated with ``cache_control:
-            # ephemeral``. The Messages API treats the marker as the cache
-            # boundary, so the static prefix is reused across requests with
-            # identical system text. Anthropic surfaces both
-            # ``cache_creation_input_tokens`` and ``cache_read_input_tokens``
-            # in the response usage block, which ``_extract_usage`` maps to
-            # ``TokenUsage.cached_tokens`` for parity with OpenAI.
+            # Anthropic prompt caching이 켜진 경우, 시스템 프롬프트를
+            # ``cache_control: ephemeral`` 마커가 붙은 단일 text 블록으로
+            # 보낸다. Messages API가 본 마커를 캐시 경계로 인식해, 동일한 시스템
+            # 텍스트를 가진 후속 요청은 정적 prefix를 재사용한다. 캐시가 적중하면
+            # ``cache_creation_input_tokens``와 ``cache_read_input_tokens``가
+            # 응답 usage에 함께 노출되며, ``_extract_usage``가 OpenAI와의 통일성
+            # 유지를 위해 두 값을 합쳐 ``TokenUsage.cached_tokens``로 매핑한다.
             if self._config.anthropic_cache_control:
                 body["system"] = [
                     {
@@ -408,10 +404,10 @@ class AnthropicBackend:
         output_tokens = _as_int(usage_raw.get("output_tokens"))
         cached_read = _as_int(usage_raw.get("cache_read_input_tokens"))
         cached_creation = _as_int(usage_raw.get("cache_creation_input_tokens"))
-        # ``cached_tokens`` carries the total cached prefix length (creation +
-        # read) so the field can be compared like-for-like with the OpenAI
-        # ``cached_tokens`` count. Creation is the first call that primes the
-        # cache; read is every subsequent call that hits the warm cache.
+        # ``cached_tokens``는 캐시된 prefix 총 길이(creation + read)를 담는다.
+        # OpenAI의 ``cached_tokens`` 카운트와 like-for-like 비교가 가능하도록
+        # 한다. creation은 캐시를 처음 채운 호출, read는 warm 캐시를 적중한
+        # 후속 호출의 토큰 수다.
         return TokenUsage(
             prompt_tokens=input_tokens,
             completion_tokens=output_tokens,

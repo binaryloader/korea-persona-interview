@@ -1,53 +1,52 @@
-# korea-persona-interview configuration.
-# Precedence: built-in defaults < this yaml < .env / environment variables < CLI options.
+# korea-persona-interview 설정 파일.
+# 우선순위: built-in 기본값 < 본 yaml < .env / 환경변수 < CLI 옵션.
 #
-# Secrets policy:
-# - API keys come only from environment variables, never from this file or CLI.
-#   provider=openai uses OPENAI_API_KEY (KPI_OPENAI_API_KEY fallback).
-#   provider=anthropic uses ANTHROPIC_API_KEY.
-# - The yaml/CLI api_key field is intentionally not honored, so secrets never
-#   land on disk or in shell history.
-# - Output directory honors KPI_OUTPUT_DIR for test/CI isolation.
+# 비밀 관리 정책.
+# - API 키는 환경변수로만 받는다. 본 파일이나 CLI에서는 받지 않는다.
+#   provider=openai는 OPENAI_API_KEY(KPI_OPENAI_API_KEY 폴백)를 사용한다.
+#   provider=anthropic은 ANTHROPIC_API_KEY를 사용한다.
+# - yaml/CLI의 api_key 필드는 의도적으로 무시한다. 비밀 값이 디스크나
+#   셸 히스토리에 남지 않게 하기 위함이다.
+# - 출력 디렉토리는 테스트/CI 격리를 위해 KPI_OUTPUT_DIR 환경변수를 우선 사용한다.
 #
-# Local LLM tip:
-# Keep provider=openai and override --base-url to http://localhost:PORT/v1.
-# mlx_lm.server, vLLM, and llama.cpp all expose an OpenAI-compatible interface.
+# 로컬 LLM 사용 팁.
+# provider=openai를 그대로 두고 --base-url을 http://localhost:PORT/v1로
+# 덮어쓰면 된다. mlx_lm.server, vLLM, llama.cpp 모두 OpenAI 호환 인터페이스를 노출한다.
 
-# llm: HTTP transport and request shape for the LLM call.
+# llm: LLM 호출의 HTTP transport와 요청 본문 모양을 정의한다.
 #
-# Most fields here apply to the CLI entry point only. The MCP server entry
-# point (`python -m src.mcp_server`) delegates inference to the host agent via
-# `sampling/createMessage`, so the host picks the model, the endpoint, and the
-# transport. The MCP path therefore IGNORES every backend-identity field
-# (provider, base_url, model, api_key, streaming, extra_chat_kwargs,
-# anthropic_cache_control, timeout, retry_max_attempts, retry_backoff_seconds).
-# Only max_tokens and temperature reach the host (forwarded as sampling
-# arguments). context_budget is applied by the message-history truncator on
-# both paths, so it is honored regardless of entry point.
+# 본 섹션 대부분은 CLI 진입점에만 적용된다. MCP 서버 진입점
+# (`python -m src.mcp_server`)은 추론을 host agent에 `sampling/createMessage`로
+# 위임하므로, 모델/엔드포인트/transport는 host가 결정한다. 따라서 MCP 경로는
+# backend identity에 해당하는 모든 필드를 무시한다(provider, base_url, model,
+# api_key, streaming, extra_chat_kwargs, anthropic_cache_control, timeout,
+# retry_max_attempts, retry_backoff_seconds). max_tokens와 temperature만
+# host에 전달된다(sampling 인자로 forward). context_budget은 두 경로 모두에서
+# 메시지 히스토리 truncator가 적용하므로 진입점과 무관하게 honor된다.
 llm:
-  # provider: "openai" | "anthropic". Local OpenAI-compatible servers stay on
-  # provider=openai; only the base_url changes. CLI-only.
+  # provider: "openai" | "anthropic". 로컬 OpenAI 호환 서버는 provider=openai를
+  # 그대로 두고 base_url만 바꾼다. CLI 진입점 전용.
   provider: "openai"
-  # Default base_url and model are picked to match the provider when both are
-  # left at the historical openai defaults. Override either explicitly to pin.
-  # CLI-only (the MCP host owns its own endpoint).
+  # base_url과 model의 기본값은 historical openai 기본값에 맞춰져 있다. provider를
+  # 바꿀 때는 둘 중 하나 또는 둘 다 명시해 핀하는 것이 안전하다.
+  # CLI 전용(MCP host는 자체 엔드포인트를 소유한다).
   base_url: "https://api.openai.com/v1"
   model: "gpt-4o-mini"
-  # max_tokens / temperature reach the MCP sampling host as well as the CLI
-  # backends (forwarded into the sampling/createMessage call).
+  # max_tokens / temperature는 CLI backend와 MCP sampling host 모두에 전달된다
+  # (sampling/createMessage 호출에 forward).
   max_tokens: 500
   temperature: 0.8
-  # timeout / retry_* are CLI-only. The MCP host owns its retry policy.
+  # timeout / retry_*는 CLI 전용. MCP host는 자체 retry 정책을 갖는다.
   timeout: 120
   retry_max_attempts: 3
   retry_backoff_seconds: [1, 2, 4]
-  # context_budget caps the multi-turn message history before it is sent to
-  # any backend, so the value is honored on both CLI and MCP paths. The system
-  # prompt is preserved; the oldest user/assistant pairs are dropped first.
+  # context_budget은 backend로 보내기 전 multi-turn 메시지 히스토리에 cap을
+  # 씌운다. 두 경로 모두에 적용된다. 시스템 프롬프트는 보존하고, 가장 오래된
+  # user/assistant 쌍부터 drop한다.
   context_budget: 32000
   # provider=anthropic 호출에서 system 메시지에 cache_control: ephemeral 마커를
   # 박아 prompt caching을 활성화한다. 예전 Messages API 리비전이 마커를 거부하면
-  # false로 두어 끈다. CLI-only(provider=anthropic 한정).
+  # false로 두어 끈다. CLI 전용(provider=anthropic 한정).
   anthropic_cache_control: true
   # OpenAI Chat Completions request body에 그대로 머지되는 확장 필드 dict.
   # 예: 로컬 mlx_lm.server/vLLM의 Qwen3 thinking 토글을 끄려면

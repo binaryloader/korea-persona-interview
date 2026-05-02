@@ -1,23 +1,23 @@
-"""MCP server entry point.
+"""MCP 서버 엔트리 포인트.
 
-Exposes four tools (``healthcheck``, ``list_personas``, ``interview``,
-``report``) over stdio JSON-RPC so external agents (Claude Code, Cursor,
-Codex, ...) can drive the interview pipeline using natural language.
+stdio JSON-RPC 위에 네 개의 도구(``healthcheck``, ``list_personas``,
+``interview``, ``report``)를 노출해서 외부 에이전트(Claude Code, Cursor,
+Codex 등)가 자연어로 인터뷰 파이프라인을 구동할 수 있게 한다.
 
-Inference is always delegated to the host agent via ``sampling/createMessage``
-when a tool needs an LLM call. The server itself never holds an OpenAI or
-Anthropic API key; cost is billed against the host's LLM. If the host does
-not advertise the sampling capability, tool calls fail with a clear hint
-pointing to the CLI entry points.
+도구가 LLM 호출이 필요할 때 추론은 항상 ``sampling/createMessage``를 통해
+호스트 에이전트에 위임한다. 서버 자체는 OpenAI/Anthropic API 키를 보유하지
+않으며 비용은 호스트 LLM에 청구된다. 호스트가 sampling capability를
+노출하지 않으면 CLI 엔트리 포인트로 안내하는 메시지와 함께 도구 호출이
+실패한다.
 
-Application-layer functions (``run_batch``, ``generate_report``) are reused
-as-is. The MCP server runs non-interactively, so tqdm progress, ANSI color,
-and ``[OK]`` labels are disabled and tool results are returned as JSON in a
-``TextContent`` envelope. Logs flow to stderr / jsonl.
+애플리케이션 계층 함수(``run_batch``, ``generate_report``)는 그대로
+재사용한다. MCP 서버는 비대화형으로 실행되므로 tqdm 프로그레스, ANSI
+색상, ``[OK]`` 라벨은 비활성화하고 결과는 ``TextContent`` 봉투에 JSON으로
+실어 보낸다. 로그는 stderr와 jsonl로 흘려보낸다.
 
-The ``mcp`` SDK is imported lazily inside ``main()`` so this module imports
-cleanly when the SDK is missing; users see a helpful message and exit code 1
-instead of a stack trace.
+``mcp`` SDK는 ``main()`` 안에서 lazy import 한다. 덕분에 SDK가 없어도 이
+모듈 자체는 문제없이 import되고 사용자는 stack trace 대신 안내 메시지와
+종료 코드 1을 본다.
 """
 
 from __future__ import annotations
@@ -196,10 +196,10 @@ _REPORT_SCHEMA: dict = {
 
 
 def _error_payload(code: str, message: str, *, exit_code: int = 1) -> dict:
-    """Build a uniform error response dict for any tool handler.
+    """모든 도구 핸들러에서 공통으로 쓰는 에러 응답 dict를 만든다.
 
-    The ``ok: false`` field mirrors the CLI ``--json`` mode envelope so MCP
-    clients can branch on a single key when reading tool outputs.
+    ``ok: false`` 필드는 CLI ``--json`` 모드 봉투와 같은 형태이므로 MCP
+    클라이언트는 도구 출력을 읽을 때 단일 키 하나로 분기할 수 있다.
     """
 
     return {
@@ -217,7 +217,7 @@ def _to_json_text(payload: dict) -> str:
 
 
 def _persona_to_dict(persona: PersonaMeta) -> dict:
-    """Convert a ``PersonaMeta`` to a JSON-friendly dict (without ``raw``)."""
+    """``PersonaMeta``를 JSON 친화적인 dict로 변환한다(``raw`` 필드 제외)."""
 
     return {
         "persona_id": persona.persona_id,
@@ -235,7 +235,7 @@ def _persona_to_dict(persona: PersonaMeta) -> dict:
 
 
 def _setup_logging_for_run(config: AppConfig) -> None:
-    """Configure structured logging with a fresh request id per tool call."""
+    """도구 호출마다 새로운 request id로 구조화 로깅을 구성한다."""
 
     log_dir = config.output_dir / "logs"
     log_path = log_dir / f"run_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.jsonl"
@@ -248,11 +248,11 @@ def _load_config_with_overrides(overrides: Optional[dict]) -> AppConfig:
 
 
 def _current_sampling_session() -> Optional[Any]:
-    """Return the active MCP ``ServerSession`` for the in-flight tool call.
+    """현재 처리 중인 도구 호출의 활성 MCP ``ServerSession``을 돌려준다.
 
-    Stored in a module-level variable because the ``mcp`` SDK does not pass
-    the server instance into tool handler callbacks. Only one stdio server
-    runs per process so there is no race.
+    ``mcp`` SDK가 도구 핸들러 콜백에 서버 인스턴스를 전달하지 않기 때문에
+    모듈 레벨 변수에 보관한다. 프로세스당 stdio 서버는 하나만 돌아가므로
+    레이스가 발생하지 않는다.
     """
 
     server = _ACTIVE_SERVER
@@ -266,11 +266,10 @@ def _current_sampling_session() -> Optional[Any]:
 
 
 def _build_backend(config: AppConfig) -> McpSamplingBackend:
-    """Construct the sampling backend for the in-flight tool call.
+    """현재 처리 중인 도구 호출을 위한 sampling 백엔드를 구성한다.
 
-    Raises ``ConfigError`` with a CLI-fallback hint when no MCP session is
-    available (for example, when the user runs the module directly outside an
-    MCP host).
+    MCP 세션이 없을 때(예: 사용자가 MCP 호스트 밖에서 모듈을 직접 실행)는
+    CLI 폴백 안내 메시지를 담은 ``ConfigError``를 던진다.
     """
 
     session = _current_sampling_session()
@@ -291,7 +290,7 @@ _ACTIVE_SERVER: Optional[Any] = None
 
 
 async def _handle_healthcheck(arguments: dict) -> dict:
-    """Verify host LLM availability via the sampling capability."""
+    """sampling capability로 호스트 LLM 가용성을 확인한다."""
 
     try:
         config = _load_config_with_overrides(None)
@@ -623,10 +622,10 @@ _TOOL_HANDLERS: dict = {
 
 
 async def dispatch_tool(name: str, arguments: Optional[dict]) -> dict:
-    """Dispatch a tool call by name and return a uniform response dict.
+    """이름으로 도구 호출을 dispatch하고 공통 응답 dict를 돌려준다.
 
-    Errors raised inside handlers are converted into ``_error_payload`` dicts
-    so the MCP TextContent envelope always carries a JSON object.
+    핸들러 내부에서 발생한 에러는 ``_error_payload`` dict로 변환해 MCP
+    TextContent 봉투가 항상 JSON 객체를 실어 보내도록 한다.
     """
 
     handler = _TOOL_HANDLERS.get(name)
@@ -654,7 +653,7 @@ async def dispatch_tool(name: str, arguments: Optional[dict]) -> dict:
             "사용자 중단으로 도구 실행을 중지했습니다",
             exit_code=130,
         )
-    except Exception as exc:  # noqa: BLE001 - last-resort safety net
+    except Exception as exc:  # noqa: BLE001 - 최후의 안전망
         logger.error(
             "MCP 도구 실행 안전망 발동",
             extra={"tool": name, "reason": str(exc), "exception_type": type(exc).__name__},
@@ -668,9 +667,9 @@ async def dispatch_tool(name: str, arguments: Optional[dict]) -> dict:
 
 
 def _list_tools_metadata() -> list:
-    """Build the list of ``mcp.types.Tool`` metadata objects.
+    """``mcp.types.Tool`` 메타데이터 객체 리스트를 만든다.
 
-    Imported lazily so ``import src.mcp_server`` works without the SDK.
+    SDK가 없을 때도 ``import src.mcp_server``가 동작하도록 lazy import 한다.
     """
 
     from mcp import types
@@ -722,7 +721,7 @@ _MISSING_SDK_MESSAGE = (
 
 
 async def _serve_stdio() -> None:
-    """Run the MCP stdio server with the four tools registered."""
+    """네 개의 도구를 등록한 MCP stdio 서버를 실행한다."""
 
     global _ACTIVE_SERVER
 
@@ -754,7 +753,7 @@ async def _serve_stdio() -> None:
 
 
 def main() -> None:
-    """Entry point for ``python -m src.mcp_server`` and ``kpi-mcp-server``."""
+    """``python -m src.mcp_server``와 ``kpi-mcp-server``의 엔트리 포인트."""
 
     try:
         asyncio.run(_serve_stdio())

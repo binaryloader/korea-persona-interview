@@ -1,8 +1,8 @@
-"""User-facing console output helpers and Korean message dictionary.
+"""사용자 대상 콘솔 출력 헬퍼와 한국어 메시지 사전.
 
-CLI presentation layer split out of ``main.py``. The ``MESSAGES`` dict is
-the single source of Korean copy; updating a sentence in one place updates
-every command that surfaces it.
+``main.py``에서 분리한 CLI presentation 계층이다. ``MESSAGES`` dict가 한국어
+문구의 단일 정본이라, 한 곳에서 문장을 갱신하면 본 도구의 모든 명령이 같은
+문구를 노출한다.
 """
 
 from __future__ import annotations
@@ -57,10 +57,10 @@ MESSAGES: dict = {
 
 
 def resolve_color(no_color_flag: bool) -> bool:
-    """Decide whether ANSI color escapes should be emitted.
+    """ANSI 컬러 escape 시퀀스를 출력할지 결정한다.
 
-    Disabled when ``no_color_flag`` is set, when ``NO_COLOR`` is in the
-    environment (no-color.org), or when stdout is not a TTY.
+    ``no_color_flag``가 set되었거나, 환경변수 ``NO_COLOR``가 있거나
+    (no-color.org 표준), stdout이 TTY가 아니면 컬러를 끈다.
     """
 
     if no_color_flag:
@@ -73,10 +73,10 @@ def resolve_color(no_color_flag: bool) -> bool:
 
 
 class Console:
-    """Prefixed stdout/stderr printer with optional ANSI color.
+    """ANSI 컬러를 옵션으로 가지는 prefix 부착 stdout/stderr 프린터.
 
-    Each method emits one line tagged with ``[OK]``/``[INFO]``/``[WARN]``/
-    ``[ERR]`` so the meaning survives even when color is disabled.
+    각 메서드는 ``[OK]``/``[INFO]``/``[WARN]``/``[ERR]`` 라벨을 붙여 한 줄을
+    출력하므로, 컬러를 꺼도 의미가 그대로 전달된다.
     """
 
     def __init__(self, *, color: bool) -> None:
