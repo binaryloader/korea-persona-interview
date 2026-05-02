@@ -21,7 +21,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 import yaml
 
@@ -107,6 +107,7 @@ class BatchConfig:
 
     concurrency: int
     persona_fields: tuple
+    single_turn: bool = False
 
     def __post_init__(self) -> None:
         if not (1 <= self.concurrency <= 10):
@@ -181,6 +182,10 @@ def _default_dict() -> dict:
             # rate limit 여유의 균형이 좋다(MLX 시절 2 → OpenAI 4).
             "concurrency": 4,
             "persona_fields": ["summary"],
+            # single_turn은 PRD §5.1, §5.9의 ``--single-turn`` 옵션 매핑.
+            # 멀티턴 흐름 대신 모든 질문을 한 번의 chat 호출에 묶어 처리한다.
+            # 토큰 절약 + 빠른 dry-run 용도.
+            "single_turn": False,
         },
         "dataset": {
             "name": "nvidia/Nemotron-Personas-Korea",
@@ -370,60 +375,41 @@ def _parse_dotenv_file(path: Path) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _coerce(value: str, target: Any) -> Any:
-    """환경변수 문자열을 target 타입에 맞춰 변환한다."""
-
-    if isinstance(target, bool):
-        return value.lower() in ("1", "true", "yes", "on")
-    if isinstance(target, int):
-        try:
-            return int(value)
-        except ValueError as exc:
-            raise ConfigError(f"환경변수 정수 변환 실패: {value!r}") from exc
-    if isinstance(target, float):
-        try:
-            return float(value)
-        except ValueError as exc:
-            raise ConfigError(f"환경변수 실수 변환 실패: {value!r}") from exc
-    return value
-
-
 def _apply_env(merged: dict) -> dict:
-    """KPI_* 환경변수를 merged dict에 덮어쓴다.
+    """환경변수에서 비밀만 받아 merged dict에 덮어쓴다.
 
-    명세는 TDD §10이다. 누락된 키는 무시한다(전체 set 일관성을 강요하지 않음).
+    v1.x부터 본 도구의 설정 정책은 아래와 같다.
+
+    - 비밀(API 키)은 환경변수에서만 받는다. yaml/CLI override는 허용하지 않아
+      디스크/명령행 히스토리에 시크릿이 남지 않게 한다(security.md §1)
+    - 그 외 설정(모델 ID, 동시성, 토큰 한도, 타임아웃 등)은 ``config.yaml``의
+      기본값과 CLI override(예: ``--model``, ``--concurrency``)로만 다룬다.
+      ``KPI_LLM_*``/``KPI_BATCH_*`` 같은 환경변수 override는 v1.x에서 제거됐다.
+      "비밀=env, 기본=yaml, 일회성=CLI" 한 가지 규칙으로 우선순위를 단순화한다
+
+    keep된 환경변수 키는 아래 두 개뿐이다.
+
+    - ``OPENAI_API_KEY``(표준)
+    - ``KPI_OPENAI_API_KEY``(격리된 테스트/CI 환경의 fallback)
+
+    두 키 모두 누락이면 ``llm.api_key``는 None으로 남고 chat 호출 시점에
+    ``ConfigError``로 변환된다(security.md §1, error-handling.md §1).
+
+    추가로 출력 디렉토리만 ``KPI_OUTPUT_DIR`` 환경변수를 유지한다. 본 키는
+    비밀이 아니지만 CI/테스트가 작업 디렉토리를 ``tmp_path``로 바꾸려 할 때
+    cli flag보다 환경변수로 일괄 처리하는 것이 편리하다. 다른 구성값은 yaml/CLI
+    경로로 일원화했다.
     """
 
     out = {k: dict(v) if isinstance(v, dict) else v for k, v in merged.items()}
 
-    env_map = [
-        ("KPI_LLM_BASE_URL", "llm", "base_url"),
-        ("KPI_LLM_MODEL", "llm", "model"),
-        ("KPI_LLM_MAX_TOKENS", "llm", "max_tokens"),
-        ("KPI_LLM_TEMPERATURE", "llm", "temperature"),
-        ("KPI_LLM_TIMEOUT", "llm", "timeout"),
-        ("KPI_BATCH_CONCURRENCY", "batch", "concurrency"),
-        ("KPI_OUTPUT_DIR", "output", "output_dir"),
-        ("KPI_LOG_LEVEL", "output", "log_level"),
-        ("KPI_NO_COLOR", "output", "no_color"),
-    ]
-    for env_key, section, key in env_map:
-        raw = os.environ.get(env_key)
-        if raw is None:
-            continue
-        target = out.get(section, {}).get(key)
-        out[section][key] = _coerce(raw, target)
-
-    # 콤마 구분 리스트 처리
-    fields_raw = os.environ.get("KPI_BATCH_PERSONA_FIELDS")
-    if fields_raw is not None:
-        items = [s.strip() for s in fields_raw.split(",") if s.strip()]
-        out.setdefault("batch", {})["persona_fields"] = items
+    # 출력 디렉토리만 비밀이 아닌 환경변수로 유지(테스트 격리 편의).
+    output_dir_env = os.environ.get("KPI_OUTPUT_DIR")
+    if output_dir_env:
+        out.setdefault("output", {})["output_dir"] = output_dir_env
 
     # OpenAI API 키 로드. ``OPENAI_API_KEY``를 표준으로 하고
-    # ``KPI_OPENAI_API_KEY``는 격리된 테스트/CI 환경의 fallback이다. 둘 다
-    # 누락이면 ``api_key``는 None으로 남고 chat 호출 시점에 ConfigError로
-    # 변환된다(security.md §1, error-handling.md §1).
+    # ``KPI_OPENAI_API_KEY``는 격리된 테스트/CI 환경의 fallback이다.
     api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get(
         "KPI_OPENAI_API_KEY"
     )
@@ -492,6 +478,7 @@ def load_config(
         batch_cfg = BatchConfig(
             concurrency=int(merged["batch"]["concurrency"]),
             persona_fields=tuple(str(x) for x in merged["batch"]["persona_fields"]),
+            single_turn=bool(merged["batch"].get("single_turn", False)),
         )
         dataset_cfg = DatasetConfig(
             name=str(merged["dataset"]["name"]),

@@ -730,6 +730,71 @@ def test_json_mode_report_정상_stdout_JSON(httpx_mock, tmp_path: Path) -> None
     assert Path(payload["output_path"]).exists()
 
 
+def test_healthcheck_model_override_CLI(httpx_mock, tmp_path: Path) -> None:
+    """``--model`` CLI 옵션이 config.yaml의 llm.model을 일회성으로 덮는다."""
+
+    httpx_mock.add_response(
+        method="GET",
+        url="https://api.openai.com/v1/models",
+        json={"data": [{"id": "gpt-4o"}]},
+        status_code=200,
+    )
+
+    runner = _make_json_runner()
+    result = runner.invoke(
+        cli,
+        ["--json", "healthcheck", "--model", "gpt-4o"],
+        env={
+            "KPI_OUTPUT_DIR": str(tmp_path),
+            "OPENAI_API_KEY": "test-key",
+        },
+    )
+    assert result.exit_code == 0, result.stdout + result.stderr
+    payload = _stdout_json(result)
+    assert payload["model"] == "gpt-4o"
+
+
+def test_interview_model_override_CLI(
+    httpx_mock, fake_load_dataset, tmp_path: Path
+) -> None:
+    """``--model`` 옵션이 인터뷰 호출에 적용되고 결과 JSON에도 반영된다."""
+
+    httpx_mock.add_response(
+        method="GET",
+        url="https://api.openai.com/v1/models",
+        json={"data": [{"id": "gpt-4o"}]},
+        status_code=200,
+    )
+    _add_interview_chat_responses(httpx_mock, n=1)
+
+    runner = _make_json_runner()
+    result = runner.invoke(
+        cli,
+        [
+            "--json",
+            "interview",
+            "--product",
+            "반찬",
+            "--questions",
+            "Q1",
+            "--n",
+            "1",
+            "--no-report",
+            "--model",
+            "gpt-4o",
+            "--output",
+            str(tmp_path),
+        ],
+        env={
+            "KPI_OUTPUT_DIR": str(tmp_path),
+            "OPENAI_API_KEY": "test-key",
+        },
+    )
+    assert result.exit_code == 0, result.stdout + result.stderr
+    payload = _stdout_json(result)
+    assert payload["model"] == "gpt-4o"
+
+
 def test_interview_콘솔_토큰_비용_한_줄_표시(
     httpx_mock, fake_load_dataset, tmp_path: Path
 ) -> None:

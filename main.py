@@ -164,20 +164,25 @@ def _common_setup(
     config_path: Optional[Path],
     no_color: bool,
     log_level: Optional[str],
+    cli_overrides: Optional[dict] = None,
 ) -> tuple:
     """모든 서브커맨드에서 호출하는 공통 초기화.
+
+    Args:
+        cli_overrides: 호출자가 미리 박아 둔 부분 갱신 dict. ``--model``처럼
+            명령별로 다른 일회성 override를 본 함수가 그대로 깊은 병합한다.
 
     Returns:
         (config, console). config 로드 실패 시 ConfigError를 그대로 raise한다.
     """
 
-    cli_overrides: dict = {}
+    overrides: dict = dict(cli_overrides) if cli_overrides else {}
     if log_level:
-        cli_overrides.setdefault("output", {})["log_level"] = log_level
+        overrides.setdefault("output", {})["log_level"] = log_level
     if no_color:
-        cli_overrides.setdefault("output", {})["no_color"] = True
+        overrides.setdefault("output", {})["no_color"] = True
 
-    config = load_config(yaml_path=config_path, cli_overrides=cli_overrides)
+    config = load_config(yaml_path=config_path, cli_overrides=overrides)
 
     color_enabled = _resolve_color(config.no_color)
     console = Console(color=color_enabled)
@@ -340,17 +345,40 @@ def cli(
     default=None,
     help="OpenAI 호환 서버 base URL(기본: config.yaml의 llm.base_url).",
 )
+@click.option(
+    "--model",
+    "model_override",
+    default=None,
+    help=(
+        "이 호출에 한해 사용할 모델 ID(예: gpt-4o, gpt-4o-mini). "
+        "config.yaml의 llm.model을 일회성으로 덮어쓴다(우선순위: --model > config.yaml > 기본값)."
+    ),
+)
 @click.pass_context
-def healthcheck(ctx: click.Context, base_url: Optional[str]) -> None:
+def healthcheck(
+    ctx: click.Context,
+    base_url: Optional[str],
+    model_override: Optional[str],
+) -> None:
     """``GET /v1/models`` 200 응답과 모델 ID를 출력한다(PRD §5.9, UI §2.1)."""
 
     json_mode: bool = bool(ctx.obj.get("json_mode"))
+
+    cli_overrides: dict = {}
+    if base_url or model_override:
+        llm_overrides: dict = {}
+        if base_url:
+            llm_overrides["base_url"] = base_url
+        if model_override:
+            llm_overrides["model"] = model_override
+        cli_overrides["llm"] = llm_overrides
 
     try:
         config, console = _common_setup(
             config_path=ctx.obj["config_path"],
             no_color=ctx.obj["no_color"],
             log_level=ctx.obj["log_level"],
+            cli_overrides=cli_overrides or None,
         )
     except ConfigError as exc:
         if json_mode:
@@ -364,25 +392,6 @@ def healthcheck(ctx: click.Context, base_url: Optional[str]) -> None:
                 MESSAGES["config_error"].format(reason=exc)
             )
         sys.exit(1)
-
-    cli_overrides: dict = {}
-    if base_url:
-        cli_overrides["llm"] = {"base_url": base_url}
-        try:
-            config = load_config(
-                yaml_path=ctx.obj["config_path"],
-                cli_overrides=cli_overrides,
-            )
-        except ConfigError as exc:
-            if json_mode:
-                _emit_json_error(
-                    "config_error",
-                    MESSAGES["config_error"].format(reason=exc),
-                    exit_code=1,
-                )
-            else:
-                console.err(MESSAGES["config_error"].format(reason=exc))
-            sys.exit(1)
 
     try:
         models = asyncio.run(_run_healthcheck(config))
@@ -760,6 +769,15 @@ def _render_persona_table(personas: list, console: Console) -> None:
         "--dry-run에서는 본 옵션과 무관하게 리포트와 JSON을 모두 만들지 않습니다."
     ),
 )
+@click.option(
+    "--model",
+    "model_override",
+    default=None,
+    help=(
+        "이 인터뷰 호출에 한해 사용할 모델 ID(예: gpt-4o, gpt-4o-mini). "
+        "config.yaml의 llm.model을 일회성으로 덮어쓴다(우선순위: --model > config.yaml > 기본값)."
+    ),
+)
 @click.pass_context
 def interview(
     ctx: click.Context,
@@ -775,6 +793,7 @@ def interview(
     dry_run: bool,
     output_dir: Path,
     auto_report: bool,
+    model_override: Optional[str],
 ) -> None:
     """배치 인터뷰 진입점(PRD §5.9, UI §2.3)."""
 
@@ -804,7 +823,7 @@ def interview(
         s.strip() for s in persona_fields.split(",") if s.strip()
     ) or ("summary",)
 
-    overrides = {
+    overrides: dict = {
         "batch": {
             "concurrency": concurrency,
             "persona_fields": list(fields_tuple),
@@ -812,6 +831,8 @@ def interview(
         },
         "output": {"output_dir": str(output_dir)},
     }
+    if model_override:
+        overrides["llm"] = {"model": model_override}
     try:
         config = load_config(
             yaml_path=ctx.obj["config_path"],
@@ -1290,6 +1311,15 @@ async def _run_dry_run(
     type=click.Path(file_okay=False, path_type=Path),
     help="리포트 저장 디렉토리(기본: 입력 JSON과 같은 디렉토리).",
 )
+@click.option(
+    "--model",
+    "model_override",
+    default=None,
+    help=(
+        "이 리포트 정성 인사이트 호출에 한해 사용할 모델 ID. "
+        "config.yaml의 llm.model을 일회성으로 덮어쓴다(우선순위: --model > config.yaml > 기본값)."
+    ),
+)
 @click.pass_context
 def report(
     ctx: click.Context,
@@ -1297,16 +1327,22 @@ def report(
     top_n: int,
     include_drift: bool,
     output_dir: Optional[Path],
+    model_override: Optional[str],
 ) -> None:
     """report 진입점(PRD §5.9, UI §2.4)."""
 
     json_mode: bool = bool(ctx.obj.get("json_mode"))
+
+    cli_overrides: dict = {}
+    if model_override:
+        cli_overrides["llm"] = {"model": model_override}
 
     try:
         config, console = _common_setup(
             config_path=ctx.obj["config_path"],
             no_color=ctx.obj["no_color"],
             log_level=ctx.obj["log_level"],
+            cli_overrides=cli_overrides or None,
         )
     except ConfigError as exc:
         if json_mode:

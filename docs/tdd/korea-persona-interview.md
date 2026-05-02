@@ -673,20 +673,20 @@ CLI 단일 프로세스 흐름에서 `list-personas`(미리 보기) → `intervi
 
 ### 10. 설정 로드 우선순위
 
-config.py의 `load_config(yaml_path, cli_overrides)`는 아래 순서로 머지한다.
+v1.x 정책은 "비밀=env, 기본=yaml, 일회성=CLI" 한 가지로 단순화한다. config.py의 `load_config(yaml_path, cli_overrides)`는 아래 순서로 머지한다.
 
-1. 코드 default 값(AppConfig 생성자 default)
+1. 코드 default 값(`_default_dict`)
 2. `config.yaml`(YAML 파일이 있으면 머지하고 없으면 default만 사용)
-3. 환경변수 `KPI_*`(있으면 덮어쓰기)
-4. CLI 옵션(있으면 덮어쓰기)
+3. CLI 옵션(있으면 덮어쓰기)
 
-환경변수 키 명세는 아래와 같다.
+환경변수에서 받는 키는 비밀과 출력 디렉토리뿐이다.
 
-- `KPI_LLM_BASE_URL`, `KPI_LLM_MODEL`, `KPI_LLM_MAX_TOKENS`, `KPI_LLM_TEMPERATURE`, `KPI_LLM_TIMEOUT`
-- `KPI_BATCH_CONCURRENCY`, `KPI_BATCH_PERSONA_FIELDS`(콤마 구분)
-- `KPI_OUTPUT_DIR`, `KPI_LOG_LEVEL`, `KPI_NO_COLOR`
+- `OPENAI_API_KEY`표준와 `KPI_OPENAI_API_KEY`fallback은 `llm.api_key`로 들어간다
+- `KPI_OUTPUT_DIR`은 `output_dir`로 들어간다(테스트/CI 격리 편의)
 
-config.yaml은 일부 섹션만 정의해도 default와 머지된다. dataset.field_map은 default 코드값(§1.6)과 yaml 값을 깊은 병합(deep merge)한다.
+v1.0 시절의 `KPI_LLM_*`/`KPI_BATCH_*` 환경변수 override는 v1.x에서 제거됐다. 모델 변경 같은 일회성 override는 CLI(`--model gpt-4o`)로 처리하고, 동시성 같은 운영 기본값은 `config.yaml`을 갱신해 수정한다. config.yaml은 일부 섹션만 정의해도 default와 머지된다. `dataset.field_map`은 default 코드값(§1.6)과 yaml 값을 깊은 병합한다.
+
+`.env` 파일은 stdlib 파서로 비밀(API 키)만 환경에 승격한다. 명시 환경변수가 이미 set된 경우 `.env`가 덮지 않는다(setdefault). 자세한 파싱 규칙은 `_parse_dotenv_file` docstring을 참고한다.
 
 ### 11. 의존성 핀
 

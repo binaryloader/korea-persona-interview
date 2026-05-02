@@ -239,10 +239,10 @@ CLI는 4개 서브커맨드를 제공한다. 매크로 명령(예: `run-all`)은
 
 | 명령 | 설명 | 주요 인자/옵션 | 종료 코드 |
 | --- | --- | --- | --- |
-| `healthcheck` | OpenAI API 응답과 모델 가용성 확인 | `--base-url`(기본 `https://api.openai.com/v1`) | 0 정상, 1 키 미설정/401/서버 도달 불가 |
+| `healthcheck` | OpenAI API 응답과 모델 가용성 확인 | `--base-url`(기본 `https://api.openai.com/v1`), `--model`(일회성 모델 ID 덮어쓰기, 기본 config.yaml의 `llm.model`) | 0 정상, 1 키 미설정/401/서버 도달 불가 |
 | `list-personas` | 필터 결과 미리 보기 | `--filter`, `--limit`(기본 20), `--seed` | 0 정상, 2 결과 0건 |
-| `interview` | 배치 인터뷰 실행 | `--product`(필수), `--questions`(다중, 필수), `--filter`, `--n`(기본 10), `--seed`, `--concurrency`(기본 4, 1-10), `--persona-fields`, `--follow-up`(다중), `--single-turn`, `--dry-run`, `--output`(기본 `outputs/`), `--report/--no-report`(기본 `--report`. 인터뷰 종료 후 마크다운 리포트 자동 생성. `--no-report`는 외부 분석 도구로 JSON만 받을 때 사용. `--dry-run`은 본 옵션과 무관하게 JSON/리포트 모두 미생성) | 0 정상, 1 서버 오류, 2 표본 부족, 3 부분 실패(완료된 record 50% 미만) |
-| `report` | 결과 JSON에서 리포트 생성 | 인자 1개(JSON 파일 경로), `--top-n`(기본 10), `--include-drift`(드리프트 record 포함), `--output-dir`(기본 입력 JSON과 같은 디렉토리) | 0 정상, 1 입력 파일 오류, 2 정상 record 0건 |
+| `interview` | 배치 인터뷰 실행 | `--product`(필수), `--questions`(다중, 필수), `--filter`, `--n`(기본 10), `--seed`, `--concurrency`(기본 4, 1-10), `--persona-fields`, `--follow-up`(다중), `--single-turn`, `--dry-run`, `--output`(기본 `outputs/`), `--report/--no-report`(기본 `--report`. 인터뷰 종료 후 마크다운 리포트 자동 생성. `--no-report`는 외부 분석 도구로 JSON만 받을 때 사용. `--dry-run`은 본 옵션과 무관하게 JSON/리포트 모두 미생성), `--model`(일회성 모델 ID 덮어쓰기) | 0 정상, 1 서버 오류, 2 표본 부족, 3 부분 실패(완료된 record 50% 미만) |
+| `report` | 결과 JSON에서 리포트 생성 | 인자 1개(JSON 파일 경로), `--top-n`(기본 10), `--include-drift`(드리프트 record 포함), `--output-dir`(기본 입력 JSON과 같은 디렉토리), `--model`(정성 인사이트 호출의 일회성 모델 ID 덮어쓰기) | 0 정상, 1 입력 파일 오류, 2 정상 record 0건 |
 
 ### 5.10. 사용자 상호작용 게이트(개발 단계)
 
@@ -414,7 +414,7 @@ CLI는 4개 서브커맨드를 제공한다. 매크로 명령(예: `run-all`)은
 ### 10.8. 모델 변경 가능성
 
 - 위험: 기본 모델 `gpt-4o-mini`가 deprecated되거나 사용자가 다른 OpenAI 모델(`gpt-4o`, `gpt-4-turbo` 등)을 선택할 수 있다. 모델별로 응답 품질, 토큰당 비용, rate limit이 달라 비용/품질 트레이드오프가 발생한다
-- 완화: 모델 ID는 `config.yaml`의 `llm.model` 또는 환경변수 `KPI_LLM_MODEL`에서만 변경하면 동작하도록 설계, 게이트 1에서 사용자에게 사용 모델을 확인 후 진행. README에 대표 모델별 비용/품질 가이드를 둔다(예: gpt-4o-mini는 가성비 기본값, gpt-4o는 품질 우선 시 검토). gpt-4o-mini 페르소나 깨짐 비율 측정 결과가 5%를 초과하면 ADR-002 supersede로 모델 상향을 검토한다
+- 완화: 모델 ID는 `config.yaml`의 `llm.model`(기본)과 CLI `--model` 옵션(일회성)으로만 변경하도록 설계한다. v1.x에서는 "비밀=env, 기본=yaml, 일회성=CLI" 정책으로 단순화하며 v1.0의 `KPI_LLM_MODEL` 환경변수 override는 제거됐다. 게이트 1에서 사용자에게 사용 모델을 확인 후 진행. README에 대표 모델별 비용/품질 가이드를 둔다(예: gpt-4o-mini는 가성비 기본값, gpt-4o는 품질 우선 시 검토). gpt-4o-mini 페르소나 깨짐 비율 측정 결과가 5%를 초과하면 ADR-002 supersede로 모델 상향을 검토한다
 
 데이터셋 실제 컬럼명 확정은 dev-planner가 TDD 작성 전에 `datasets.load_dataset(..., streaming=True)`로 1샘플만 로드해 컬럼 키와 값 표기를 직접 확인한 뒤 TDD에 매핑값(예: `gender_field: sex`, `region_field: residence_region`)까지 박는 방식으로 처리한다. 게이트 2(§5.10)는 구현 단계 휴먼 검증으로 그대로 유지하며, 두 단계가 중복되어도 비용이 거의 없으므로 안전망으로 둘 다 운영한다.
 

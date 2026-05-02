@@ -204,12 +204,13 @@ korea-persona-interview/
 
 ## Configuration
 
-Configuration is layered with the following precedence (later overrides earlier).
+Settings policy is `secrets via env, defaults via yaml, one-off overrides via CLI`. Configuration is layered with the following precedence (later overrides earlier).
 
 - Built-in defaults
 - `config.yaml`
-- Environment variables prefixed with `KPI_` (for example `KPI_LLM_MODEL`, `KPI_BATCH_CONCURRENCY`)
-- CLI options
+- CLI options (`--model`, `--concurrency`, etc.)
+
+The only environment variables this tool reads are secrets: `OPENAI_API_KEY` (standard) and `KPI_OPENAI_API_KEY` (fallback). `KPI_OUTPUT_DIR` is kept solely for test/CI directory isolation. The v1.0 `KPI_LLM_*` and `KPI_BATCH_*` overrides have been removed; change the model with `--model gpt-4o` or by editing `llm.model` in `config.yaml`.
 
 Notable keys.
 
@@ -225,7 +226,7 @@ Notable keys.
 
 ### Choosing a model
 
-`gpt-4o-mini` is the default because it gives the best cost-to-quality ratio for this workload. If you measure persona-drift rates above 5% on your own runs, try the alternatives below by changing `llm.model` in `config.yaml` or setting `KPI_LLM_MODEL`.
+`gpt-4o-mini` is the default because it gives the best cost-to-quality ratio for this workload. If you measure persona-drift rates above 5% on your own runs, try the alternatives below by changing `llm.model` in `config.yaml` or by passing `--model gpt-4o` on the command line for a one-off run.
 
 - `gpt-4o-mini` - default. About $0.50 - $2.00 per 100-persona batch (5 questions). Good Korean fluency and persona adherence
 - `gpt-4o` - higher quality, roughly 5-10x the cost. Use only if `gpt-4o-mini` does not meet your drift target

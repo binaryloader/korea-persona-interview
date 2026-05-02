@@ -28,8 +28,8 @@
 - 페르소나 깨짐 임계값: 영어 단어 비율 30% 초과 또는 한자 비율 5% 초과 또는 페르소나 정보(연령/성별/지역/거주 형태) 정면 모순
 - 코호트 마스킹 임계값: 셀별 표본 3명 미만
 - base_url: `https://api.openai.com/v1`(OpenAI Chat Completions API)
-- 모델 ID: `gpt-4o-mini`(기본값. `config.yaml`의 `llm.model` 또는 환경변수 `KPI_LLM_MODEL`로 변경 가능)
-- 환경변수: `OPENAI_API_KEY`(표준), `KPI_OPENAI_API_KEY`(fallback). 코드에 하드코딩 금지(security.md §1)
+- 모델 ID: `gpt-4o-mini`(기본값. `config.yaml`의 `llm.model` 또는 CLI `--model` 옵션으로 변경 가능. v1.x부터 KPI_LLM_MODEL 환경변수는 인정하지 않음)
+- 환경변수: `OPENAI_API_KEY`(표준 비밀), `KPI_OPENAI_API_KEY`(fallback 비밀), `KPI_OUTPUT_DIR`(테스트/CI 격리용). v1.0의 KPI_LLM_*/KPI_BATCH_* 환경변수 override는 v1.x에서 제거됐다. 비밀은 코드/yaml/CLI에 하드코딩 금지(security.md §1)
 - 시스템 프롬프트 출처: HANDOFF.md §시스템 프롬프트 템플릿
 - 환경 도구: uv(가상 환경은 .venv, Python 3.12 고정)
 

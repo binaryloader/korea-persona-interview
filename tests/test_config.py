@@ -80,73 +80,100 @@ def test_load_config_yaml_최상위_dict_아님_ConfigError(tmp_path: Path) -> N
 
 
 # ---------------------------------------------------------------------------
-# 환경변수 우선순위(yaml < env)
+# 환경변수 정책(v1.x): 비밀만 환경변수에서 받는다
 # ---------------------------------------------------------------------------
+#
+# v1.0 시절의 ``KPI_LLM_*``/``KPI_BATCH_*`` 환경변수 override는 v1.x에서 제거됐다.
+# 정책은 "비밀=env, 기본=yaml, 일회성=CLI" 한 가지로 단순화한다. 본 절의 회귀
+# 테스트는 (1) 일반 설정은 환경변수로 덮이지 않고 (2) 비밀(API 키)과 출력 디렉토리
+# 두 키만 환경변수에서 받는다는 사실을 박는다.
 
 
-def test_load_config_env_yaml_우선(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+def test_load_config_v1_x_KPI_LLM_MODEL_env_무시(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """v1.x: ``KPI_LLM_MODEL``은 더 이상 인정되지 않는다. yaml 기본이 우선이다.
+
+    v1.0의 KPI_LLM_* 환경변수 override는 비밀이 아닌 일반 설정값을 셸/CI 환경에서
+    조작 가능하게 했지만, 우선순위 분기가 늘면서 디버깅 비용이 컸다. v1.x부터는
+    yaml(기본)과 CLI(일회성) 두 경로만 인정한다.
+    """
+
     yaml_path = tmp_path / "config.yaml"
     yaml_path.write_text("llm:\n  model: 'yaml-model'\n", encoding="utf-8")
-    monkeypatch.setenv("KPI_LLM_MODEL", "env-model")
+    monkeypatch.setenv("KPI_LLM_MODEL", "env-model-should-be-ignored")
 
     cfg = load_config(yaml_path=yaml_path)
-    assert cfg.llm.model == "env-model"
+    assert cfg.llm.model == "yaml-model"
 
 
-def test_load_config_env_int_변환(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+def test_load_config_v1_x_KPI_BATCH_CONCURRENCY_env_무시(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """v1.x: ``KPI_BATCH_CONCURRENCY``는 더 이상 인정되지 않는다."""
+
     monkeypatch.setenv("KPI_BATCH_CONCURRENCY", "3")
     cfg = load_config(yaml_path=tmp_path / "no.yaml")
-    assert cfg.batch.concurrency == 3
+    # default 4가 그대로 적용된다.
+    assert cfg.batch.concurrency == 4
 
 
-def test_load_config_env_bool_변환(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+def test_load_config_v1_x_KPI_NO_COLOR_env_무시(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """v1.x: ``KPI_NO_COLOR``는 더 이상 인정되지 않는다(CLI ``--no-color``로 일원화)."""
+
     monkeypatch.setenv("KPI_NO_COLOR", "true")
     cfg = load_config(yaml_path=tmp_path / "no.yaml")
-    assert cfg.no_color is True
+    assert cfg.no_color is False
 
 
-def test_load_config_env_persona_fields_콤마_분리(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+def test_load_config_v1_x_KPI_BATCH_PERSONA_FIELDS_env_무시(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """v1.x: ``KPI_BATCH_PERSONA_FIELDS``는 더 이상 인정되지 않는다."""
+
     monkeypatch.setenv("KPI_BATCH_PERSONA_FIELDS", "summary,professional,family")
     cfg = load_config(yaml_path=tmp_path / "no.yaml")
-    assert cfg.batch.persona_fields == ("summary", "professional", "family")
+    assert cfg.batch.persona_fields == ("summary",)
 
 
-def test_load_config_env_정수_변환_실패_ConfigError(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+def test_load_config_v1_x_KPI_OUTPUT_DIR_env_유지(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("KPI_BATCH_CONCURRENCY", "abc")
-    with pytest.raises(ConfigError):
-        load_config(yaml_path=tmp_path / "no.yaml")
+    """``KPI_OUTPUT_DIR``은 비밀은 아니지만 테스트/CI 격리 편의를 위해 환경변수 유지."""
+
+    monkeypatch.setenv("KPI_OUTPUT_DIR", str(tmp_path / "outdir"))
+    cfg = load_config(yaml_path=tmp_path / "no.yaml")
+    assert cfg.output_dir == tmp_path / "outdir"
 
 
 # ---------------------------------------------------------------------------
-# CLI override 최우선
+# CLI override
 # ---------------------------------------------------------------------------
 
 
-def test_load_config_cli_override가_env보다_우선(
+def test_load_config_cli_override_model(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("KPI_LLM_MODEL", "env-model")
+    """``--model`` CLI override가 yaml 기본값을 덮는다(v1.x 모델 변경 표준 경로)."""
+
+    yaml_path = tmp_path / "config.yaml"
+    yaml_path.write_text("llm:\n  model: 'yaml-model'\n", encoding="utf-8")
     cfg = load_config(
-        yaml_path=tmp_path / "no.yaml",
+        yaml_path=yaml_path,
         cli_overrides={"llm": {"model": "cli-model"}},
     )
     assert cfg.llm.model == "cli-model"
+
+
+def test_load_config_cli_override_default_model_없을때(
+    tmp_path: Path,
+) -> None:
+    """yaml 미존재 + cli override 미지정이면 default(``gpt-4o-mini``)가 그대로 들어온다."""
+
+    cfg = load_config(yaml_path=tmp_path / "no.yaml")
+    assert cfg.llm.model == "gpt-4o-mini"
 
 
 # ---------------------------------------------------------------------------

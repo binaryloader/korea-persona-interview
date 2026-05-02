@@ -1,10 +1,15 @@
 # korea-persona-interview 설정
-# 기본값. 우선순위는 default → 본 yaml → .env 파일 → 환경변수
-# (KPI_*/OPENAI_API_KEY) → CLI 옵션이다(낮은 → 높은 순).
+# 우선순위는 default → 본 yaml → CLI 옵션이다(낮은 → 높은 순).
 #
-# 백엔드는 OpenAI Chat Completions API다. API 키는 환경변수 OPENAI_API_KEY
-# 또는 KPI_OPENAI_API_KEY로 제공하거나 프로젝트 루트의 .env 파일에 저장한다
-# (yaml/CLI에 키 직접 입력 금지, security.md §1).
+# 환경변수 정책(v1.x): "비밀=env, 기본=yaml, 일회성=CLI"로 단순화한다.
+# - 비밀(API 키)만 환경변수에서 받는다(OPENAI_API_KEY 또는 KPI_OPENAI_API_KEY,
+#   .env 파일 fallback). yaml/CLI에 키 직접 입력 금지(security.md §1)
+# - 일반 설정(모델, 동시성, 토큰 한도, 타임아웃 등)은 본 yaml과 CLI 옵션
+#   (--model, --concurrency 등) 두 경로로만 다룬다. v1.0의 KPI_LLM_*/KPI_BATCH_*
+#   환경변수 override는 v1.x에서 제거됐다
+# - 출력 디렉토리만 KPI_OUTPUT_DIR 환경변수를 유지한다(테스트/CI 격리 편의)
+#
+# 백엔드는 OpenAI Chat Completions API다.
 
 llm:
   base_url: "https://api.openai.com/v1"
