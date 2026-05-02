@@ -227,7 +227,7 @@ OpenAI Chat Completions API 비동기 클라이언트다. `httpx.AsyncClient` �
 N명 페르소나에 대한 배치 인터뷰를 수행한다.
 
 - `BatchRunner`는 `async run(personas: list[PersonaMeta]) -> BatchResult`를 제공한다
-- 동시성은 `asyncio.Semaphore(concurrency)`와 `asyncio.gather(*tasks, return_exceptions=True)`로 구현한다. concurrency 4 이상은 `ConfigError`로 차단한다
+- 동시성은 `asyncio.Semaphore(concurrency)`와 `asyncio.gather(*tasks, return_exceptions=True)`로 구현한다. concurrency 1-10 범위만 허용하며 그 외는 `ConfigError`로 차단한다(v1.0의 1-3은 로컬 MLX 메모리 가드, v1.x OpenAI 백엔드에서는 1-10으로 상향)
 - 진행률은 tqdm.asyncio의 `tqdm.gather` 또는 `as_completed`와 수동 tqdm 업데이트 패턴을 사용한다
 - SIGINT 핸들러는 `signal.SIGINT`를 `asyncio.Event`에 연결한다. 현재 진행 중인 인터뷰가 끝나면 partial 결과를 `outputs/interview_{slug}_{ts}_partial.json`으로 저장한다
 - 결과 직렬화는 `dataclasses.asdict(batch_result)`와 `json.dumps(..., ensure_ascii=False, indent=2)`로 수행한다
@@ -635,7 +635,23 @@ PRD §7.2에서 v1 Should로 상향된 두 가드레일이다.
 - BatchRunner는 `asyncio.Semaphore(N)`을 만들어 페르소나 1명당 task 1개를 만든다. `asyncio.gather(*tasks, return_exceptions=True)`로 한 task 예외가 다른 task를 죽이지 않게 한다
 - 진행률은 tqdm.asyncio의 `tqdm.gather` 또는 `as_completed`와 수동 tqdm 업데이트 패턴 중 후자를 채택한다. 후자는 완료 순서대로 진행률을 업데이트할 수 있어 사용자 체감 응답성이 좋다
 - SIGINT 처리는 메인 루프에서 `loop.add_signal_handler(SIGINT, ...)`를 등록하는 방식이다. 핸들러는 `cancel_event: asyncio.Event`를 set한다. 각 task는 인터뷰 1회가 끝날 때마다 `cancel_event.is_set()`을 확인 후 종료한다. 진행 분량은 `outputs/interview_{slug}_{ts}_partial.json`으로 저장한다
-- 동시성 한계는 `concurrency >= 4`일 때 `ConfigError`로 차단한다. PRD §6.1에 따른 OOM 방지 목적이다
+- 동시성 한계는 1-10 범위만 허용하며 그 외는 `ConfigError`로 차단한다. PRD §6.1에 따른 비용/rate limit 보호 목적이다(v1.x OpenAI 백엔드 기준. v1.0의 1-3 상한은 로컬 MLX 메모리 가드라 무관)
+
+#### 9.1. OpenAI prompt caching 적합 구조
+
+OpenAI는 chat completions 입력 prefix가 1024 토큰 이상이고 동일 prefix가 반복 호출되면 자동으로 prompt cache를 적용해 입력 토큰 단가의 50%를 환급 청구한다. 본 도구는 batch 인터뷰에서 한 페르소나당 멀티턴 호출이 N+1회(질문 N + 구조화 요약 1) 발생하므로 시스템 프롬프트 prefix가 캐시 적합 구조여야 비용 절감 효과를 본다.
+
+`build_system_prompt`는 정적 prefix(인트로 + `[말투와 1인칭 일관성 지침]` + `[답변 내용 지침]` + `[출력 형식]`)를 앞쪽에, 가변 부분(`[페르소나 정보]` JSON + `[인터뷰 주제]` product 본문)을 뒤쪽에 배치한다. prefix 길이가 1024 토큰을 넘는지는 `tests/test_interview.py`의 회귀 테스트에서 검증한다.
+
+응답의 `usage.prompt_tokens_details.cached_tokens`는 `MlxLLMClient._extract_usage`가 `TokenUsage.cached_tokens`로 매핑한다. 배치 종료 시 `_aggregate_usage`가 모든 호출의 `cached_tokens`를 합산해 `BatchResultEnvelope.usage.cached_tokens`로 노출한다. 본 값이 prompt_tokens의 큰 비율을 차지할수록 prompt caching이 정상 동작 중이라는 신호다.
+
+#### 9.2. 페르소나 풀 in-memory 캐시
+
+`load_and_sample`는 `(filter_str, n, seed, field_map, gender_aliases, province_aliases, dataset_name, split)` 튜플을 키로 in-memory 캐시(`_PERSONA_POOL_CACHE`)에 결과 `PersonaMeta` 리스트를 저장한다. 같은 spec으로 두 번째 호출하면 데이터셋 로드/필터/샘플링을 건너뛰고 캐시 hit으로 즉시 반환한다.
+
+CLI 단일 프로세스 흐름에서 `list-personas`(미리 보기) → `interview`(같은 시드/필터로 본 실행) → `interview --dry-run`(같은 시드/필터로 1명 시연) 순으로 동일 spec이 반복되는 패턴을 단축한다. 프로세스 종료 시 캐시는 함께 사라지고, 디스크 캐시는 v1.1 백로그다(다른 프로세스 간 재사용).
+
+캐시 무효화 API는 `clear_persona_pool_cache()`로 노출한다. 테스트 격리(`conftest._isolate_env`)가 매 테스트마다 호출해 누수를 막는다.
 
 ### 10. 설정 로드 우선순위
 
@@ -866,7 +882,7 @@ def list_personas(filter_spec, limit, seed): ...
 @click.option("--filter", "filter_spec", default=None)
 @click.option("--n", default=10, type=int, help="인터뷰 인원(기본 10)")
 @click.option("--seed", default=42, type=int)
-@click.option("--concurrency", default=2, type=click.IntRange(1, 3), help="동시성 1-3(기본 2)")
+@click.option("--concurrency", default=4, type=click.IntRange(1, 10), help="동시성 1-10(기본 4)")
 @click.option("--persona-fields", default="summary", help="콤마 구분(예: summary,professional)")
 @click.option("--follow-up", "follow_ups", multiple=True, help="공통 후속 질문")
 @click.option("--single-turn", is_flag=True, default=False)
@@ -903,7 +919,7 @@ PRD §6.8과 dependency.md §10(빌드 도구 핀)을 따른다.
   - `test_llm_client.py`는 200 정상, 5xx/429 재시도 3회 후 실패, 401 즉시 `AuthenticationError`, 그 외 4xx 즉시 `ConfigError`, 타임아웃 재시도, healthcheck 200 또는 실패, `Authorization: Bearer ${OPENAI_API_KEY}` 헤더 부착, 키 미설정 시 `ConfigError`, 로그 마스킹(`Bearer sk-***`)을 검증한다. mock URL은 `https://api.openai.com/v1/chat/completions`다(pytest-httpx)
   - `test_interview_session.py`는 멀티턴 messages 누적, system 메시지 보존, truncation 동작(8001 토큰 입력 시 가장 오래된 페어 제거), 자동 follow-up 1회 상한, 거부 키워드 status 변환을 검증한다
   - `test_persona_drift.py`는 영어 비율 30% 임계값과 정면 모순 휴리스틱(연령대/성별/지역) 6개 케이스를 검증한다
-  - `test_batch_runner.py`는 동시성 2 정확 적용, 한 task 실패가 다른 task를 죽이지 않음, SIGINT 시 partial 저장을 검증한다
+  - `test_batch_runner.py`는 동시성 정확 적용(default 4), 한 task 실패가 다른 task를 죽이지 않음, SIGINT 시 partial 저장을 검증한다
   - `test_report_quant.py`는 의향률 계산, 가격 통계(IQR), 거절 사유 빈도 정렬, 코호트 셀 표본 부족 마스킹, drift 자동 제외를 검증한다
   - `test_config.py`는 우선순위(default → yaml → env → CLI)와 잘못된 yaml 거부를 검증한다
   - `test_logging.py`는 mask_name(2/3/4글자), mask_product, request_id 컨텍스트 전파를 검증한다
@@ -926,7 +942,7 @@ PRD §6.8과 dependency.md §10(빌드 도구 핀)을 따른다.
 architecture.md §10(변경 영향과 테스트), security.md, PRD §6의 통합 정리는 아래와 같다.
 
 - 외부 호출은 OpenAI Chat Completions API와 Hugging Face Hub(데이터셋 첫 로드)로 한정된다
-- 동시성은 1-3 범위로 강제한다. 4 이상은 `ConfigError`로 차단한다(OpenAI rate limit 부하와 비용 폭증 방지)
+- 동시성은 1-10 범위로 강제한다. 그 외는 `ConfigError`로 차단한다(OpenAI rate limit 부하와 비용 폭증 방지). v1.0의 1-3 상한은 로컬 MLX 메모리 가드라 v1.x에서 더 이상 적용되지 않는다
 - 진행률은 tqdm 콘솔 출력으로 표시한다. 100명 배치 시 1초마다 업데이트된다
 - 로그는 stderr와 `outputs/logs/run_{ts}.jsonl` 두 핸들러로 출력한다. JSON Lines로 기록되어 grep과 jq에 친화적이다
 - 마스킹은 product 본문(첫 30자와 길이)과 페르소나 이름에 적용한다. 로그에만 적용한다

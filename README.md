@@ -217,7 +217,7 @@ Notable keys.
 - `llm.model` - model id sent to the API. Default `gpt-4o-mini`. See "Choosing a model" below for trade-offs
 - `llm.api_key` - read from the environment, not the YAML. The client looks for `OPENAI_API_KEY` first and falls back to `KPI_OPENAI_API_KEY`. The key is never written to logs or saved JSON
 - `llm.context_budget` - 8000 token budget for multi-turn history (oldest user/assistant pairs are dropped first, system prompt is preserved)
-- `batch.concurrency` - 1-3 allowed, 4 or higher rejected to keep OpenAI rate-limit pressure and cost predictable
+- `batch.concurrency` - 1-10 allowed (default 4). Anything outside this range is rejected to keep OpenAI rate-limit pressure and cost predictable. The v1.0 cap of 1-3 was a local-MLX memory guard and is lifted now that the backend is OpenAI
 - `dataset.field_map`, `dataset.gender_aliases`, `dataset.province_aliases` - column and value aliases. Update the YAML if NVIDIA changes the dataset schema, no code change needed
 - `interview.short_answer_threshold` - 20 character trigger for the auto follow-up
 - `interview.english_ratio_threshold` - 0.30 trigger for persona drift detection

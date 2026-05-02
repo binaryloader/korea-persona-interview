@@ -257,6 +257,32 @@ def test_load_config_동시성_10_허용(tmp_path: Path) -> None:
     assert cfg.batch.concurrency == 10
 
 
+def test_load_config_동시성_default_4(tmp_path: Path) -> None:
+    """default 동시성은 4(OpenAI 백엔드 안정 동시성, MLX 시절 2 → OpenAI 4)."""
+
+    cfg = load_config(yaml_path=tmp_path / "no.yaml")
+    assert cfg.batch.concurrency == 4
+
+
+@pytest.mark.parametrize("c", [4, 5, 8, 10])
+def test_load_config_동시성_상향_허용_4_to_10(tmp_path: Path, c: int) -> None:
+    """v1.0의 1-3 상한이 v1.x OpenAI 백엔드에서 1-10으로 상향됐는지 검증한다.
+
+    회귀를 막는 목적이라 yaml 갱신/cli override 두 경로 모두 검증한다.
+    """
+
+    yaml_path = tmp_path / "config.yaml"
+    yaml_path.write_text(f"batch:\n  concurrency: {c}\n", encoding="utf-8")
+    cfg_yaml = load_config(yaml_path=yaml_path)
+    assert cfg_yaml.batch.concurrency == c
+
+    cfg_cli = load_config(
+        yaml_path=tmp_path / "no.yaml",
+        cli_overrides={"batch": {"concurrency": c}},
+    )
+    assert cfg_cli.batch.concurrency == c
+
+
 # ---------------------------------------------------------------------------
 # AppConfig 구조 sanity
 # ---------------------------------------------------------------------------
