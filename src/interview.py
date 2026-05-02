@@ -299,6 +299,14 @@ def _load_system_prompt_template(path_str: str) -> str:
 
     Raises:
         ConfigError: 파일이 없거나 읽기 실패. 사용자에게 친절한 한국어 안내를 단다.
+
+    pip-installed 사용자에 대한 fallback:
+        프로젝트 루트 경로에서 파일을 찾지 못하고 본 함수가 default 경로
+        ``prompts/system_prompt.txt``를 받았다면 패키지 내부의
+        ``src._prompts.system_prompt`` 리소스로 fallback한다. 사용자가 명시
+        경로를 지정한 경우(default와 다른 경로)에는 fallback을 사용하지 않고
+        ConfigError로 차단해 의도치 않게 패키지 내부 템플릿이 사용되는 일을
+        막는다.
     """
 
     candidate = _Path(path_str)
@@ -307,12 +315,17 @@ def _load_system_prompt_template(path_str: str) -> str:
 
     try:
         mtime = candidate.stat().st_mtime_ns
-    except FileNotFoundError as exc:
+    except FileNotFoundError:
+        # default 경로 + 패키지 내부 리소스로 fallback.
+        if path_str == "prompts/system_prompt.txt":
+            packaged = _read_packaged_system_prompt()
+            if packaged is not None:
+                return packaged
         raise ConfigError(
             f"시스템 프롬프트 템플릿 파일을 찾을 수 없습니다: {candidate}. "
             "config.yaml의 interview.system_prompt_path를 확인해 주세요. "
             "기본 템플릿 경로는 'prompts/system_prompt.txt'입니다"
-        ) from exc
+        )
     except OSError as exc:
         raise ConfigError(
             f"시스템 프롬프트 템플릿 파일에 접근할 수 없습니다: {candidate}: {exc}"
@@ -335,6 +348,39 @@ def _load_system_prompt_template(path_str: str) -> str:
             "시스템 프롬프트 템플릿에 {persona_json} 또는 {product} placeholder가 없다. "
             f"파일 경로: {candidate}"
         )
+
+    _SYSTEM_PROMPT_TEMPLATE_CACHE[cache_key] = text
+    return text
+
+
+def _read_packaged_system_prompt() -> Optional[str]:
+    """패키지 내부 ``src._prompts.system_prompt`` 리소스를 읽어 반환한다.
+
+    pip-installed 환경에서 프로젝트 루트 경로가 부재할 때 fallback으로
+    사용된다. 캐시 키는 패키지 리소스 경로 한 가지로 고정한다(파일 mtime은
+    importlib.resources 인터페이스가 노출하지 않음).
+
+    Returns:
+        템플릿 본문 또는 placeholder가 누락되었거나 리소스가 없을 때 ``None``.
+    """
+
+    cache_key = ("__packaged__", "src._prompts.system_prompt.txt")
+    cached = _SYSTEM_PROMPT_TEMPLATE_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    try:
+        from importlib.resources import files
+
+        resource = files("src._prompts").joinpath("system_prompt.txt")
+        text = resource.read_text(encoding="utf-8")
+    except (FileNotFoundError, ModuleNotFoundError, OSError):
+        return None
+    except Exception:  # noqa: BLE001 - 패키지 데이터 누락 등 fallback 안전망
+        return None
+
+    if "{persona_json}" not in text or "{product}" not in text:
+        return None
 
     _SYSTEM_PROMPT_TEMPLATE_CACHE[cache_key] = text
     return text

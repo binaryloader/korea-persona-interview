@@ -1558,6 +1558,38 @@ def test_build_system_prompt_파일_없음_ConfigError(
         )
 
 
+def test_build_system_prompt_default_경로_부재시_packaged_fallback(
+    fake_persona_meta, tmp_path, monkeypatch
+) -> None:
+    """default 경로 ``prompts/system_prompt.txt``가 부재하면 패키지 내부 리소스로 fallback.
+
+    pip 사용자가 프로젝트 루트 prompts/ 디렉토리를 두지 않은 환경에서도 본
+    도구가 동작하게 한다. 명시 경로를 지정한 사용자에게는 fallback이 적용되지
+    않는다(default와 다른 경로를 의도적으로 가리킨 것이라 다른 파일이 들어가는
+    일을 막아야 한다).
+    """
+
+    clear_system_prompt_cache()
+
+    # 프로젝트 루트의 ``prompts/system_prompt.txt`` 위치를 일시적으로 비어 있는
+    # tmp_path 기반 경로로 갈아 끼워 fallback 경로를 강제한다.
+    import src.interview as _interview_mod
+
+    monkeypatch.setattr(_interview_mod, "_PROJECT_ROOT", tmp_path)
+
+    # default 경로(prompts/system_prompt.txt)는 tmp_path에 존재하지 않으므로
+    # 패키지 내부 리소스가 fallback으로 잡혀야 한다.
+    prompt = build_system_prompt(
+        fake_persona_meta,
+        "x",
+        ("summary",),
+        _FIELD_MAP,
+        "prompts/system_prompt.txt",
+    )
+    assert "{persona_json}" not in prompt
+    assert "x" in prompt
+
+
 def test_build_system_prompt_placeholder_누락_ConfigError(
     fake_persona_meta, tmp_path
 ) -> None:
