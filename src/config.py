@@ -64,6 +64,12 @@ class LlmConfig:
     retry_max_attempts: int
     retry_backoff_seconds: tuple
     api_key: Optional[str] = None
+    # 백엔드 선택. ``openai``/``mcp_sampling``/``auto`` 셋 중 하나.
+    # ``auto``는 MCP 서버 진입점에서 클라이언트가 sampling을 지원하면 그쪽을, 아니면
+    # OpenAI 백엔드를 사용한다. CLI 진입점에서는 항상 OpenAI로 고정된다.
+    # ``mcp_sampling``으로 명시하면 OpenAI 키 없이도 인터뷰가 가능하지만 CLI에서는 즉시
+    # ``ConfigError``로 차단된다(클라이언트 세션이 없기 때문이다).
+    backend: str = "auto"
 
     def __post_init__(self) -> None:
         # 상한값은 본 도구의 v1 운영 가정에 맞춘 보수적 상한이다.
@@ -91,6 +97,11 @@ class LlmConfig:
             raise ConfigError(
                 "llm.context_budget는 1000-128000 범위만 허용한다. "
                 f"입력값: {self.context_budget}"
+            )
+        if self.backend not in ("openai", "mcp_sampling", "auto"):
+            raise ConfigError(
+                "llm.backend는 'openai', 'mcp_sampling', 'auto' 중 하나여야 한다. "
+                f"입력값: {self.backend!r}"
             )
 
 
@@ -263,6 +274,8 @@ def _default_dict() -> dict:
             # API 키는 환경변수에서만 받는다. yaml/CLI override는 허용하지 않아
             # 시크릿이 디스크 또는 명령행 히스토리에 남지 않게 한다(security.md §1).
             "api_key": None,
+            # 백엔드 선택. auto는 MCP sampling 가용 시 sampling, 아니면 OpenAI.
+            "backend": "auto",
         },
         "batch": {
             # 기본 동시성. OpenAI 백엔드는 동시성 4-5에서 안정적 처리량과
@@ -578,6 +591,7 @@ def load_config(
                 float(x) for x in merged["llm"]["retry_backoff_seconds"]
             ),
             api_key=api_key_val,
+            backend=str(merged["llm"].get("backend", "auto")),
         )
         batch_cfg = BatchConfig(
             concurrency=int(merged["batch"]["concurrency"]),

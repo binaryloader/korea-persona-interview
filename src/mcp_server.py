@@ -40,7 +40,13 @@ from typing import Any, Optional
 from .batch import run_batch
 from .config import AppConfig, load_config
 from .interview import InterviewSession  # noqa: F401 - dry-run/single 호출 가능 여지
-from .llm_client import MlxLLMClient
+from .llm_backend import (
+    LLMBackend,
+    McpSamplingBackend,
+    OpenAIBackend,
+    select_backend,
+)
+from .llm_client import MlxLLMClient  # noqa: F401 - 외부 호환 import 보존
 from .load_personas import load_and_sample, parse_filter
 from .logging_setup import bind_request_id, configure_logging
 from .models import (
@@ -295,6 +301,62 @@ def _load_config_with_overrides(overrides: Optional[dict]) -> AppConfig:
     return load_config(yaml_path=None, cli_overrides=overrides)
 
 
+# 모듈 단위 hook. 테스트에서 실제 ``Server.request_context`` 의존을 우회하기 위해
+# 모킹할 수 있도록 함수 단위로 분리한다(architecture.md §10 테스트 가능성).
+def _current_sampling_session() -> Optional[Any]:
+    """현재 도구 호출 컨텍스트에서 MCP ServerSession을 꺼낸다.
+
+    호출자가 ``_serve_stdio`` 안의 ``call_tool`` 핸들러일 때 ``mcp_server`` 모듈 변수
+    ``_active_server``의 ``request_context.session``을 통해 접근할 수 있다. 컨텍스트가
+    없거나 sampling capability가 없으면 ``None``을 반환한다.
+
+    클라이언트 sampling capability 여부는 ``McpSamplingBackend.healthcheck``가
+    재확인한다. 본 함수는 단순히 세션 객체 존재 여부만 본다.
+    """
+
+    server = _ACTIVE_SERVER
+    if server is None:
+        return None
+    try:
+        ctx = server.request_context
+    except (LookupError, AttributeError):
+        return None
+    return getattr(ctx, "session", None)
+
+
+def _build_backend(config: AppConfig) -> LLMBackend:
+    """현재 컨텍스트와 config 정책으로 백엔드 인스턴스를 만든다.
+
+    선택 정책은 ``select_backend``가 담당한다. 본 함수는 sampling 세션을 본 모듈에서
+    수집해 정책에 넘기는 thin wrapper다.
+    """
+
+    session = _current_sampling_session()
+    backend = select_backend(
+        config=config.llm,
+        backend_choice=config.llm.backend,
+        sampling_session=session,
+    )
+    if isinstance(backend, McpSamplingBackend):
+        logger.info(
+            "MCP sampling 백엔드 사용(클라이언트 LLM 위임, OpenAI 키 불필요)",
+            extra={"llm_backend": "mcp_sampling"},
+        )
+    else:
+        logger.info(
+            "OpenAI 백엔드 사용(OPENAI_API_KEY 필요)",
+            extra={"llm_backend": "openai", "model": config.llm.model},
+        )
+    return backend
+
+
+# ``_serve_stdio``가 실행 중일 때 활성 ``Server`` 인스턴스를 보관한다. ``call_tool``
+# 핸들러가 호출될 때 ``server.request_context``를 통해 sampling 세션에 접근하기
+# 위함이다. 핸들러 함수에 인자로 전달할 수 없는 mcp SDK 구조 때문에 모듈 변수로 둔다
+# (단일 프로세스 안에서 한 번에 하나의 stdio 서버만 동작하므로 race condition 없음).
+_ACTIVE_SERVER: Optional[Any] = None
+
+
 # ---------------------------------------------------------------------------
 # 도구 핸들러
 # ---------------------------------------------------------------------------
@@ -323,7 +385,12 @@ async def _handle_healthcheck(arguments: dict) -> dict:
     _setup_logging_for_run(config)
 
     try:
-        async with MlxLLMClient(config.llm) as client:
+        backend = _build_backend(config)
+    except ConfigError as exc:
+        return _error_payload("config_error", str(exc), exit_code=1)
+
+    try:
+        async with backend as client:
             models = await client.healthcheck()
     except ServerNotReachableError as exc:
         return _error_payload(
@@ -344,6 +411,7 @@ async def _handle_healthcheck(arguments: dict) -> dict:
         "ok": True,
         "base_url": config.llm.base_url,
         "model": config.llm.model,
+        "backend": "mcp_sampling" if isinstance(backend, McpSamplingBackend) else "openai",
         "models": list(models),
     }
 
@@ -506,7 +574,12 @@ async def _handle_interview(arguments: dict) -> dict:
         return _error_payload("config_error", str(exc), exit_code=1)
 
     try:
-        async with MlxLLMClient(config.llm) as client:
+        backend = _build_backend(config)
+    except ConfigError as exc:
+        return _error_payload("config_error", str(exc), exit_code=1)
+
+    try:
+        async with backend as client:
             envelope = await run_batch(
                 personas=personas,
                 product=product,
@@ -538,6 +611,9 @@ async def _handle_interview(arguments: dict) -> dict:
 
     summary = envelope.summary
     usage = envelope.usage
+    backend_label = (
+        "mcp_sampling" if isinstance(backend, McpSamplingBackend) else "openai"
+    )
     payload: dict = {
         "ok": not envelope.partial_failure,
         "partial_failure": envelope.partial_failure,
@@ -558,6 +634,7 @@ async def _handle_interview(arguments: dict) -> dict:
         },
         "estimated_cost_usd": envelope.estimated_cost_usd,
         "model": config.llm.model,
+        "backend": backend_label,
         "failure_reason_counts": dict(envelope.failure_reason_counts),
     }
     return payload
@@ -612,7 +689,12 @@ async def _handle_report(arguments: dict) -> dict:
     )
 
     try:
-        async with MlxLLMClient(config.llm) as client:
+        backend = _build_backend(config)
+    except ConfigError as exc:
+        return _error_payload("config_error", str(exc), exit_code=1)
+
+    try:
+        async with backend as client:
             report_path = await generate_report(
                 json_path=json_path,
                 options=options,
@@ -777,13 +859,20 @@ async def _serve_stdio() -> None:
 
     ``mcp.server.Server``에 ``list_tools``/``call_tool`` 핸들러를 등록하고
     ``stdio_server``로 stdin/stdout JSON-RPC 채널을 연결한다.
+
+    활성 ``Server`` 인스턴스를 모듈 변수 ``_ACTIVE_SERVER``에 등록해 도구 핸들러가
+    ``request_context.session``으로 sampling을 호출할 수 있게 한다(``_build_backend``
+    참고).
     """
+
+    global _ACTIVE_SERVER
 
     from mcp.server import Server
     from mcp.server.stdio import stdio_server
     from mcp import types
 
     server: Server = Server("korea-persona-interview")
+    _ACTIVE_SERVER = server
 
     @server.list_tools()
     async def _on_list_tools() -> list:
@@ -794,12 +883,15 @@ async def _serve_stdio() -> None:
         result = await dispatch_tool(name, arguments)
         return [types.TextContent(type="text", text=_to_json_text(result))]
 
-    async with stdio_server() as (read_stream, write_stream):
-        await server.run(
-            read_stream,
-            write_stream,
-            server.create_initialization_options(),
-        )
+    try:
+        async with stdio_server() as (read_stream, write_stream):
+            await server.run(
+                read_stream,
+                write_stream,
+                server.create_initialization_options(),
+            )
+    finally:
+        _ACTIVE_SERVER = None
 
 
 def main() -> None:

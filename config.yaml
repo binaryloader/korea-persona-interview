@@ -22,6 +22,13 @@ llm:
   retry_backoff_seconds: [1, 2, 4]
   # api_key는 환경변수에서만 받는다. yaml에 직접 박으면 lock 파일/저장소에
   # 시크릿이 새므로 차단한다(security.md §1).
+  # 백엔드 선택. "openai"/"mcp_sampling"/"auto" 셋 중 하나.
+  # - openai: 항상 OpenAI Chat Completions API로 호출한다(OPENAI_API_KEY 필수)
+  # - mcp_sampling: MCP sampling으로 클라이언트 LLM에 위임한다(OpenAI 키 불필요).
+  #   CLI 진입점에서는 클라이언트 세션이 없어 ConfigError로 차단된다
+  # - auto(기본): MCP 서버 진입점에서 클라이언트가 sampling을 지원하면 sampling 사용,
+  #   그 외에는 OpenAI fallback. CLI 진입점은 항상 OpenAI로 동작
+  backend: "auto"
 
 batch:
   concurrency: 4              # 1-10 허용. OpenAI 백엔드 안정 동시성 기본 4

@@ -7,21 +7,26 @@
 - 알려지지 않은 도구 / 잘못된 인자 dispatch 동작
 - 4개 도구의 입력 검증과 정상/에러 응답 형태
 - 출력은 ``{"ok": true, ...}`` 또는 ``{"error": {...}}`` 둘 중 하나
+- 백엔드 선택(`_build_backend`)이 sampling 세션 가용 시 sampling 백엔드를 고르는지
 """
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from src import mcp_server as _mcp_server
+from src.llm_backend import McpSamplingBackend, OpenAIBackend
 from src.mcp_server import (
     _HEALTHCHECK_SCHEMA,
     _INTERVIEW_SCHEMA,
     _LIST_PERSONAS_SCHEMA,
     _REPORT_SCHEMA,
     _TOOL_HANDLERS,
+    _build_backend,
     _list_tools_metadata,
     _to_json_text,
     dispatch_tool,
@@ -473,3 +478,115 @@ async def test_handle_report_top_n_검증(
 
     assert "error" in result
     assert result["error"]["code"] == "invalid_argument"
+
+
+# ---------------------------------------------------------------------------
+# 백엔드 선택 정책
+# ---------------------------------------------------------------------------
+
+
+def _make_app_config(backend_choice: str = "auto"):
+    """간단한 ``AppConfig`` 빌더(make_app_config fixture와 별개로 본 테스트 한정)."""
+
+    from src.config import (
+        AppConfig,
+        BatchConfig,
+        DatasetConfig,
+        InterviewConfig,
+        LlmConfig,
+        ReportConfig,
+    )
+
+    return AppConfig(
+        llm=LlmConfig(
+            base_url="https://api.openai.com/v1",
+            model="test-model",
+            max_tokens=100,
+            temperature=0.5,
+            timeout=5.0,
+            context_budget=32000,
+            retry_max_attempts=3,
+            retry_backoff_seconds=(0.0,),
+            api_key="test-key",
+            backend=backend_choice,
+        ),
+        batch=BatchConfig(concurrency=1, persona_fields=("summary",)),
+        dataset=DatasetConfig(
+            name="x",
+            split="train",
+            field_map={},
+            gender_aliases={},
+            province_aliases={},
+        ),
+        interview=InterviewConfig(
+            short_answer_threshold=20,
+            english_ratio_threshold=0.30,
+            ambiguous_keywords=(),
+            refusal_keywords=(),
+        ),
+        report=ReportConfig(),
+        output_dir=Path("/tmp"),
+        log_level="INFO",
+        no_color=True,
+    )
+
+
+def test_build_backend_auto_세션없음은_OpenAIBackend(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``_ACTIVE_SERVER``가 None이면 sampling 세션도 None → OpenAIBackend."""
+
+    monkeypatch.setattr(_mcp_server, "_ACTIVE_SERVER", None)
+    backend = _build_backend(_make_app_config("auto"))
+    assert isinstance(backend, OpenAIBackend)
+
+
+def test_build_backend_auto_세션있음은_McpSamplingBackend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``_current_sampling_session``이 더미 세션을 반환하면 McpSamplingBackend."""
+
+    fake_session = object()
+
+    def _fake_session_getter() -> Any:
+        return fake_session
+
+    monkeypatch.setattr(_mcp_server, "_current_sampling_session", _fake_session_getter)
+    backend = _build_backend(_make_app_config("auto"))
+    assert isinstance(backend, McpSamplingBackend)
+
+
+def test_build_backend_openai_명시는_세션있어도_OpenAIBackend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``backend=openai``는 sampling 세션이 있어도 OpenAI를 강제한다."""
+
+    fake_session = object()
+
+    def _fake_session_getter() -> Any:
+        return fake_session
+
+    monkeypatch.setattr(_mcp_server, "_current_sampling_session", _fake_session_getter)
+    backend = _build_backend(_make_app_config("openai"))
+    assert isinstance(backend, OpenAIBackend)
+
+
+@pytest.mark.asyncio
+async def test_handle_healthcheck_backend_라벨_노출(
+    httpx_mock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """healthcheck 응답에 ``backend`` 라벨이 들어 있어야 한다(openai/mcp_sampling)."""
+
+    httpx_mock.add_response(
+        method="GET",
+        url="https://api.openai.com/v1/models",
+        json={"data": [{"id": "gpt-4o-mini"}]},
+        status_code=200,
+    )
+    monkeypatch.setenv("KPI_OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    # _ACTIVE_SERVER가 None이라 sampling 세션 없음 → openai 라벨
+    monkeypatch.setattr(_mcp_server, "_ACTIVE_SERVER", None)
+
+    result = await dispatch_tool("healthcheck", {})
+
+    assert result["ok"] is True
+    assert result["backend"] == "openai"

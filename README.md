@@ -12,6 +12,7 @@ The tool ships four CLI subcommands (`healthcheck`, `list-personas`, `interview`
 - `--json` root mode that emits a single JSON document on stdout for shell scripts and external agents
 - Single-turn mode (`--single-turn`) that bundles every question into one chat call to cut tokens at scale
 - MCP server (`python -m src.mcp_server`) that exposes the four CLI commands as tools to Claude Code, Cursor, and Codex
+- MCP sampling backend so the same MCP server can use the host agent's LLM (Claude in Claude Code, etc.) and skip the OpenAI key entirely. Defaults to OpenAI when sampling is unavailable
 - Async batch runner with concurrency 1-10 (default 4), tqdm progress, SIGINT partial save, and exit-code 3 partial-failure detection
 - Token usage and USD cost estimate printed at the end of every run, also written into the result JSON and report header
 - OpenAI prompt-caching-friendly system prompt structure. Cached input tokens are tracked separately and discounted in the cost estimate
@@ -321,6 +322,7 @@ Notable yaml keys.
 
 - `llm.base_url` - OpenAI Chat Completions endpoint (default `https://api.openai.com/v1`). Set to a different OpenAI-compatible endpoint if you have one
 - `llm.model` - model id sent to the API. Default `gpt-4o-mini`. See "Choosing a model" below for trade-offs
+- `llm.backend` - inference backend, `openai` / `mcp_sampling` / `auto` (default `auto`). See "Choosing an inference backend" under Integration with External Agents for the trade-offs
 - `llm.context_budget` - 32000 token budget for multi-turn history (oldest user/assistant pairs are dropped first, system prompt is preserved)
 - `batch.concurrency` - 1-10 allowed (default 4). Anything outside this range is rejected to keep OpenAI rate-limit pressure and cost predictable. The v1.0 cap of 1-3 was a local-MLX memory guard and is lifted now that the backend is OpenAI
 - `batch.partial_failure_threshold` - completion ratio under which the batch is flagged partial-failure (default 0.5, higher is stricter)
@@ -375,6 +377,24 @@ The drift detector and the auto follow-up trigger are tuned via `config.yaml` `i
 ## Integration with External Agents
 
 There are two ways to drive this tool from external agents like Claude Code, Cursor, or Codex. Pick the one that matches the agent.
+
+### Choosing an inference backend
+
+The MCP server supports two ways of producing the actual model output. Pick whichever fits the host agent and your billing setup. The choice is set with `llm.backend` in `config.yaml` (default `auto`).
+
+| Backend | Who pays for inference | Requires `OPENAI_API_KEY` | Model used | When to use |
+| --- | --- | --- | --- | --- |
+| `openai` (CLI default, MCP fallback) | Your OpenAI account | Yes | The model in `llm.model` (default `gpt-4o-mini`) | Reproducibility matters, you want a known model and known cost, or you are running headless without an MCP host |
+| `mcp_sampling` (MCP only) | The host agent (e.g. Claude Code uses your Anthropic plan) | No | Whatever the host agent picks for sampling | You already pay for the host agent and want to avoid a second bill, or you want to evaluate a different model family without changing keys |
+
+`auto` (the default) picks `mcp_sampling` whenever the MCP client advertises the sampling capability and falls back to OpenAI otherwise. The CLI entry point always uses OpenAI because there is no MCP client session to ask. A line in the server log on each tool call (`Using client LLM via MCP sampling` or `Using OpenAI backend`) tells you which backend was selected for that call. The MCP `interview` and `healthcheck` responses also include a `"backend": "openai" | "mcp_sampling"` field so the agent can confirm the routing.
+
+The trade-offs to keep in mind.
+
+- Cost. With `mcp_sampling` the inference cost shifts to the host agent's plan. With `openai` it lands on your OpenAI invoice. The `estimated_cost_usd` field in the result JSON is always 0 for `mcp_sampling` because the sampling protocol does not return token usage to the server
+- Quality. With `openai` you get the exact model you set in `llm.model` and the report is reproducible by anyone with the same key. With `mcp_sampling` you depend on whichever model the host agent selects, which may differ across hosts and over time
+- Privacy. With `openai` the `--product` text and persona metadata are sent to OpenAI. With `mcp_sampling` they are sent to whatever LLM the host agent uses. Either way, do not put unreleased IP or PII into `--product` (see Limitations)
+- Token tracking. With `openai` the tool tracks prompt/completion/cached tokens and a USD cost estimate. With `mcp_sampling` only the response text is returned, so the tool reports zero usage. If accurate cost tracking matters, prefer `openai`
 
 ### Option A: MCP server (recommended)
 
@@ -480,6 +500,7 @@ korea-persona-interview/
 │   ├── config.py              # AppConfig dataclass, yaml + env layered loader
 │   ├── console.py             # Korean message bank, ANSI color helper
 │   ├── interview.py           # Multi-turn session, drift/refusal detection, structured summary
+│   ├── llm_backend.py         # LLMBackend protocol, OpenAIBackend, McpSamplingBackend
 │   ├── llm_client.py          # Async OpenAI Chat Completions client (httpx)
 │   ├── load_personas.py       # Dataset loader, filter DSL, seeded sampler, persona-pool cache
 │   ├── logging_setup.py       # JSON Lines logger, request_id, masking
@@ -489,7 +510,7 @@ korea-persona-interview/
 │   └── _pricing.py            # Per-model USD cost table (estimate)
 ├── tests/
 │   ├── conftest.py            # Shared fixtures, env isolation, dataset mock
-│   ├── test_*.py              # 470 tests (round A+B+C regression)
+│   ├── test_*.py              # 504 tests (round A+B+C regression + sampling backend)
 │   └── manual/smoke_e2e.py    # Live OpenAI smoke test (excluded from default run)
 ├── examples/
 │   └── mcp/                   # Drop-in mcp.json snippets for Claude Code and Cursor
@@ -523,7 +544,7 @@ Run the full test suite with pytest. The suite mocks the OpenAI API with `pytest
 pytest tests/ -v
 ```
 
-The current regression covers 470 tests across rounds A, B, and C (config, filter DSL, persona loader, LLM client, interview session, persona drift, batch runner, report quant, MCP dispatch, error messages, logging, and CLI integration).
+The current regression covers 504 tests across rounds A, B, and C plus the MCP sampling backend (config, filter DSL, persona loader, LLM client, LLM backend selection, interview session, persona drift, batch runner, report quant, MCP dispatch, error messages, logging, and CLI integration).
 
 Manual smoke tests that exercise a real OpenAI API call live under `tests/manual/` and are excluded from the default run. They expect `OPENAI_API_KEY` in the environment.
 
@@ -581,7 +602,7 @@ The OpenAI Chat Completions API does not require attribution. The default model 
 
 Pull requests are welcome. Before opening one.
 
-- Run `pytest tests/ -v` and confirm all 470 tests pass
+- Run `pytest tests/ -v` and confirm all 504 tests pass
 - Use Conventional Commits
 - For substantive changes, open an issue first to discuss the approach
 
