@@ -124,6 +124,16 @@ The `interview` command auto-generates the markdown report after the JSON is sav
 
 `KPI_OPENAI_API_KEY` works as a fallback if you want to keep the project key separate from your shell-wide `OPENAI_API_KEY`. A `.env` file at the project root with `OPENAI_API_KEY=sk-...` (or `ANTHROPIC_API_KEY=sk-ant-...`) is also picked up automatically.
 
+### Tip: ask explicit value-pricing questions
+
+`willingness_to_pay` is filled in only when the persona names a specific number. If you want to maximize the explicit-number rate, ask a direct value-pricing question that anchors the answer to a number, for example:
+
+- "본인은 월 얼마면 가입하시겠어요?" (anchored to a monthly subscription)
+- "월 39,900원이면 가입할 의향이 있으세요? 아니면 얼마면 적당할까요?" (counter-offer prompt)
+- "비슷한 서비스에 한 달에 얼마까지 쓸 수 있어요?" (ceiling probe)
+
+Open-ended price questions ("이 서비스 어떻게 보세요?") often only return a qualitative signal (`acceptable_price_signal`), which is filled for every record but does not produce a `willingness_to_pay` integer. Use the qualitative signal distribution and the explicit numbers together rather than relying only on the median price.
+
 ## Usage Examples
 
 The five scenarios below cover the most common research goals. Each scenario lists the commands and the expected outcome.
