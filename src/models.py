@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Optional
 
 
 # 화이트리스트 상수: 도메인 enum-like 검증에 사용한다(TDD §4).
@@ -87,6 +87,33 @@ class RawResponse:
 
 
 @dataclass(frozen=True)
+class TokenUsage:
+    """단일 호출의 토큰 사용량.
+
+    OpenAI 응답의 ``usage`` 필드 매핑이다. ``cached_tokens``는 prompt caching
+    적용 시 입력 토큰 중 캐시에서 재사용된 양으로, OpenAI는 본 토큰을 입력
+    단가의 50%에 청구한다. cached_tokens 비율이 높을수록 비용 절감 효과가
+    크다(prompt prefix가 1024 토큰 이상 + 동일 prefix 반복 시 자동 적용).
+
+    합산은 ``add``로 수행한다. 동일한 frozen dataclass를 누적할 때 새 인스턴스
+    를 만들어 반환한다.
+    """
+
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    cached_tokens: int = 0
+
+    def add(self, other: "TokenUsage") -> "TokenUsage":
+        return TokenUsage(
+            prompt_tokens=self.prompt_tokens + other.prompt_tokens,
+            completion_tokens=self.completion_tokens + other.completion_tokens,
+            total_tokens=self.total_tokens + other.total_tokens,
+            cached_tokens=self.cached_tokens + other.cached_tokens,
+        )
+
+
+@dataclass(frozen=True)
 class ChatResponse:
     """LLM chat 호출 결과 컨테이너.
 
@@ -94,12 +121,16 @@ class ChatResponse:
     ``reasoning_trace``는 v1.x 환경에서 항상 ``None``이다(직렬화 backward
     compatibility 유지를 위해 필드는 보존). ``content``가 비면 호출자가 별도
     에러 처리를 수행한다.
+
+    ``usage``는 OpenAI 응답의 토큰 사용량이다. 모킹된 응답이나 ``usage`` 필드를
+    돌려주지 않는 호환 서버에서는 0으로 채운 ``TokenUsage()``가 들어간다.
     """
 
     content: str
     latency_ms: int
     retry_count: int
     reasoning_trace: Optional[str] = None
+    usage: "TokenUsage" = field(default_factory=lambda: TokenUsage())
 
 
 @dataclass(frozen=True)

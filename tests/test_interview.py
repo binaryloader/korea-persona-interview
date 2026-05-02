@@ -173,6 +173,54 @@ def test_build_system_prompt_페르소나_톤_지침_5종_포함(fake_persona_me
     assert "거주 형태에 대해" in prompt and "추측하지" in prompt
 
 
+def test_build_system_prompt_정적_prefix가_가변_부분보다_앞에_위치(
+    fake_persona_meta,
+) -> None:
+    """OpenAI prompt caching 적합 구조 회귀.
+
+    정적 prefix(인트로 + [지침]/[말투와 1인칭 일관성 지침]/[답변 내용 지침]/
+    [출력 형식])가 가변 부분(``[페르소나 정보]`` JSON + ``[인터뷰 주제]``)보다
+    앞에 와야 prompt caching이 자동 적용된다. prefix가 1024 토큰 이상이고 동일
+    prefix가 반복되면 OpenAI가 입력 토큰의 50%를 캐시 환급으로 청구한다.
+    """
+
+    prompt = build_system_prompt(
+        fake_persona_meta,
+        product="반찬",
+        persona_fields=("summary",),
+        field_map=_FIELD_MAP,
+    )
+    instruction_idx = prompt.index("[말투와 1인칭 일관성 지침]")
+    output_format_idx = prompt.index("[출력 형식]")
+    persona_info_idx = prompt.index("[페르소나 정보]")
+    interview_topic_idx = prompt.index("[인터뷰 주제]")
+
+    assert instruction_idx < persona_info_idx
+    assert output_format_idx < persona_info_idx
+    assert persona_info_idx < interview_topic_idx
+
+
+def test_build_system_prompt_prefix_길이_1024_토큰_이상(fake_persona_meta) -> None:
+    """정적 prefix 길이가 OpenAI prompt caching 임계값(1024 토큰) 이상이다.
+
+    estimate_tokens는 한국어 1자=1토큰 휴리스틱이라 OpenAI tokenizer의 실제
+    토큰 수보다 보수적으로(작게) 추정된다. 본 테스트는 휴리스틱 기준
+    1024 이상을 요구해 OpenAI 실제 토큰으로는 더 충분히 임계를 넘도록 보장한다.
+    prefix가 1024 미만으로 줄면 prompt caching이 동작하지 않아 비용 절감 효과가
+    사라진다.
+    """
+
+    prompt = build_system_prompt(
+        fake_persona_meta,
+        product="반찬",
+        persona_fields=("summary",),
+        field_map=_FIELD_MAP,
+    )
+    prefix_end = prompt.index("[페르소나 정보]")
+    prefix = prompt[:prefix_end]
+    assert estimate_tokens(prefix) >= 1024
+
+
 def test_build_system_prompt_family_type_None이면_JSON에_미주입() -> None:
     """family_type이 None이면 페르소나 JSON 객체에 키가 등장하지 않는다.
 

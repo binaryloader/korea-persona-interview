@@ -29,6 +29,7 @@ from .models import (
     EmptyResponseError,
     RetryExhaustedError,
     ServerNotReachableError,
+    TokenUsage,
 )
 
 
@@ -257,6 +258,7 @@ class MlxLLMClient:
                             "응답 message.content가 비어 있다"
                         )
                     else:
+                        usage = self._extract_usage(response)
                         logger.info(
                             "chat 응답 정상",
                             extra={
@@ -264,6 +266,9 @@ class MlxLLMClient:
                                 "response_chars": len(content),
                                 "latency_ms": latency_ms,
                                 "retry_count": attempt,
+                                "prompt_tokens": usage.prompt_tokens,
+                                "completion_tokens": usage.completion_tokens,
+                                "cached_tokens": usage.cached_tokens,
                             },
                         )
                         return ChatResponse(
@@ -271,6 +276,7 @@ class MlxLLMClient:
                             latency_ms=latency_ms,
                             retry_count=attempt,
                             reasoning_trace=None,
+                            usage=usage,
                         )
 
             # retry 가능한 실패. 마지막 시도면 백오프를 건너뛴다.
@@ -365,3 +371,53 @@ class MlxLLMClient:
             return ""
         content = message.get("content")
         return content if isinstance(content, str) else ""
+
+    @staticmethod
+    def _extract_usage(response: httpx.Response) -> TokenUsage:
+        """응답의 ``usage`` 필드에서 ``TokenUsage``를 만든다.
+
+        OpenAI 표준 응답 스키마는 아래와 같다.
+
+        ::
+
+            "usage": {
+              "prompt_tokens": 100,
+              "completion_tokens": 50,
+              "total_tokens": 150,
+              "prompt_tokens_details": {"cached_tokens": 80}
+            }
+
+        모킹 응답이나 ``usage``를 돌려주지 않는 호환 서버에서는 0으로 채운
+        ``TokenUsage()``를 반환한다.
+        """
+
+        try:
+            payload = response.json()
+        except ValueError:
+            return TokenUsage()
+        if not isinstance(payload, dict):
+            return TokenUsage()
+        usage_raw = payload.get("usage")
+        if not isinstance(usage_raw, dict):
+            return TokenUsage()
+
+        def _as_int(value) -> int:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return 0
+
+        prompt = _as_int(usage_raw.get("prompt_tokens"))
+        completion = _as_int(usage_raw.get("completion_tokens"))
+        total = _as_int(usage_raw.get("total_tokens"))
+        # cached_tokens는 prompt_tokens_details 안에 들어 있다.
+        details = usage_raw.get("prompt_tokens_details")
+        cached = 0
+        if isinstance(details, dict):
+            cached = _as_int(details.get("cached_tokens"))
+        return TokenUsage(
+            prompt_tokens=prompt,
+            completion_tokens=completion,
+            total_tokens=total,
+            cached_tokens=cached,
+        )

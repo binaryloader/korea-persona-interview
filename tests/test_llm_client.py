@@ -24,6 +24,7 @@ from src.models import (
     EmptyResponseError,
     RetryExhaustedError,
     ServerNotReachableError,
+    TokenUsage,
 )
 
 
@@ -179,6 +180,61 @@ async def test_chat_정상_응답_content_반환(httpx_mock) -> None:
     assert response.content == "안녕하세요"
     assert response.retry_count == 0
     assert response.reasoning_trace is None
+    # usage 필드가 없는 응답은 0으로 채운 TokenUsage가 들어간다.
+    assert isinstance(response.usage, TokenUsage)
+    assert response.usage.prompt_tokens == 0
+    assert response.usage.cached_tokens == 0
+
+
+@pytest.mark.asyncio
+async def test_chat_usage_필드_TokenUsage_추출(httpx_mock) -> None:
+    """OpenAI 응답의 ``usage``를 ``ChatResponse.usage``로 매핑한다.
+
+    prompt caching 적용 응답은 ``usage.prompt_tokens_details.cached_tokens``에
+    캐시 히트량을 둔다. 본 필드를 ``TokenUsage.cached_tokens``로 가져와야 비용
+    추정과 캐시 효과 측정이 가능하다.
+    """
+
+    httpx_mock.add_response(
+        method="POST",
+        url=f"{_API_BASE}/chat/completions",
+        json={
+            "choices": [
+                {"message": {"role": "assistant", "content": "ok"}}
+            ],
+            "usage": {
+                "prompt_tokens": 1234,
+                "completion_tokens": 567,
+                "total_tokens": 1801,
+                "prompt_tokens_details": {"cached_tokens": 1024},
+            },
+        },
+        status_code=200,
+    )
+
+    async with MlxLLMClient(_make_llm_config()) as client:
+        response = await client.chat([{"role": "user", "content": "안녕"}])
+
+    assert response.usage.prompt_tokens == 1234
+    assert response.usage.completion_tokens == 567
+    assert response.usage.total_tokens == 1801
+    assert response.usage.cached_tokens == 1024
+
+
+def test_TokenUsage_add_누적() -> None:
+    """``TokenUsage.add``는 합산된 새 인스턴스를 만든다(frozen dataclass 안전 누적)."""
+
+    a = TokenUsage(
+        prompt_tokens=100, completion_tokens=50, total_tokens=150, cached_tokens=80
+    )
+    b = TokenUsage(
+        prompt_tokens=200, completion_tokens=10, total_tokens=210, cached_tokens=150
+    )
+    c = a.add(b)
+    assert c.prompt_tokens == 300
+    assert c.completion_tokens == 60
+    assert c.total_tokens == 360
+    assert c.cached_tokens == 230
 
 
 @pytest.mark.asyncio
