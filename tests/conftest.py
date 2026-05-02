@@ -39,6 +39,11 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
     OpenAI 키가 사용자 셸에 set되어 있으면 의도치 않게 외부 호출이 발생할
     위험이 있으므로 테스트 fixture가 명시적으로 키를 박는 경우에만 동작하게
     한다.
+
+    프로젝트 루트의 ``.env``가 ``_load_dotenv``의 fallback 탐색 경로에 잡혀
+    실제 ``OPENAI_API_KEY``를 주입하던 회귀를 막기 위해 ``src.config._load_dotenv``
+    를 빈 dict로 모킹한다. 테스트는 자체적으로 ``.env`` 경로를 ``tmp_path``로
+    제어하기 때문에 본 모킹이 .env 파일 격리에 영향을 주지 않는다.
     """
 
     for key in list(os.environ):
@@ -46,6 +51,27 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
             monkeypatch.delenv(key, raising=False)
     monkeypatch.delenv("NO_COLOR", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    # 프로젝트 루트 .env가 자동 탐색되어 실제 ``OPENAI_API_KEY``를 주입하던
+    # 회귀를 막는다. 명시 경로를 받는 호출과 cwd가 프로젝트 루트가 아닌
+    # 호출(monkeypatch.chdir(tmp_path) 사용)은 그대로 통과시킨다. 그래야 cwd를
+    # tmp_path로 옮긴 .env 파싱 회귀 테스트가 정상 동작한다.
+    import src.config as _config
+
+    original_load_dotenv = _config._load_dotenv
+    project_env = _config._PROJECT_ROOT / ".env"
+
+    def _isolated_load_dotenv(path=None):
+        if path is not None:
+            return original_load_dotenv(path)
+        # cwd가 프로젝트 루트인 경우(또는 cwd .env가 없고 프로젝트 루트 .env가
+        # 있는 경우) 외부 .env 자동 주입을 차단한다.
+        cwd_env = Path.cwd() / ".env"
+        if cwd_env.exists() and cwd_env.resolve() != project_env.resolve():
+            return original_load_dotenv(None)
+        return {}
+
+    monkeypatch.setattr(_config, "_load_dotenv", _isolated_load_dotenv)
 
 
 # ---------------------------------------------------------------------------
