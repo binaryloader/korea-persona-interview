@@ -1,18 +1,27 @@
 """애플리케이션 설정 로드.
 
-우선순위는 코드 default → ``config.yaml`` → 환경변수 ``KPI_*`` → CLI 옵션이다
-(TDD §10). 로드 결과는 ``AppConfig`` frozen dataclass로 반환하며, 도메인 모델과
-달리 외부 의존(yaml)을 갖는 infrastructure 계층 코드다(architecture.md §1).
+우선순위는 코드 default → ``config.yaml`` → ``.env`` 파일 → 환경변수
+``KPI_*``/``OPENAI_API_KEY`` → CLI 옵션이다(TDD §10). 로드 결과는
+``AppConfig`` frozen dataclass로 반환하며, 도메인 모델과 달리 외부
+의존(yaml/.env)을 갖는 infrastructure 계층 코드다(architecture.md §1).
+
+v1.x 백엔드 전환 시점부터 본 도구는 OpenAI Chat Completions API로 호출한다.
+이전 v1.0의 로컬 MLX 서버 가드(``is_local_base_url`` 강제 차단)는 제거되었고,
+사업 아이템 본문은 OpenAI 서버로 송신된다. 사용자는 본 사실을 이해하고 사용한다
+(README/PRD에 명시).
+
+``.env`` 로더는 ``python-dotenv`` 의존을 회피하고 stdlib만으로 직접 파싱한다
+(dependency.md §1, leftpad 회피). ``KEY=value`` 한 줄 형식, ``#`` 주석, 공백 라인,
+값 주변 따옴표(``"..."``/``'...'``), ``export KEY=value`` 접두만 지원한다.
+멀티라인 값과 escape 처리 같은 복잡한 형식은 미지원이다.
 """
 
 from __future__ import annotations
 
-import ipaddress
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
-from urllib.parse import urlparse
 
 import yaml
 
@@ -21,15 +30,6 @@ from .models import ConfigError
 
 # 기본 yaml 경로. 호출자가 명시적으로 다른 경로를 줄 수 있다.
 DEFAULT_YAML_PATH = Path("config.yaml")
-
-# 루프백으로 인정하는 호스트명 화이트리스트. 호스트명은 IP가 아니라
-# DNS 이름이므로 ``ipaddress.is_loopback`` 검사 대상이 아니다(security.md §1,
-# TDD §13). DNS rebinding 위험은 v1 범위 밖이며, 본 도구는 매 호출마다 호스트를
-# 재해석하지 않는다.
-_LOOPBACK_HOSTNAMES = frozenset({"localhost"})
-
-# 과거 prefix 매칭 호환을 위해 보존. 새 코드는 ``is_local_base_url``을 사용한다.
-LOCAL_BASE_URL_PREFIXES = ("http://localhost", "http://127.0.0.1")
 
 
 # ---------------------------------------------------------------------------
@@ -41,11 +41,14 @@ LOCAL_BASE_URL_PREFIXES = ("http://localhost", "http://127.0.0.1")
 class LlmConfig:
     """LLM 호출 관련 설정.
 
-    ``enable_thinking``은 Qwen3 계열의 reasoning trace 출력을 토글한다. default는
-    False(끄기)이며, GATE-1 검증 결과 ``enable_thinking=true``로 호출하면
-    토큰 예산을 영문 reasoning이 모두 소진해 ``message.content``가 비어 오는
-    사례가 확인됐다(검증된 정본 모델: ``unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit``).
-    chat 요청 본문에는 항상 ``chat_template_kwargs``로 명시 전달한다.
+    ``base_url``과 ``model``은 OpenAI Chat Completions 호환 엔드포인트를 가리킨다.
+    기본값은 OpenAI 공식 엔드포인트(``https://api.openai.com/v1``)와
+    ``gpt-4o-mini``(비용/속도/품질 균형)다.
+
+    ``api_key``는 환경변수 ``OPENAI_API_KEY``(우선) 또는 ``KPI_OPENAI_API_KEY``
+    fallback에서 로드된다. ``healthcheck``/``chat`` 호출 시점에 누락이면
+    ``ConfigError``로 변환되어 친절한 한국어 안내가 출력된다. ``list-personas``
+    같이 키가 필요 없는 명령은 누락 상태로도 동작한다.
 
     각 수치 필드의 상하한은 운영 안전망이다. 잘못된 yaml 또는 환경변수가 비현실
     수치를 박을 때 ``ConfigError``로 막아 추론 무한 대기, OOM, 무한 재시도를
@@ -60,7 +63,7 @@ class LlmConfig:
     context_budget: int
     retry_max_attempts: int
     retry_backoff_seconds: tuple
-    enable_thinking: bool = False
+    api_key: Optional[str] = None
 
     def __post_init__(self) -> None:
         # 상한값은 본 도구의 v1 운영 가정에 맞춘 보수적 상한이다.
@@ -69,7 +72,7 @@ class LlmConfig:
         # 사용자 대기를 길게 만든다(120s timeout x 5 = 10분).
         # timeout 1-600초: 600초(10분)를 넘는 단일 호출은 v1 SLO 밖이다.
         # context_budget 1000-32000: 1000 미만은 system 프롬프트 수용 불가,
-        # 32000은 Qwen3 계열 컨텍스트 한계.
+        # 32000은 OpenAI gpt-4o 계열 입력 컨텍스트 한계 가정.
         if not (1 <= self.max_tokens <= 8000):
             raise ConfigError(
                 f"llm.max_tokens는 1-8000 범위만 허용한다. 입력값: {self.max_tokens}"
@@ -151,17 +154,19 @@ def _default_dict() -> dict:
 
     return {
         "llm": {
-            "base_url": "http://localhost:8080/v1",
-            "model": "unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit",
+            # OpenAI Chat Completions API 공식 엔드포인트.
+            "base_url": "https://api.openai.com/v1",
+            # gpt-4o-mini는 비용/속도/품질 균형. 사용자 결정에 따라 변경 가능.
+            "model": "gpt-4o-mini",
             "max_tokens": 500,
             "temperature": 0.8,
             "timeout": 120,
             "context_budget": 8000,
             "retry_max_attempts": 3,
             "retry_backoff_seconds": [1, 2, 4],
-            # GATE-1에서 검증: Qwen3.6-35B-A3B는 default가 thinking on이라
-            # reasoning이 토큰 예산을 소진해 content가 비어 온다. False가 정상.
-            "enable_thinking": False,
+            # API 키는 환경변수에서만 받는다. yaml/CLI override는 허용하지 않아
+            # 시크릿이 디스크 또는 명령행 히스토리에 남지 않게 한다(security.md §1).
+            "api_key": None,
         },
         "batch": {
             "concurrency": 2,
@@ -270,6 +275,87 @@ def _load_yaml(path: Path) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# .env 파일 로더(python-dotenv 의존 회피)
+# ---------------------------------------------------------------------------
+
+
+# .env 파일 탐색 경로. 작업 디렉토리 우선, 그다음 프로젝트 루트(본 파일 기준
+# 두 단계 위)를 본다. 본 모듈이 ``src/config.py``라 ``parents[1]``이 프로젝트
+# 루트에 해당한다.
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _load_dotenv(path: Optional[Path] = None) -> dict:
+    """``.env`` 파일을 stdlib만으로 파싱해 dict로 돌려준다.
+
+    파서 규칙은 의도적으로 좁게 잡는다(dependency.md §1, leftpad 회피).
+
+    - ``KEY=value`` 한 줄 형식만 지원한다
+    - ``#``로 시작하는 줄과 공백 라인은 무시한다
+    - 값 주변의 ``"..."``/``'...'``는 한 쌍에 한해 제거한다
+    - ``export KEY=value`` 접두를 허용한다(셸 호환)
+    - ``=``가 없거나 KEY가 비면 해당 라인은 무시한다(파싱 실패시 조용히 스킵)
+    - 멀티라인 값/escape/변수 참조 같은 고급 기능은 지원하지 않는다
+
+    Args:
+        path: 명시 경로. ``None``이면 작업 디렉토리 → 프로젝트 루트 순서로 탐색.
+
+    Returns:
+        파싱된 ``{key: value}`` dict. 파일 없으면 빈 dict.
+    """
+
+    candidates: list = []
+    if path is not None:
+        candidates.append(path)
+    else:
+        # 현재 작업 디렉토리와 프로젝트 루트 양쪽을 본다. 둘 다 존재하면 cwd 우선.
+        candidates.append(Path.cwd() / ".env")
+        if _PROJECT_ROOT not in candidates and _PROJECT_ROOT != Path.cwd():
+            candidates.append(_PROJECT_ROOT / ".env")
+
+    for candidate in candidates:
+        if candidate.exists():
+            return _parse_dotenv_file(candidate)
+    return {}
+
+
+def _parse_dotenv_file(path: Path) -> dict:
+    """``.env`` 본문을 한 줄씩 파싱해 dict를 만든다."""
+
+    out: dict = {}
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        # 권한 등의 이유로 읽지 못하면 조용히 빈 dict를 돌려준다. .env는 선택
+        # 사양이라 전체 로드를 막지 않는다.
+        return {}
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        # ``export KEY=value`` 접두 허용.
+        if line.startswith("export "):
+            line = line[len("export ") :].lstrip()
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        if not key:
+            continue
+        value = value.strip()
+        # 값에 인라인 ``# 주석``이 따라오는 케이스는 미지원이다(따옴표 없는
+        # 일반 값에서만 모호함이 생기므로 단순화를 위해 그대로 둔다).
+        if len(value) >= 2 and (
+            (value[0] == '"' and value[-1] == '"')
+            or (value[0] == "'" and value[-1] == "'")
+        ):
+            value = value[1:-1]
+        out[key] = value
+    return out
+
+
+# ---------------------------------------------------------------------------
 # 환경변수 매핑
 # ---------------------------------------------------------------------------
 
@@ -306,7 +392,6 @@ def _apply_env(merged: dict) -> dict:
         ("KPI_LLM_MAX_TOKENS", "llm", "max_tokens"),
         ("KPI_LLM_TEMPERATURE", "llm", "temperature"),
         ("KPI_LLM_TIMEOUT", "llm", "timeout"),
-        ("KPI_LLM_ENABLE_THINKING", "llm", "enable_thinking"),
         ("KPI_BATCH_CONCURRENCY", "batch", "concurrency"),
         ("KPI_OUTPUT_DIR", "output", "output_dir"),
         ("KPI_LOG_LEVEL", "output", "log_level"),
@@ -325,6 +410,16 @@ def _apply_env(merged: dict) -> dict:
         items = [s.strip() for s in fields_raw.split(",") if s.strip()]
         out.setdefault("batch", {})["persona_fields"] = items
 
+    # OpenAI API 키 로드. ``OPENAI_API_KEY``를 표준으로 하고
+    # ``KPI_OPENAI_API_KEY``는 격리된 테스트/CI 환경의 fallback이다. 둘 다
+    # 누락이면 ``api_key``는 None으로 남고 chat 호출 시점에 ConfigError로
+    # 변환된다(security.md §1, error-handling.md §1).
+    api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get(
+        "KPI_OPENAI_API_KEY"
+    )
+    if api_key:
+        out.setdefault("llm", {})["api_key"] = api_key
+
     return out
 
 
@@ -333,51 +428,15 @@ def _apply_env(merged: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def is_local_base_url(base_url: str) -> bool:
-    """base_url이 localhost 계열인지 판정한다.
-
-    chat() 차단 가드용 헬퍼다(security.md §1, TDD §13). healthcheck()에는
-    경고만 남기고 실제 차단은 chat() 진입 시점에서 확인한다.
-
-    판정은 ``urllib.parse.urlparse``로 scheme/host를 추출한 뒤 아래 조건을 모두
-    만족하면 True다.
-
-    - scheme이 ``http``(MLX 서버는 ``https``를 노출하지 않으므로 https는 외부
-      관문으로 본다)
-    - host가 ``localhost`` 화이트리스트 안에 있거나
-      ``ipaddress.ip_address(host).is_loopback``이 True(127.0.0.0/8 또는 ``::1``)
-
-    prefix 매칭(``http://localhost``)을 피하는 이유는 ``http://localhost.evil.com``
-    같은 우회를 막기 위함이다. DNS rebinding 위험은 v1 범위 밖으로 둔다.
-    """
-
-    if not isinstance(base_url, str) or not base_url:
-        return False
-    try:
-        parsed = urlparse(base_url)
-    except ValueError:
-        return False
-    if parsed.scheme.lower() != "http":
-        return False
-    host = parsed.hostname
-    if not host:
-        return False
-    if host.lower() in _LOOPBACK_HOSTNAMES:
-        return True
-    try:
-        ip = ipaddress.ip_address(host)
-    except ValueError:
-        return False
-    return ip.is_loopback
-
-
 def load_config(
     yaml_path: Optional[Path] = None,
     cli_overrides: Optional[dict] = None,
 ) -> AppConfig:
     """AppConfig를 우선순위 머지로 로드한다.
 
-    우선순위는 default → yaml → env(``KPI_*``) → ``cli_overrides``이다.
+    우선순위는 default → yaml → ``.env`` 파일 → env(``KPI_*``/``OPENAI_API_KEY``)
+    → ``cli_overrides``이다. ``.env``는 ``os.environ``에 ``setdefault``로 주입되어
+    이미 set된 명시 환경변수를 덮어쓰지 않는다(셸/CI 환경의 명시 키가 우선).
 
     Args:
         yaml_path: ``config.yaml`` 경로. ``None``이면 ``DEFAULT_YAML_PATH``.
@@ -390,6 +449,11 @@ def load_config(
         ConfigError: yaml 파싱/타입 오류, 동시성 범위 위반 등.
     """
 
+    # ``.env``를 환경변수로 승격한다. 이미 명시 환경변수가 있으면 ``setdefault``
+    # 가 덮어쓰지 않으므로 명시 환경변수 우선 원칙이 보장된다.
+    for key, value in _load_dotenv().items():
+        os.environ.setdefault(key, value)
+
     yaml_path = yaml_path or DEFAULT_YAML_PATH
     merged = _default_dict()
     merged = _deep_merge(merged, _load_yaml(yaml_path))
@@ -398,6 +462,10 @@ def load_config(
         merged = _deep_merge(merged, cli_overrides)
 
     try:
+        api_key_raw = merged["llm"].get("api_key")
+        api_key_val: Optional[str] = (
+            str(api_key_raw) if api_key_raw not in (None, "") else None
+        )
         llm_cfg = LlmConfig(
             base_url=str(merged["llm"]["base_url"]),
             model=str(merged["llm"]["model"]),
@@ -409,7 +477,7 @@ def load_config(
             retry_backoff_seconds=tuple(
                 float(x) for x in merged["llm"]["retry_backoff_seconds"]
             ),
-            enable_thinking=bool(merged["llm"].get("enable_thinking", False)),
+            api_key=api_key_val,
         )
         batch_cfg = BatchConfig(
             concurrency=int(merged["batch"]["concurrency"]),

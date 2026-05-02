@@ -1,8 +1,9 @@
-"""``src.config.load_config`` 우선순위와 검증 단위 테스트.
+"""``src.config.load_config`` 우선순위와 검증 단위 테스트(OpenAI 백엔드).
 
-- default → yaml → env(``KPI_*``) → CLI 우선순위 머지
-- localhost 가드 ``is_local_base_url``
+- default → yaml → env(``KPI_*``, ``OPENAI_API_KEY``) → CLI 우선순위 머지
 - BatchConfig의 동시성 1-3 강제, 4 이상 ``ConfigError``
+- OpenAI 외부 URL 허용(이전 버전의 localhost 가드 제거)
+- ``OPENAI_API_KEY``/``KPI_OPENAI_API_KEY`` 환경변수 로드 정합
 """
 
 from __future__ import annotations
@@ -17,7 +18,6 @@ from src.config import (
     DatasetConfig,
     InterviewConfig,
     LlmConfig,
-    is_local_base_url,
     load_config,
 )
 from src.models import ConfigError
@@ -36,8 +36,9 @@ def test_load_config_default_사용가능_yaml_없을때(
 
     cfg = load_config(yaml_path=tmp_path / "no.yaml")
     assert isinstance(cfg, AppConfig)
-    assert cfg.llm.base_url == "http://localhost:8080/v1"
-    assert cfg.llm.enable_thinking is False
+    assert cfg.llm.base_url == "https://api.openai.com/v1"
+    assert cfg.llm.model == "gpt-4o-mini"
+    assert cfg.llm.api_key is None
     assert cfg.batch.concurrency == 2
     assert cfg.dataset.name == "nvidia/Nemotron-Personas-Korea"
 
@@ -61,7 +62,7 @@ def test_load_config_yaml_부분_갱신_default와_머지(tmp_path: Path) -> Non
     assert cfg.llm.model == "custom-model"
     assert cfg.llm.max_tokens == 1234
     # 다른 키는 default 유지
-    assert cfg.llm.base_url == "http://localhost:8080/v1"
+    assert cfg.llm.base_url == "https://api.openai.com/v1"
 
 
 def test_load_config_yaml_파싱_실패_ConfigError(tmp_path: Path) -> None:
@@ -149,36 +150,77 @@ def test_load_config_cli_override가_env보다_우선(
 
 
 # ---------------------------------------------------------------------------
-# is_local_base_url
+# 외부 base_url 허용(이전 버전의 localhost 가드 제거)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
-    "url, expected",
+    "url",
     [
-        ("http://localhost:8080/v1", True),
-        ("http://127.0.0.1:8080/v1", True),
-        ("http://localhost", True),
-        # IPv6 loopback. ``[::1]`` 표기로 url에 포함되며 ``urlparse``가 ``::1``로
-        # 추출한다.
-        ("http://[::1]:8080/v1", True),
-        ("http://127.255.255.254:8080/v1", True),  # 127.0.0.0/8 전 범위 인정
-        ("https://api.example.com/v1", False),
-        ("https://localhost:8080/v1", False),  # https는 명시적으로 가드 대상
-        # prefix 우회 시도(``http://localhost.evil.com``). 새 구현은 hostname
-        # 분리 후 정확 매칭이라 차단된다.
-        ("http://localhost.evil.com/v1", False),
-        ("http://127.0.0.1.evil.com/v1", False),
-        # 외부 호스트
-        ("http://example.com:8080/v1", False),
-        ("http://10.0.0.1:8080/v1", False),
-        ("http://192.168.1.1:8080/v1", False),
-        ("", False),
-        (None, False),
+        "https://api.openai.com/v1",
+        "https://api.example.com/v1",
+        "http://localhost:8080/v1",  # OpenAI 호환 로컬 프록시도 허용
     ],
 )
-def test_is_local_base_url_분기(url, expected) -> None:
-    assert is_local_base_url(url) is expected
+def test_load_config_외부_URL_허용(url: str, tmp_path: Path) -> None:
+    """v1.x 백엔드 전환 후 external base_url을 그대로 허용한다.
+
+    사업 아이템이 외부로 송신되는 사실은 README/PRD에 명시되어 있다. 본 테스트는
+    AppConfig 생성 자체가 차단되지 않음을 확인한다.
+    """
+
+    yaml_path = tmp_path / "config.yaml"
+    yaml_path.write_text(f"llm:\n  base_url: '{url}'\n", encoding="utf-8")
+    cfg = load_config(yaml_path=yaml_path)
+    assert cfg.llm.base_url == url
+
+
+# ---------------------------------------------------------------------------
+# OPENAI_API_KEY / KPI_OPENAI_API_KEY 로드
+# ---------------------------------------------------------------------------
+
+
+def test_load_config_OPENAI_API_KEY_표준_환경변수(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``OPENAI_API_KEY``는 표준 환경변수로 ``llm.api_key``에 박힌다."""
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-from-standard")
+    cfg = load_config(yaml_path=tmp_path / "no.yaml")
+    assert cfg.llm.api_key == "sk-from-standard"
+
+
+def test_load_config_KPI_OPENAI_API_KEY_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """표준 키가 없을 때 ``KPI_OPENAI_API_KEY``가 fallback으로 적용된다."""
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("KPI_OPENAI_API_KEY", "sk-from-fallback")
+    cfg = load_config(yaml_path=tmp_path / "no.yaml")
+    assert cfg.llm.api_key == "sk-from-fallback"
+
+
+def test_load_config_OPENAI_API_KEY가_KPI보다_우선(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """둘 다 set되어 있으면 표준 ``OPENAI_API_KEY``가 fallback을 덮는다."""
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-standard")
+    monkeypatch.setenv("KPI_OPENAI_API_KEY", "sk-fallback")
+    cfg = load_config(yaml_path=tmp_path / "no.yaml")
+    assert cfg.llm.api_key == "sk-standard"
+
+
+def test_load_config_API_KEY_누락_None(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """둘 다 누락이면 ``api_key``는 None으로 남고 호출 시점 ConfigError로 차단된다."""
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("KPI_OPENAI_API_KEY", raising=False)
+    cfg = load_config(yaml_path=tmp_path / "no.yaml")
+    assert cfg.llm.api_key is None
 
 
 # ---------------------------------------------------------------------------
@@ -233,7 +275,7 @@ def test_load_config_interview_default_keywords(tmp_path: Path) -> None:
 
 def _llm_config_kwargs(**override) -> dict:
     base = {
-        "base_url": "http://localhost:8080/v1",
+        "base_url": "https://api.openai.com/v1",
         "model": "test-model",
         "max_tokens": 500,
         "temperature": 0.5,
@@ -241,6 +283,7 @@ def _llm_config_kwargs(**override) -> dict:
         "context_budget": 8000,
         "retry_max_attempts": 3,
         "retry_backoff_seconds": (1.0, 2.0, 4.0),
+        "api_key": "test-key",
     }
     base.update(override)
     return base
@@ -289,3 +332,173 @@ def test_LlmConfig_허용_범위_생성_성공() -> None:
             context_budget=32000,
         )
     )
+
+
+# ---------------------------------------------------------------------------
+# .env 파일 로더(_load_dotenv)
+# ---------------------------------------------------------------------------
+
+
+from src.config import _load_dotenv, _parse_dotenv_file  # noqa: E402
+
+
+def test_load_dotenv_파일_없음_빈_dict(tmp_path: Path) -> None:
+    """탐색 경로에 .env가 없으면 빈 dict를 반환한다(조용히 스킵)."""
+
+    missing = tmp_path / "missing.env"
+    assert _load_dotenv(missing) == {}
+
+
+def test_parse_dotenv_file_기본_KEY_VALUE(tmp_path: Path) -> None:
+    env_path = tmp_path / ".env"
+    env_path.write_text("FOO=bar\nBAZ=qux\n", encoding="utf-8")
+
+    result = _parse_dotenv_file(env_path)
+    assert result == {"FOO": "bar", "BAZ": "qux"}
+
+
+def test_parse_dotenv_file_주석_빈줄_무시(tmp_path: Path) -> None:
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "# 주석 라인\n"
+        "\n"
+        "FOO=bar\n"
+        "   # 들여쓰기 주석\n"
+        "BAZ=qux\n",
+        encoding="utf-8",
+    )
+
+    result = _parse_dotenv_file(env_path)
+    assert result == {"FOO": "bar", "BAZ": "qux"}
+
+
+def test_parse_dotenv_file_따옴표_제거(tmp_path: Path) -> None:
+    """``"..."``와 ``'...'``는 한 쌍에 한해 제거된다."""
+
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        'DOUBLE="value with spaces"\n'
+        "SINGLE='another value'\n"
+        "BARE=naked\n",
+        encoding="utf-8",
+    )
+
+    result = _parse_dotenv_file(env_path)
+    assert result["DOUBLE"] == "value with spaces"
+    assert result["SINGLE"] == "another value"
+    assert result["BARE"] == "naked"
+
+
+def test_parse_dotenv_file_export_접두_허용(tmp_path: Path) -> None:
+    """``export KEY=value``는 셸 호환을 위해 ``export ``를 떼고 파싱한다."""
+
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "export OPENAI_API_KEY=sk-deadbeef\n"
+        "export FOO='quoted'\n",
+        encoding="utf-8",
+    )
+
+    result = _parse_dotenv_file(env_path)
+    assert result["OPENAI_API_KEY"] == "sk-deadbeef"
+    assert result["FOO"] == "quoted"
+
+
+def test_parse_dotenv_file_등호_없는_라인_무시(tmp_path: Path) -> None:
+    env_path = tmp_path / ".env"
+    env_path.write_text("INVALID_LINE\nFOO=bar\n", encoding="utf-8")
+
+    result = _parse_dotenv_file(env_path)
+    assert result == {"FOO": "bar"}
+
+
+def test_load_config_dotenv_파일에서_OPENAI_API_KEY_로드(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``.env`` 파일에 ``OPENAI_API_KEY``가 있으면 ``llm.api_key``로 들어온다."""
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("KPI_OPENAI_API_KEY", raising=False)
+
+    env_path = tmp_path / ".env"
+    env_path.write_text("OPENAI_API_KEY=sk-from-dotenv\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    cfg = load_config(yaml_path=tmp_path / "no.yaml")
+    assert cfg.llm.api_key == "sk-from-dotenv"
+
+
+def test_load_config_dotenv보다_명시_환경변수_우선(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``.env``에 키가 있어도 명시 환경변수가 set돼 있으면 명시값이 우선이다."""
+
+    env_path = tmp_path / ".env"
+    env_path.write_text("OPENAI_API_KEY=sk-from-dotenv\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-from-explicit-env")
+
+    cfg = load_config(yaml_path=tmp_path / "no.yaml")
+    assert cfg.llm.api_key == "sk-from-explicit-env"
+
+
+def test_load_config_dotenv_파일_없을때_조용히_무시(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``.env``가 없는 디렉토리에서도 load_config가 정상 동작한다."""
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("KPI_OPENAI_API_KEY", raising=False)
+    monkeypatch.chdir(tmp_path)
+
+    cfg = load_config(yaml_path=tmp_path / "no.yaml")
+    assert cfg.llm.api_key is None
+
+
+def test_load_config_dotenv_따옴표_둘러싼_키_제거(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``OPENAI_API_KEY="sk-..."``처럼 따옴표 감싸진 값도 정상 로드된다."""
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("KPI_OPENAI_API_KEY", raising=False)
+
+    env_path = tmp_path / ".env"
+    env_path.write_text('OPENAI_API_KEY="sk-quoted-value"\n', encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    cfg = load_config(yaml_path=tmp_path / "no.yaml")
+    assert cfg.llm.api_key == "sk-quoted-value"
+
+
+def test_load_config_dotenv_export_접두로_OPENAI_API_KEY_로드(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("KPI_OPENAI_API_KEY", raising=False)
+
+    env_path = tmp_path / ".env"
+    env_path.write_text("export OPENAI_API_KEY=sk-from-export\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    cfg = load_config(yaml_path=tmp_path / "no.yaml")
+    assert cfg.llm.api_key == "sk-from-export"
+
+
+def test_load_config_dotenv_주석_라인_무시(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("KPI_OPENAI_API_KEY", raising=False)
+
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "# 시크릿 키\n"
+        "# OPENAI_API_KEY=sk-commented-out\n"
+        "OPENAI_API_KEY=sk-actual\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    cfg = load_config(yaml_path=tmp_path / "no.yaml")
+    assert cfg.llm.api_key == "sk-actual"
