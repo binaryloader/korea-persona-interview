@@ -254,6 +254,14 @@ def _records_from_payload(payload: dict) -> list:
         summary_raw = raw.get("structured_summary")
         summary: Optional[StructuredSummary] = None
         if isinstance(summary_raw, dict):
+            # v1 JSON에는 ``acceptable_price_signal``이 없다. None으로 채워
+            # 호환 로드한다(라운드 G15 schema_version 2).
+            price_signal_raw = summary_raw.get("acceptable_price_signal")
+            price_signal: Optional[str] = None
+            if isinstance(price_signal_raw, str):
+                candidate = price_signal_raw.strip().lower()
+                if candidate in ("cheap", "fair", "expensive"):
+                    price_signal = candidate
             try:
                 summary = StructuredSummary(
                     intent=str(summary_raw.get("intent", "neutral")),
@@ -263,6 +271,7 @@ def _records_from_payload(payload: dict) -> list:
                     ),
                     rejection_reasons=list(summary_raw.get("rejection_reasons", [])),
                     one_line=str(summary_raw.get("one_line", "")),
+                    acceptable_price_signal=price_signal,
                 )
             except (TypeError, ValueError):
                 summary = None

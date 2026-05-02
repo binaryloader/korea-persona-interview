@@ -19,10 +19,14 @@ ALLOWED_STATUS = frozenset({"completed", "refused", "failed", "drift"})
 ALLOWED_INTENT = frozenset({"positive", "neutral", "negative"})
 ALLOWED_GENDER = frozenset({"남자", "여자"})
 ALLOWED_ROLE = frozenset({"system", "user", "assistant"})
+ALLOWED_PRICE_SIGNAL = frozenset({"cheap", "fair", "expensive"})
 
 
 # 결과 JSON 스키마 버전. 변경 시 reader가 분기할 수 있도록 RunMeta에 박는다.
-SCHEMA_VERSION = 1
+# v2(라운드 G15)에서 ``acceptable_price_signal``을 신설하고 willingness_to_pay
+# 의 의미를 명시 숫자만으로 좁혔다. v1 JSON은 ``load_interview_json``이
+# acceptable_price_signal=None으로 채워 호환 로드한다.
+SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -139,13 +143,25 @@ class ChatResponse:
 
 @dataclass(frozen=True)
 class StructuredSummary:
-    """인터뷰 종료 후 단일턴으로 생성한 구조화 요약(ADR-001)."""
+    """인터뷰 종료 후 단일턴으로 생성한 구조화 요약(ADR-001).
+
+    스키마 v2(라운드 G15)에서 가격 의향을 두 필드로 분리했다.
+
+    - ``acceptable_price_signal``: ``cheap``/``fair``/``expensive``/``None``의
+      정성 신호. 인터뷰 답변 본문에서 명시 숫자가 없어도 ``비싸다``/``적당하다``/
+      ``저렴하다`` 류 정성 표현을 분류해 모든 record에 가능한 한 채운다
+    - ``willingness_to_pay``: 명시 숫자 정수만 들어간다. 응답에 명확한 ``월 5만원``
+      류 발화가 있을 때만 채워진다. 그렇지 않으면 ``None``
+
+    v1 JSON은 ``acceptable_price_signal``을 ``None``으로 채워 호환 로드한다.
+    """
 
     intent: str
     willingness_to_pay: Optional[int]
     willingness_to_pay_currency: str
     rejection_reasons: list[str]
     one_line: str
+    acceptable_price_signal: Optional[str] = None
 
     def __post_init__(self) -> None:
         if self.intent not in ALLOWED_INTENT:
@@ -155,6 +171,15 @@ class StructuredSummary:
         if self.willingness_to_pay is not None and self.willingness_to_pay < 0:
             raise ValueError(
                 f"StructuredSummary.willingness_to_pay는 0 이상이어야 한다: {self.willingness_to_pay}"
+            )
+        if (
+            self.acceptable_price_signal is not None
+            and self.acceptable_price_signal not in ALLOWED_PRICE_SIGNAL
+        ):
+            raise ValueError(
+                "StructuredSummary.acceptable_price_signal은 "
+                f"{sorted(ALLOWED_PRICE_SIGNAL)} 또는 None이어야 한다: "
+                f"{self.acceptable_price_signal!r}"
             )
 
 

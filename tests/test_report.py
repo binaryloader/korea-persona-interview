@@ -462,6 +462,49 @@ def test_records_from_payload_records_list_아님_ConfigError() -> None:
         _records_from_payload({"records": "not-a-list"})
 
 
+def test_records_from_payload_v1_acceptable_price_signal_None_호환() -> None:
+    """v1 결과 JSON에 ``acceptable_price_signal``이 없어도 None으로 채워 로드한다.
+
+    G15 schema_version 2 변경에서 v1 backward-compat 회귀 방지.
+    """
+
+    record = _record(
+        persona_id="v1",
+        age=30,
+        summary=_summary(intent="positive", wtp=39900, rejection_reasons=[]),
+    )
+    import dataclasses
+
+    record_dict = dataclasses.asdict(record)
+    # v1 시뮬레이션: structured_summary에서 acceptable_price_signal 키를 제거.
+    record_dict["structured_summary"].pop("acceptable_price_signal", None)
+    payload = _make_payload(records=[record_dict])
+    restored = _records_from_payload(payload)
+    assert restored[0].structured_summary.acceptable_price_signal is None
+
+
+def test_records_from_payload_v2_acceptable_price_signal_로드() -> None:
+    """v2 결과 JSON의 ``acceptable_price_signal`` 값이 그대로 복원된다."""
+
+    record = _record(
+        persona_id="v2",
+        age=30,
+        summary=StructuredSummary(
+            intent="negative",
+            willingness_to_pay=None,
+            willingness_to_pay_currency="KRW",
+            rejection_reasons=["가격 부담"],
+            one_line="비싸다고 느낌",
+            acceptable_price_signal="expensive",
+        ),
+    )
+    import dataclasses
+
+    payload = _make_payload(records=[dataclasses.asdict(record)])
+    restored = _records_from_payload(payload)
+    assert restored[0].structured_summary.acceptable_price_signal == "expensive"
+
+
 # ---------------------------------------------------------------------------
 # render_markdown
 # ---------------------------------------------------------------------------

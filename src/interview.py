@@ -117,6 +117,7 @@ def _parse_single_turn_response(text: str, expected_count: int) -> tuple:
 _SUMMARY_SCHEMA_HINT = (
     "{\n"
     '  "intent": "positive | neutral | negative",\n'
+    '  "acceptable_price_signal": "cheap | fair | expensive | null",\n'
     '  "willingness_to_pay": 정수 또는 null(원화 KRW 기준 월/회 1회 지불 의사),\n'
     '  "willingness_to_pay_currency": "KRW",\n'
     '  "rejection_reasons": ["거절 사유 1", "거절 사유 2", ...],\n'
@@ -1061,8 +1062,12 @@ def _build_summary_messages(messages: list) -> list:
         "\n"
         "[필드 의미]\n"
         "- intent: 인터뷰 종합 의향(positive/neutral/negative 셋 중 하나)\n"
-        "- willingness_to_pay: 정수(원). 인터뷰에서 명시된 지불 의사 금액. "
-        "명시되지 않았거나 거절한 경우 null.\n"
+        "- acceptable_price_signal: 응답에 가격 신호가 있으면 cheap/fair/expensive "
+        "셋 중 하나, 없으면 null. ``비싸다``/``너무 비싸요``/``부담된다``는 expensive, "
+        "``적당``/``합리적``은 fair, ``저렴``/``값싸다``는 cheap. 응답에 가격 언급이 "
+        "전혀 없으면 null.\n"
+        "- willingness_to_pay: 응답에 명시된 숫자가 있을 때만 정수(원)로 박는다. "
+        "정성 신호만 있고 숫자가 없으면 null. 거절한 경우도 null.\n"
         "- willingness_to_pay_currency: 항상 \"KRW\".\n"
         "- rejection_reasons: 거절/유보 사유 리스트(빈 배열 허용).\n"
         "- one_line: 한국어 한 줄 요약(80자 이내)."
@@ -1104,6 +1109,7 @@ def _parse_summary_payload(text: str) -> StructuredSummary:
     currency = data.get("willingness_to_pay_currency", "KRW")
     reasons = data.get("rejection_reasons", [])
     one_line = data.get("one_line", "")
+    price_signal_raw = data.get("acceptable_price_signal")
 
     # 정수 또는 None 강제.
     wtp_int: Optional[int] = None
@@ -1121,6 +1127,14 @@ def _parse_summary_payload(text: str) -> StructuredSummary:
         )
     reasons_list = [str(r) for r in reasons if r is not None]
 
+    price_signal: Optional[str] = None
+    if isinstance(price_signal_raw, str):
+        candidate = price_signal_raw.strip().lower()
+        if candidate in ("cheap", "fair", "expensive"):
+            price_signal = candidate
+        elif candidate in ("", "null", "none"):
+            price_signal = None
+
     try:
         return StructuredSummary(
             intent=str(intent) if intent is not None else "",
@@ -1128,6 +1142,7 @@ def _parse_summary_payload(text: str) -> StructuredSummary:
             willingness_to_pay_currency=str(currency) if currency else "KRW",
             rejection_reasons=reasons_list,
             one_line=str(one_line) if one_line else "",
+            acceptable_price_signal=price_signal,
         )
     except ValueError as exc:
         # __post_init__의 enum 검증 실패도 파싱 실패로 본다(retry 대상).

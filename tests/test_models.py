@@ -194,6 +194,48 @@ def test_structured_summary_willingness_to_pay_음수_ValueError() -> None:
         )
 
 
+def test_structured_summary_acceptable_price_signal_정상값() -> None:
+    """G15 신규 필드 ``acceptable_price_signal``이 cheap/fair/expensive를 받는다."""
+
+    for signal in ("cheap", "fair", "expensive"):
+        s = StructuredSummary(
+            intent="positive",
+            willingness_to_pay=None,
+            willingness_to_pay_currency="KRW",
+            rejection_reasons=[],
+            one_line="x",
+            acceptable_price_signal=signal,
+        )
+        assert s.acceptable_price_signal == signal
+
+
+def test_structured_summary_acceptable_price_signal_None_default() -> None:
+    """``acceptable_price_signal`` 미지정 시 default는 None(v1 호환)."""
+
+    s = StructuredSummary(
+        intent="positive",
+        willingness_to_pay=None,
+        willingness_to_pay_currency="KRW",
+        rejection_reasons=[],
+        one_line="x",
+    )
+    assert s.acceptable_price_signal is None
+
+
+def test_structured_summary_acceptable_price_signal_허용외_값_ValueError() -> None:
+    """허용 외 토큰을 넣으면 ValueError로 차단된다."""
+
+    with pytest.raises(ValueError):
+        StructuredSummary(
+            intent="positive",
+            willingness_to_pay=None,
+            willingness_to_pay_currency="KRW",
+            rejection_reasons=[],
+            one_line="x",
+            acceptable_price_signal="cheap_ish",
+        )
+
+
 # ---------------------------------------------------------------------------
 # InterviewRecord
 # ---------------------------------------------------------------------------
@@ -266,8 +308,8 @@ def test_run_meta_schema_version_상수_일치() -> None:
         finished_at="t2",
         config_snapshot={},
     )
-    assert meta.schema_version == 1
-    assert SCHEMA_VERSION == 1
+    assert meta.schema_version == 2
+    assert SCHEMA_VERSION == 2
 
 
 def test_batch_result_asdict_직렬화_가능() -> None:
