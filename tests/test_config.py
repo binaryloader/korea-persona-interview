@@ -251,6 +251,120 @@ def test_load_config_API_KEY_누락_None(
 
 
 # ---------------------------------------------------------------------------
+# provider 옵션 + ANTHROPIC_API_KEY env
+# ---------------------------------------------------------------------------
+
+
+def test_load_config_provider_default_openai(tmp_path: Path) -> None:
+    cfg = load_config(yaml_path=tmp_path / "no.yaml")
+    assert cfg.llm.provider == "openai"
+
+
+def test_load_config_provider_anthropic_yaml(tmp_path: Path) -> None:
+    yaml_path = tmp_path / "config.yaml"
+    yaml_path.write_text(
+        "llm:\n  provider: 'anthropic'\n  model: 'claude-haiku-4-5'\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(yaml_path=yaml_path)
+    assert cfg.llm.provider == "anthropic"
+    assert cfg.llm.model == "claude-haiku-4-5"
+
+
+def test_load_config_provider_anthropic는_anthropic_base_url_default(
+    tmp_path: Path,
+) -> None:
+    """``provider=anthropic``이고 ``base_url`` override가 없으면 anthropic 엔드포인트가 적용된다."""
+
+    yaml_path = tmp_path / "config.yaml"
+    yaml_path.write_text(
+        "llm:\n  provider: 'anthropic'\n  base_url: null\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(yaml_path=yaml_path)
+    assert cfg.llm.base_url == "https://api.anthropic.com/v1"
+
+
+def test_load_config_provider_anthropic_default_model_claude_haiku(
+    tmp_path: Path,
+) -> None:
+    """``provider=anthropic``이면 default model이 claude-haiku로 바뀐다."""
+
+    yaml_path = tmp_path / "config.yaml"
+    yaml_path.write_text(
+        "llm:\n  provider: 'anthropic'\n  model: null\n  base_url: null\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(yaml_path=yaml_path)
+    assert cfg.llm.model == "claude-haiku-4-5"
+
+
+def test_load_config_허용_외_provider_ConfigError(tmp_path: Path) -> None:
+    yaml_path = tmp_path / "config.yaml"
+    yaml_path.write_text("llm:\n  provider: 'cohere'\n", encoding="utf-8")
+    with pytest.raises(ConfigError):
+        load_config(yaml_path=yaml_path)
+
+
+def test_load_config_ANTHROPIC_API_KEY_provider_anthropic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``provider=anthropic``이면 ``ANTHROPIC_API_KEY``가 ``llm.api_key``에 박힌다."""
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-from-env")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    yaml_path = tmp_path / "config.yaml"
+    yaml_path.write_text("llm:\n  provider: 'anthropic'\n", encoding="utf-8")
+    cfg = load_config(yaml_path=yaml_path)
+    assert cfg.llm.api_key == "sk-ant-from-env"
+
+
+def test_load_config_ANTHROPIC_API_KEY는_provider_openai에선_미사용(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``provider=openai``이면 ANTHROPIC_API_KEY가 set되어 있어도 무시된다."""
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-not-used")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    cfg = load_config(yaml_path=tmp_path / "no.yaml")
+    assert cfg.llm.api_key is None
+
+
+def test_load_config_cli_override_base_url(
+    tmp_path: Path,
+) -> None:
+    """``--base-url``로 들어온 CLI override가 yaml/default를 덮어쓴다."""
+
+    cfg = load_config(
+        yaml_path=tmp_path / "no.yaml",
+        cli_overrides={"llm": {"base_url": "http://localhost:8080/v1"}},
+    )
+    assert cfg.llm.base_url == "http://localhost:8080/v1"
+
+
+def test_load_config_cli_override_provider(tmp_path: Path) -> None:
+    cfg = load_config(
+        yaml_path=tmp_path / "no.yaml",
+        cli_overrides={"llm": {"provider": "anthropic"}},
+    )
+    assert cfg.llm.provider == "anthropic"
+
+
+def test_load_config_legacy_backend_필드_무시(tmp_path: Path) -> None:
+    """이전 버전 yaml에 남은 ``llm.backend``는 graceful하게 무시된다."""
+
+    yaml_path = tmp_path / "config.yaml"
+    yaml_path.write_text(
+        "llm:\n  backend: 'auto'\n  provider: 'openai'\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(yaml_path=yaml_path)
+    assert cfg.llm.provider == "openai"
+    # ``backend`` field is not on LlmConfig anymore.
+    assert not hasattr(cfg.llm, "backend")
+
+
+# ---------------------------------------------------------------------------
 # 동시성 1-3 강제(BatchConfig.__post_init__)
 # ---------------------------------------------------------------------------
 

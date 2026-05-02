@@ -87,7 +87,7 @@ def test_healthcheck_서버_다운_exit_1(httpx_mock, tmp_path: Path) -> None:
     )
     assert result.exit_code == 1
     # 한국어 안내 메시지 포함
-    assert "OpenAI 서버에 연결할 수 없습니다" in result.output
+    assert "LLM 서버에 연결할 수 없습니다" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -216,7 +216,7 @@ def test_interview_헬스체크_실패_exit_1(
         },
     )
     assert result.exit_code == 1
-    assert "OpenAI 서버에 연결할 수 없습니다" in result.output
+    assert "LLM 서버에 연결할 수 없습니다" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -349,17 +349,18 @@ def test_messages_사전_핵심_키_존재() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _add_interview_chat_responses(httpx_mock, *, n: int) -> None:
-    """``n``명에 대한 인터뷰 멀티턴 + 구조화 요약 응답을 mock에 등록한다.
-
-    한 페르소나당 메인 질문 응답 1회 + 구조화 요약 응답 1회로 총 2회 호출이 발생한다.
-    구조화 요약은 ``StructuredSummary`` JSON 스키마로 정상 응답한다.
-    """
+def _add_interview_chat_responses(
+    httpx_mock,
+    *,
+    n: int,
+    url: str = "https://api.openai.com/v1/chat/completions",
+) -> None:
+    """Register ``n`` interview + summary response pairs on the mock."""
 
     for _ in range(n):
         httpx_mock.add_response(
             method="POST",
-            url="https://api.openai.com/v1/chat/completions",
+            url=url,
             json={
                 "choices": [
                     {
@@ -374,7 +375,7 @@ def _add_interview_chat_responses(httpx_mock, *, n: int) -> None:
         )
         httpx_mock.add_response(
             method="POST",
-            url="https://api.openai.com/v1/chat/completions",
+            url=url,
             json={
                 "choices": [
                     {
@@ -978,3 +979,131 @@ def test_report_정상_E2E_exit_0(httpx_mock, tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     md_files = list(tmp_path.glob("report_*.md"))
     assert md_files
+
+
+# ---------------------------------------------------------------------------
+# --provider / --base-url CLI overrides
+# ---------------------------------------------------------------------------
+
+
+def test_healthcheck_provider_anthropic_CLI(httpx_mock, tmp_path: Path) -> None:
+    """``--provider anthropic``이 base_url과 인증 헤더를 Anthropic으로 전환한다."""
+
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.anthropic.com/v1/messages",
+        json={
+            "id": "msg_1",
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "pong"}],
+            "model": "claude-haiku-4-5",
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+        },
+        status_code=200,
+    )
+
+    runner = _make_json_runner()
+    result = runner.invoke(
+        cli,
+        [
+            "--json",
+            "healthcheck",
+            "--provider",
+            "anthropic",
+            "--model",
+            "claude-haiku-4-5",
+        ],
+        env={
+            "KPI_OUTPUT_DIR": str(tmp_path),
+            "ANTHROPIC_API_KEY": "sk-ant-test",
+        },
+    )
+    assert result.exit_code == 0, result.stdout + result.stderr
+    payload = _stdout_json(result)
+    assert payload["provider"] == "anthropic"
+    assert payload["model"] == "claude-haiku-4-5"
+
+
+def test_healthcheck_base_url_override_local_LLM(
+    httpx_mock, tmp_path: Path
+) -> None:
+    """``--base-url``로 로컬 LLM 엔드포인트를 가리킬 수 있다."""
+
+    httpx_mock.add_response(
+        method="GET",
+        url="http://localhost:8080/v1/models",
+        json={"data": [{"id": "local-mlx"}]},
+        status_code=200,
+    )
+
+    runner = _make_json_runner()
+    result = runner.invoke(
+        cli,
+        [
+            "--json",
+            "healthcheck",
+            "--base-url",
+            "http://localhost:8080/v1",
+            "--model",
+            "local-mlx",
+        ],
+        env={
+            "KPI_OUTPUT_DIR": str(tmp_path),
+            "OPENAI_API_KEY": "local-or-dummy",
+        },
+    )
+    assert result.exit_code == 0, result.stdout + result.stderr
+    payload = _stdout_json(result)
+    assert payload["base_url"] == "http://localhost:8080/v1"
+    assert payload["model"] == "local-mlx"
+
+
+def test_interview_provider_base_url_override(
+    httpx_mock, fake_load_dataset, tmp_path: Path
+) -> None:
+    """interview에서도 ``--provider``와 ``--base-url`` 둘 다 적용된다."""
+
+    httpx_mock.add_response(
+        method="GET",
+        url="http://localhost:8080/v1/models",
+        json={"data": [{"id": "local-mlx"}]},
+        status_code=200,
+    )
+    _add_interview_chat_responses(
+        httpx_mock,
+        n=1,
+        url="http://localhost:8080/v1/chat/completions",
+    )
+
+    runner = _make_json_runner()
+    result = runner.invoke(
+        cli,
+        [
+            "--json",
+            "interview",
+            "--product",
+            "반찬",
+            "--questions",
+            "Q1",
+            "--n",
+            "1",
+            "--no-report",
+            "--provider",
+            "openai",
+            "--base-url",
+            "http://localhost:8080/v1",
+            "--model",
+            "local-mlx",
+            "--output",
+            str(tmp_path),
+        ],
+        env={
+            "KPI_OUTPUT_DIR": str(tmp_path),
+            "OPENAI_API_KEY": "local-or-dummy",
+        },
+    )
+    assert result.exit_code == 0, result.stdout + result.stderr
+    payload = _stdout_json(result)
+    assert payload["model"] == "local-mlx"

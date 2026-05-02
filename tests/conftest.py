@@ -51,6 +51,7 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
             monkeypatch.delenv(key, raising=False)
     monkeypatch.delenv("NO_COLOR", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
     # 페르소나 풀 in-memory 캐시는 프로세스 단위로 누적되므로 테스트 간 격리
     # 위해 매 테스트마다 비운다.

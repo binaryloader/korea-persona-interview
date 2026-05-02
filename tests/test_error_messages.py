@@ -36,13 +36,9 @@ from src.models import (
 
 
 def test_ServerNotReachableError_메시지_본문() -> None:
-    """1번: ``OpenAI 서버에 연결할 수 없습니다`` + 모델 ID 영문 placeholder.
+    """Provider-agnostic body referencing the configured model id placeholder."""
 
-    v1.x 백엔드 전환 후 안내 본문은 OpenAI 관점으로 갱신되었다.
-    """
-
-    assert "OpenAI 서버에 연결할 수 없습니다" in MESSAGES["server_not_reachable"]
-    # 모델 ID는 영문 placeholder로 보존
+    assert "LLM 서버에 연결할 수 없습니다" in MESSAGES["server_not_reachable"]
     assert "{model}" in MESSAGES["server_not_reachable"]
 
 

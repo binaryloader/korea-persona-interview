@@ -113,3 +113,52 @@ def test_PRICING_TABLE_gpt_4o_별도_단가() -> None:
     full = PRICING_TABLE["gpt-4o"]
     assert full.input > mini.input
     assert full.output > mini.output
+
+
+# ---------------------------------------------------------------------------
+# Anthropic Claude
+# ---------------------------------------------------------------------------
+
+
+def test_lookup_pricing_claude_haiku_4_5() -> None:
+    pricing = lookup_pricing("claude-haiku-4-5")
+    assert pricing.input > 0
+    assert pricing.output > pricing.input
+    # Anthropic cache_read is roughly 0.1x of input.
+    assert pricing.cached_input < pricing.input
+
+
+def test_PRICING_TABLE_claude_세_종_등록() -> None:
+    """Haiku, Sonnet, Opus 세 종이 모두 등록되어 있다."""
+
+    assert "claude-haiku-4-5" in PRICING_TABLE
+    assert "claude-sonnet-4-5" in PRICING_TABLE
+    assert "claude-opus-4-5" in PRICING_TABLE
+
+
+def test_PRICING_TABLE_claude_등급별_가격_상승() -> None:
+    """Haiku < Sonnet < Opus 단가 순서."""
+
+    haiku = PRICING_TABLE["claude-haiku-4-5"]
+    sonnet = PRICING_TABLE["claude-sonnet-4-5"]
+    opus = PRICING_TABLE["claude-opus-4-5"]
+    assert haiku.input < sonnet.input < opus.input
+    assert haiku.output < sonnet.output < opus.output
+
+
+def test_estimate_cost_usd_claude_basic() -> None:
+    """Anthropic 모델 비용 계산도 동일한 수식이 적용된다."""
+
+    usage = TokenUsage(
+        prompt_tokens=1_000_000,
+        completion_tokens=500_000,
+        total_tokens=1_500_000,
+        cached_tokens=0,
+    )
+    cost = estimate_cost_usd(usage, "claude-haiku-4-5")
+    pricing = lookup_pricing("claude-haiku-4-5")
+    expected = (
+        1_000_000 * pricing.input
+        + 500_000 * pricing.output
+    ) / 1_000_000.0
+    assert cost == pytest.approx(expected, rel=1e-9)
