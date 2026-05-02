@@ -423,7 +423,7 @@ def _build_resume_only_envelope(
         "timeout": config.llm.timeout,
         "context_budget": config.llm.context_budget,
         "single_turn": bool(config.batch.single_turn),
-        "persona_fields": list(config.batch.persona_fields),
+        "persona_fields": list(config.common.persona.fields),
     }
     meta = RunMeta(
         interview_id=interview_id,
@@ -832,7 +832,7 @@ async def run_batch(
         "timeout": config.llm.timeout,
         "context_budget": config.llm.context_budget,
         "single_turn": bool(config.batch.single_turn),
-        "persona_fields": list(config.batch.persona_fields),
+        "persona_fields": list(config.common.persona.fields),
     }
 
     meta = RunMeta(

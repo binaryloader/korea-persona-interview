@@ -1375,8 +1375,8 @@ async def generate_report(
         records,
         top_n=options.top_n,
         include_drift=options.include_drift,
-        cohort_min_cell=config.report.cohort_min_cell,
-        histogram_bins=config.report.histogram_bins,
+        cohort_min_cell=config.common.report.cohort_min_cell,
+        histogram_bins=config.common.report.histogram_bins,
     )
 
     if llm is not None:
@@ -1417,8 +1417,8 @@ async def generate_report(
         include_drift=options.include_drift,
         top_n=options.top_n,
         usage_summary=usage_summary,
-        bar_width=config.report.bar_width,
-        cohort_min_cell=config.report.cohort_min_cell,
+        bar_width=config.common.report.bar_width,
+        cohort_min_cell=config.common.report.cohort_min_cell,
     )
 
     output_path = _resolve_output_path(json_path, options.output_dir)

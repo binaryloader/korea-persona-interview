@@ -279,10 +279,12 @@ def make_app_config():
     from src.config import (
         AppConfig,
         BatchConfig,
+        CommonConfig,
         DatasetConfig,
-        InterviewConfig,
+        HeuristicsConfig,
         LlmConfig,
         McpConfig,
+        PersonaConfig,
         ReportConfig,
     )
 
@@ -347,7 +349,6 @@ def make_app_config():
         )
         batch = BatchConfig(
             concurrency=concurrency,
-            persona_fields=persona_fields,
             single_turn=single_turn,
             partial_failure_threshold=partial_failure_threshold,
         )
@@ -383,14 +384,13 @@ def make_app_config():
                 "경기도": "경기",
             },
         )
-        interview = InterviewConfig(
+        heuristics = HeuristicsConfig(
             short_answer_threshold=short_answer_threshold,
             english_ratio_threshold=english_ratio_threshold,
             ambiguous_keywords=ambiguous_keywords,
             refusal_keywords=refusal_keywords,
             auto_follow_up_text=auto_follow_up_text,
             auto_follow_up_max=auto_follow_up_max,
-            system_prompt_path=system_prompt_path,
             occupation_english_whitelist=occupation_english_whitelist,
             llm_drift_review=llm_drift_review,
         )
@@ -402,13 +402,21 @@ def make_app_config():
             insight_model=insight_model,
             estimate_wtp_from_signal=estimate_wtp_from_signal,
         )
+        persona = PersonaConfig(
+            fields=persona_fields,
+            system_prompt_path=system_prompt_path,
+        )
+        common = CommonConfig(
+            dataset=dataset,
+            persona=persona,
+            report=report,
+        )
         mcp = McpConfig(mode=mcp_mode)
         return AppConfig(
+            common=common,
             llm=llm,
             batch=batch,
-            dataset=dataset,
-            interview=interview,
-            report=report,
+            heuristics=heuristics,
             mcp=mcp,
             output_dir=output_dir,
             log_level=log_level,

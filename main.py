@@ -473,8 +473,8 @@ def list_personas(
     try:
         parse_filter(
             filter_spec,
-            config.dataset.gender_aliases,
-            config.dataset.province_aliases,
+            config.common.dataset.gender_aliases,
+            config.common.dataset.province_aliases,
         )
     except ConfigError as exc:
         if json_mode:
@@ -495,11 +495,11 @@ def list_personas(
             filter_str=filter_spec,
             n=len(persona_ids) if persona_ids else limit,
             seed=seed,
-            field_map=config.dataset.field_map,
-            gender_aliases=config.dataset.gender_aliases,
-            province_aliases=config.dataset.province_aliases,
-            dataset_name=config.dataset.name,
-            split=config.dataset.split,
+            field_map=config.common.dataset.field_map,
+            gender_aliases=config.common.dataset.gender_aliases,
+            province_aliases=config.common.dataset.province_aliases,
+            dataset_name=config.common.dataset.name,
+            split=config.common.dataset.split,
             persona_ids=tuple(persona_ids) if persona_ids else None,
         )
     except FilterMatchedZeroError as exc:
@@ -739,9 +739,9 @@ def interview(
     overrides: dict = {
         "batch": {
             "concurrency": concurrency,
-            "persona_fields": list(fields_tuple),
             "single_turn": bool(single_turn),
         },
+        "common": {"persona": {"fields": list(fields_tuple)}},
         "output": {"output_dir": str(output_dir)},
     }
     if provider or base_url or model_override:
@@ -799,8 +799,8 @@ def interview(
     try:
         parse_filter(
             filter_spec,
-            config.dataset.gender_aliases,
-            config.dataset.province_aliases,
+            config.common.dataset.gender_aliases,
+            config.common.dataset.province_aliases,
         )
     except ConfigError as exc:
         _exit_with_error(
@@ -834,11 +834,11 @@ def interview(
             filter_str=filter_spec,
             n=target_n,
             seed=seed,
-            field_map=config.dataset.field_map,
-            gender_aliases=config.dataset.gender_aliases,
-            province_aliases=config.dataset.province_aliases,
-            dataset_name=config.dataset.name,
-            split=config.dataset.split,
+            field_map=config.common.dataset.field_map,
+            gender_aliases=config.common.dataset.gender_aliases,
+            province_aliases=config.common.dataset.province_aliases,
+            dataset_name=config.common.dataset.name,
+            split=config.common.dataset.split,
             persona_ids=target_persona_ids or None,
         )
     except FilterMatchedZeroError as exc:
@@ -1265,7 +1265,9 @@ def report(
             llm_overrides["model"] = model_override
         cli_overrides["llm"] = llm_overrides
     if insight_model_override:
-        cli_overrides.setdefault("report", {})["insight_model"] = insight_model_override
+        cli_overrides.setdefault("common", {}).setdefault("report", {})[
+            "insight_model"
+        ] = insight_model_override
 
     try:
         config, console = _common_setup(
@@ -1372,15 +1374,15 @@ async def _run_report_async(
 ) -> Path:
     """리포트는 LLM 호출 1회를 포함한다. 호출 실패는 ``generate_report``에서 흡수.
 
-    ``config.report.insight_model``이 지정되면 정성 인사이트 호출 한정으로
+    ``config.common.report.insight_model``이 지정되면 정성 인사이트 호출 한정으로
     ``LlmConfig.model``만 갈아끼운 별도 backend를 만든다. 인터뷰 단계는 mini,
     인사이트는 4o/sonnet 류 더 깊은 모델로 분리하는 흐름을 yaml/CLI에서 단일
     옵션으로 지원한다.
     """
 
     insight_model = (
-        config.report.insight_model.strip()
-        if config.report.insight_model
+        config.common.report.insight_model.strip()
+        if config.common.report.insight_model
         else None
     )
     if insight_model and insight_model != config.llm.model:

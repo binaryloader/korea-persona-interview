@@ -403,8 +403,8 @@ async def _handle_list_personas(arguments: dict) -> dict:
     try:
         parse_filter(
             filter_spec,
-            config.dataset.gender_aliases,
-            config.dataset.province_aliases,
+            config.common.dataset.gender_aliases,
+            config.common.dataset.province_aliases,
         )
     except ConfigError as exc:
         return _error_payload(
@@ -416,11 +416,11 @@ async def _handle_list_personas(arguments: dict) -> dict:
             filter_str=filter_spec,
             n=len(persona_ids_tuple) if persona_ids_tuple else limit,
             seed=seed,
-            field_map=config.dataset.field_map,
-            gender_aliases=config.dataset.gender_aliases,
-            province_aliases=config.dataset.province_aliases,
-            dataset_name=config.dataset.name,
-            split=config.dataset.split,
+            field_map=config.common.dataset.field_map,
+            gender_aliases=config.common.dataset.gender_aliases,
+            province_aliases=config.common.dataset.province_aliases,
+            dataset_name=config.common.dataset.name,
+            split=config.common.dataset.split,
             persona_ids=persona_ids_tuple or None,
         )
     except FilterMatchedZeroError as exc:
@@ -516,8 +516,8 @@ async def _handle_interview(arguments: dict) -> dict:
     try:
         parse_filter(
             filter_spec,
-            config.dataset.gender_aliases,
-            config.dataset.province_aliases,
+            config.common.dataset.gender_aliases,
+            config.common.dataset.province_aliases,
         )
     except ConfigError as exc:
         return _error_payload(
@@ -532,11 +532,11 @@ async def _handle_interview(arguments: dict) -> dict:
             filter_str=filter_spec,
             n=len(persona_ids_tuple) if persona_ids_tuple else n,
             seed=seed,
-            field_map=config.dataset.field_map,
-            gender_aliases=config.dataset.gender_aliases,
-            province_aliases=config.dataset.province_aliases,
-            dataset_name=config.dataset.name,
-            split=config.dataset.split,
+            field_map=config.common.dataset.field_map,
+            gender_aliases=config.common.dataset.gender_aliases,
+            province_aliases=config.common.dataset.province_aliases,
+            dataset_name=config.common.dataset.name,
+            split=config.common.dataset.split,
             persona_ids=persona_ids_tuple or None,
         )
     except FilterMatchedZeroError as exc:

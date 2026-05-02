@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional
 
 from ._json_utils import extract_json_object
-from .config import AppConfig, InterviewConfig, LlmConfig
+from .config import AppConfig, HeuristicsConfig, LlmConfig
 from .logging_setup import mask_name, mask_persona_id, mask_product
 
 if TYPE_CHECKING:  # pragma: no cover - 타입 체크 전용 import
@@ -465,7 +465,7 @@ def build_system_prompt(
         persona_fields: 토글 키워드 튜플. ``("summary",)``가 기본값.
         field_map: ``DatasetConfig.field_map``. 토글 키워드 → 데이터셋 컬럼 매핑.
         system_prompt_path: 템플릿 파일 경로. 절대 경로 또는 프로젝트 루트 기준
-            상대 경로. ``InterviewConfig.system_prompt_path``에서 받는다.
+            상대 경로. ``CommonConfig.persona.system_prompt_path``에서 받는다.
 
     Returns:
         시스템 프롬프트 문자열.
@@ -908,7 +908,7 @@ def detect_persona_drift(
         response: 모델 응답 본문.
         persona: 페르소나 메타.
         english_ratio_threshold: 영어 비율 임계값(0.0-1.0). 기본 0.30은
-            ``InterviewConfig.english_ratio_threshold``의 기본값과 일치한다.
+            ``HeuristicsConfig.english_ratio_threshold``의 기본값과 일치한다.
             yaml 또는 사용자 설정에서 조정 가능하다.
     """
 
@@ -1305,7 +1305,7 @@ class InterviewSession:
         self._client = client
         self._config = config
         self._llm_cfg: LlmConfig = config.llm
-        self._interview_cfg: InterviewConfig = config.interview
+        self._heuristics_cfg: HeuristicsConfig = config.heuristics
 
     async def run(self) -> InterviewRecord:
         """인터뷰 1회를 끝까지 진행하고 ``InterviewRecord``를 반환한다.
@@ -1329,9 +1329,9 @@ class InterviewSession:
         system_prompt = build_system_prompt(
             self._persona,
             self._product,
-            self._config.batch.persona_fields,
-            self._config.dataset.field_map,
-            self._interview_cfg.system_prompt_path,
+            self._config.common.persona.fields,
+            self._config.common.dataset.field_map,
+            self._config.common.persona.system_prompt_path,
         )
         messages: list = [MessageEntry(role="system", content=system_prompt)]
         raw_responses: list = []
@@ -1395,7 +1395,7 @@ class InterviewSession:
                 )
 
                 # 거부 감지(가장 강한 신호. 즉시 중단).
-                if detect_refusal(response_text, self._interview_cfg.refusal_keywords):
+                if detect_refusal(response_text, self._heuristics_cfg.refusal_keywords):
                     flags = dataclasses.replace(flags, refusal_detected=True)
                     status = "refused"
                     logger.warning(
@@ -1411,11 +1411,11 @@ class InterviewSession:
                 if detect_persona_drift(
                     response_text,
                     self._persona,
-                    self._interview_cfg.english_ratio_threshold,
-                    self._interview_cfg.occupation_english_whitelist,
+                    self._heuristics_cfg.english_ratio_threshold,
+                    self._heuristics_cfg.occupation_english_whitelist,
                 ):
                     drift_confirmed = True
-                    if self._interview_cfg.llm_drift_review:
+                    if self._heuristics_cfg.llm_drift_review:
                         drift_confirmed = await review_drift_with_llm(
                             response_text,
                             self._persona,
@@ -1446,11 +1446,11 @@ class InterviewSession:
                 if (
                     q_index < len(self._questions)
                     and not flags.auto_follow_up_used
-                    and self._interview_cfg.auto_follow_up_max > 0
+                    and self._heuristics_cfg.auto_follow_up_max > 0
                     and should_auto_follow_up(
                         response_text,
-                        threshold=self._interview_cfg.short_answer_threshold,
-                        ambiguous_keywords=self._interview_cfg.ambiguous_keywords,
+                        threshold=self._heuristics_cfg.short_answer_threshold,
+                        ambiguous_keywords=self._heuristics_cfg.ambiguous_keywords,
                     )
                 ):
                     flags = dataclasses.replace(flags, auto_follow_up_used=True)
@@ -1469,7 +1469,7 @@ class InterviewSession:
                     messages.append(
                         MessageEntry(
                             role="user",
-                            content=self._interview_cfg.auto_follow_up_text,
+                            content=self._heuristics_cfg.auto_follow_up_text,
                         )
                     )
                     (
@@ -1492,7 +1492,7 @@ class InterviewSession:
 
                     # follow-up 응답에서도 거부/drift는 감지한다.
                     if detect_refusal(
-                        fu_text, self._interview_cfg.refusal_keywords
+                        fu_text, self._heuristics_cfg.refusal_keywords
                     ):
                         flags = dataclasses.replace(flags, refusal_detected=True)
                         status = "refused"
@@ -1500,11 +1500,11 @@ class InterviewSession:
                     if detect_persona_drift(
                         fu_text,
                         self._persona,
-                        self._interview_cfg.english_ratio_threshold,
-                        self._interview_cfg.occupation_english_whitelist,
+                        self._heuristics_cfg.english_ratio_threshold,
+                        self._heuristics_cfg.occupation_english_whitelist,
                     ):
                         drift_confirmed = True
-                        if self._interview_cfg.llm_drift_review:
+                        if self._heuristics_cfg.llm_drift_review:
                             drift_confirmed = await review_drift_with_llm(
                                 fu_text,
                                 self._persona,
@@ -1652,9 +1652,9 @@ class InterviewSession:
         system_prompt = build_system_prompt(
             self._persona,
             self._product,
-            self._config.batch.persona_fields,
-            self._config.dataset.field_map,
-            self._interview_cfg.system_prompt_path,
+            self._config.common.persona.fields,
+            self._config.common.dataset.field_map,
+            self._config.common.persona.system_prompt_path,
         )
         all_questions = list(self._questions) + list(self._follow_ups)
 
@@ -1708,7 +1708,7 @@ class InterviewSession:
             )
 
             # 거부 감지(가장 강한 신호. 즉시 status 갱신, 파싱은 시도하지 않음).
-            if detect_refusal(response_text, self._interview_cfg.refusal_keywords):
+            if detect_refusal(response_text, self._heuristics_cfg.refusal_keywords):
                 flags = dataclasses.replace(flags, refusal_detected=True)
                 status = "refused"
                 # refused여도 raw_responses에 응답 1건은 보존(분석 가능성).
@@ -1726,11 +1726,11 @@ class InterviewSession:
                 if detect_persona_drift(
                     response_text,
                     self._persona,
-                    self._interview_cfg.english_ratio_threshold,
-                    self._interview_cfg.occupation_english_whitelist,
+                    self._heuristics_cfg.english_ratio_threshold,
+                    self._heuristics_cfg.occupation_english_whitelist,
                 ):
                     drift_confirmed = True
-                    if self._interview_cfg.llm_drift_review:
+                    if self._heuristics_cfg.llm_drift_review:
                         drift_confirmed = await review_drift_with_llm(
                             response_text,
                             self._persona,

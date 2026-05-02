@@ -113,7 +113,7 @@ def test_ConcurrencyOutOfRangeError_메시지() -> None:
     """
 
     with pytest.raises(ConfigError) as exc_info:
-        BatchConfig(concurrency=11, persona_fields=("summary",))
+        BatchConfig(concurrency=11)
     msg = str(exc_info.value)
     assert "1-10" in msg
     assert "입력값" in msg

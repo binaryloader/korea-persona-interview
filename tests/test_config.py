@@ -15,7 +15,7 @@ import pytest
 from src.config import (
     AppConfig,
     BatchConfig,
-    InterviewConfig,
+    HeuristicsConfig,
     LlmConfig,
     load_config,
 )
@@ -39,7 +39,7 @@ def test_load_config_default_사용가능_yaml_없을때(
     assert cfg.llm.model == "gpt-4o-mini"
     assert cfg.llm.api_key is None
     assert cfg.batch.concurrency == 4
-    assert cfg.dataset.name == "nvidia/Nemotron-Personas-Korea"
+    assert cfg.common.dataset.name == "nvidia/Nemotron-Personas-Korea"
 
 
 # ---------------------------------------------------------------------------
@@ -134,7 +134,7 @@ def test_load_config_v1_x_KPI_BATCH_PERSONA_FIELDS_env_무시(
 
     monkeypatch.setenv("KPI_BATCH_PERSONA_FIELDS", "summary,professional,family")
     cfg = load_config(yaml_path=tmp_path / "no.yaml")
-    assert cfg.batch.persona_fields == ("summary",)
+    assert cfg.common.persona.fields == ("summary",)
 
 
 def test_load_config_v1_x_KPI_OUTPUT_DIR_env_유지(
@@ -370,13 +370,13 @@ def test_load_config_legacy_backend_필드_무시(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("c", [1, 2, 3, 4, 5, 8, 10])
 def test_batch_config_동시성_허용범위_생성_성공(c: int) -> None:
-    BatchConfig(concurrency=c, persona_fields=("summary",))
+    BatchConfig(concurrency=c)
 
 
 @pytest.mark.parametrize("c", [0, 11, 16, -1])
 def test_batch_config_동시성_범위외_ConfigError(c: int) -> None:
     with pytest.raises(ConfigError):
-        BatchConfig(concurrency=c, persona_fields=("summary",))
+        BatchConfig(concurrency=c)
 
 
 def test_load_config_동시성_11_ConfigError(
@@ -430,20 +430,20 @@ def test_load_config_동시성_상향_허용_4_to_10(tmp_path: Path, c: int) -> 
 
 def test_load_config_dataset_field_map_default_보존(tmp_path: Path) -> None:
     cfg = load_config(yaml_path=tmp_path / "no.yaml")
-    assert cfg.dataset.field_map["gender"] == "sex"
-    assert cfg.dataset.field_map["region"] == "province"
-    assert cfg.dataset.field_map["name"] is None
+    assert cfg.common.dataset.field_map["gender"] == "sex"
+    assert cfg.common.dataset.field_map["region"] == "province"
+    assert cfg.common.dataset.field_map["name"] is None
 
 
 def test_load_config_interview_default_keywords(tmp_path: Path) -> None:
     cfg = load_config(yaml_path=tmp_path / "no.yaml")
-    assert "글쎄요" in cfg.interview.ambiguous_keywords
-    assert "I cannot" in cfg.interview.refusal_keywords
-    assert cfg.interview.short_answer_threshold == 20
-    assert cfg.interview.english_ratio_threshold == 0.30
+    assert "글쎄요" in cfg.heuristics.ambiguous_keywords
+    assert "I cannot" in cfg.heuristics.refusal_keywords
+    assert cfg.heuristics.short_answer_threshold == 20
+    assert cfg.heuristics.english_ratio_threshold == 0.30
     # 라운드 B2: auto_follow_up_text/max도 default에서 노출된다.
-    assert cfg.interview.auto_follow_up_text == "조금만 더 자세히 말씀해 주실 수 있을까요?"
-    assert cfg.interview.auto_follow_up_max == 1
+    assert cfg.heuristics.auto_follow_up_text == "조금만 더 자세히 말씀해 주실 수 있을까요?"
+    assert cfg.heuristics.auto_follow_up_max == 1
 
 
 def test_load_config_interview_yaml_override(tmp_path: Path) -> None:
@@ -451,7 +451,7 @@ def test_load_config_interview_yaml_override(tmp_path: Path) -> None:
 
     yaml_path = tmp_path / "config.yaml"
     yaml_path.write_text(
-        "interview:\n"
+        "heuristics:\n"
         "  short_answer_threshold: 30\n"
         "  english_ratio_threshold: 0.5\n"
         "  ambiguous_keywords:\n"
@@ -463,22 +463,22 @@ def test_load_config_interview_yaml_override(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     cfg = load_config(yaml_path=yaml_path)
-    assert cfg.interview.short_answer_threshold == 30
-    assert cfg.interview.english_ratio_threshold == 0.5
-    assert cfg.interview.ambiguous_keywords == ("별 생각 없어",)
-    assert cfg.interview.refusal_keywords == ("못하겠습니다",)
-    assert cfg.interview.auto_follow_up_text == "한 번만 더 부탁드릴게요"
-    assert cfg.interview.auto_follow_up_max == 0
+    assert cfg.heuristics.short_answer_threshold == 30
+    assert cfg.heuristics.english_ratio_threshold == 0.5
+    assert cfg.heuristics.ambiguous_keywords == ("별 생각 없어",)
+    assert cfg.heuristics.refusal_keywords == ("못하겠습니다",)
+    assert cfg.heuristics.auto_follow_up_text == "한 번만 더 부탁드릴게요"
+    assert cfg.heuristics.auto_follow_up_max == 0
 
 
 @pytest.mark.parametrize("threshold", [-1, -100])
-def test_InterviewConfig_short_answer_threshold_음수_ConfigError(threshold: int) -> None:
+def test_HeuristicsConfig_short_answer_threshold_음수_ConfigError(threshold: int) -> None:
     """short_answer_threshold 음수는 ConfigError(라운드 B2)."""
 
     with pytest.raises(ConfigError):
-        from src.config import InterviewConfig
+        from src.config import HeuristicsConfig
 
-        InterviewConfig(
+        HeuristicsConfig(
             short_answer_threshold=threshold,
             english_ratio_threshold=0.3,
             ambiguous_keywords=(),
@@ -487,13 +487,13 @@ def test_InterviewConfig_short_answer_threshold_음수_ConfigError(threshold: in
 
 
 @pytest.mark.parametrize("ratio", [-0.1, 1.1, 2.0])
-def test_InterviewConfig_english_ratio_범위외_ConfigError(ratio: float) -> None:
+def test_HeuristicsConfig_english_ratio_범위외_ConfigError(ratio: float) -> None:
     """english_ratio_threshold가 0-1 범위 밖이면 ConfigError(라운드 B2)."""
 
     with pytest.raises(ConfigError):
-        from src.config import InterviewConfig
+        from src.config import HeuristicsConfig
 
-        InterviewConfig(
+        HeuristicsConfig(
             short_answer_threshold=20,
             english_ratio_threshold=ratio,
             ambiguous_keywords=(),
@@ -501,13 +501,13 @@ def test_InterviewConfig_english_ratio_범위외_ConfigError(ratio: float) -> No
         )
 
 
-def test_InterviewConfig_auto_follow_up_text_빈_문자열_ConfigError() -> None:
+def test_HeuristicsConfig_auto_follow_up_text_빈_문자열_ConfigError() -> None:
     """auto_follow_up_text가 비면 ConfigError(라운드 B2)."""
 
     with pytest.raises(ConfigError):
-        from src.config import InterviewConfig
+        from src.config import HeuristicsConfig
 
-        InterviewConfig(
+        HeuristicsConfig(
             short_answer_threshold=20,
             english_ratio_threshold=0.3,
             ambiguous_keywords=(),
@@ -525,10 +525,10 @@ def test_load_config_report_default(tmp_path: Path) -> None:
     """ReportConfig default 값이 yaml 없을 때도 노출된다(라운드 B3)."""
 
     cfg = load_config(yaml_path=tmp_path / "no.yaml")
-    assert cfg.report.cohort_min_cell == 3
-    assert cfg.report.top_n_default == 10
-    assert cfg.report.histogram_bins == 10
-    assert cfg.report.bar_width == 30
+    assert cfg.common.report.cohort_min_cell == 3
+    assert cfg.common.report.top_n_default == 10
+    assert cfg.common.report.histogram_bins == 10
+    assert cfg.common.report.bar_width == 30
 
 
 def test_load_config_report_yaml_override(tmp_path: Path) -> None:
@@ -536,18 +536,19 @@ def test_load_config_report_yaml_override(tmp_path: Path) -> None:
 
     yaml_path = tmp_path / "config.yaml"
     yaml_path.write_text(
-        "report:\n"
-        "  cohort_min_cell: 5\n"
-        "  top_n_default: 20\n"
-        "  histogram_bins: 5\n"
-        "  bar_width: 20\n",
+        "common:\n"
+        "  report:\n"
+        "    cohort_min_cell: 5\n"
+        "    top_n_default: 20\n"
+        "    histogram_bins: 5\n"
+        "    bar_width: 20\n",
         encoding="utf-8",
     )
     cfg = load_config(yaml_path=yaml_path)
-    assert cfg.report.cohort_min_cell == 5
-    assert cfg.report.top_n_default == 20
-    assert cfg.report.histogram_bins == 5
-    assert cfg.report.bar_width == 20
+    assert cfg.common.report.cohort_min_cell == 5
+    assert cfg.common.report.top_n_default == 20
+    assert cfg.common.report.histogram_bins == 5
+    assert cfg.common.report.bar_width == 20
 
 
 @pytest.mark.parametrize("c", [0, -1])
@@ -577,7 +578,7 @@ def test_load_config_report_insight_model_default_None(tmp_path: Path) -> None:
     """report.insight_model default는 None(라운드 G13)."""
 
     cfg = load_config(yaml_path=tmp_path / "no.yaml")
-    assert cfg.report.insight_model is None
+    assert cfg.common.report.insight_model is None
 
 
 def test_load_config_report_insight_model_yaml_override(tmp_path: Path) -> None:
@@ -585,11 +586,11 @@ def test_load_config_report_insight_model_yaml_override(tmp_path: Path) -> None:
 
     yaml_path = tmp_path / "config.yaml"
     yaml_path.write_text(
-        "report:\n  insight_model: gpt-4o\n",
+        "common:\n  report:\n    insight_model: gpt-4o\n",
         encoding="utf-8",
     )
     cfg = load_config(yaml_path=yaml_path)
-    assert cfg.report.insight_model == "gpt-4o"
+    assert cfg.common.report.insight_model == "gpt-4o"
 
 
 def test_load_config_report_insight_model_cli_override(tmp_path: Path) -> None:
@@ -597,9 +598,9 @@ def test_load_config_report_insight_model_cli_override(tmp_path: Path) -> None:
 
     cfg = load_config(
         yaml_path=tmp_path / "no.yaml",
-        cli_overrides={"report": {"insight_model": "claude-sonnet-4-5"}},
+        cli_overrides={"common": {"report": {"insight_model": "claude-sonnet-4-5"}}},
     )
-    assert cfg.report.insight_model == "claude-sonnet-4-5"
+    assert cfg.common.report.insight_model == "claude-sonnet-4-5"
 
 
 def test_load_config_batch_partial_failure_threshold_override(tmp_path: Path) -> None:
@@ -622,7 +623,6 @@ def test_BatchConfig_partial_failure_threshold_범위외_ConfigError(t: float) -
 
         BatchConfig(
             concurrency=2,
-            persona_fields=("summary",),
             partial_failure_threshold=t,
         )
 

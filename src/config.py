@@ -3,6 +3,20 @@
 우선순위는 내장 기본값, ``config.yaml``, ``.env`` 파일, 환경 변수, CLI
 오버라이드 순서로 적용한다. 결과는 frozen ``AppConfig`` dataclass로 반환한다.
 
+본 모듈은 v1.2.0(ADR-005)부터 yaml을 카테고리별 섹션으로 재구조화했다. 섹션은
+아래 6개다.
+
+- ``common``: 모든 진입점에 적용(CLI / MCP server / MCP orchestrator). dataset,
+  persona, report 정책의 정본
+- ``llm``: CLI와 MCP server 진입점에서만 적용. MCP orchestrator는 호스트
+  sub-agent가 자기 LLM을 사용하므로 본 섹션과 무관하다
+- ``batch``: CLI와 MCP server 진입점에서만 적용. MCP orchestrator는 호스트
+  정책을 따른다
+- ``heuristics``: CLI와 MCP server에서 자동 적용. MCP orchestrator는 helper
+  도구를 호스트가 명시 호출했을 때 같은 임계값과 키워드를 사용한다
+- ``mcp``: MCP 서버 진입점에서만 적용. CLI는 본 섹션과 무관하다
+- ``output``: 모든 진입점에 적용
+
 시크릿(``OPENAI_API_KEY``, ``ANTHROPIC_API_KEY``)은 환경 변수나 프로젝트
 루트의 ``.env`` 파일에서 읽는다. ``.env`` 파서는 ``python-dotenv`` 의존성을
 피하기 위해 표준 라이브러리만으로 구현했다. ``KEY=value`` 라인, ``#`` 주석,
@@ -27,7 +41,7 @@ DEFAULT_YAML_PATH = Path("config.yaml")
 
 _VALID_PROVIDERS = frozenset({"openai", "anthropic"})
 
-_VALID_MCP_MODES = frozenset({"server", "sampling"})
+_VALID_MCP_MODES = frozenset({"server", "orchestrator"})
 
 
 @dataclass(frozen=True)
@@ -102,16 +116,18 @@ class LlmConfig:
 
 @dataclass(frozen=True)
 class BatchConfig:
-    """배치 인터뷰 동시성과 페르소나 토글 설정.
+    """배치 인터뷰 동시성과 부분 실패 임계값.
 
     동시성 1-10은 일반적인 OpenAI 티어 rate limit 아래에 여유를 두기 위한
     soft cap이다. ``partial_failure_threshold``(0.0-1.0)는 이 비율 아래로
     성공률이 떨어지면 ``BatchResultEnvelope.partial_failure``를 true로
     뒤집고 CLI는 종료 코드 3으로 빠져나오는 임계값이다.
+
+    ``single_turn``은 CLI ``--single-turn`` 일회성 옵션이 cli_overrides 경로로
+    주입되므로 본 dataclass에 보관한다. yaml에는 키가 없다.
     """
 
     concurrency: int
-    persona_fields: tuple
     single_turn: bool = False
     partial_failure_threshold: float = 0.5
 
@@ -139,12 +155,40 @@ class DatasetConfig:
 
 
 @dataclass(frozen=True)
-class InterviewConfig:
+class PersonaConfig:
+    """페르소나 토글과 시스템 프롬프트 템플릿 경로.
+
+    ``fields``는 시스템 프롬프트에 추가 주입할 페르소나 토글 키워드 튜플이다.
+    ``("summary",)``가 기본값이며 ``professional``/``sports``/``arts``/``travel``/
+    ``culinary``/``family``를 추가하면 해당 자유 서술 컬럼이 페르소나 객체에
+    합쳐진다.
+
+    ``system_prompt_path``는 시스템 프롬프트 템플릿 파일 경로다(절대 경로 또는
+    프로젝트 루트 기준 상대 경로). pip-installed 환경에서 본 경로가 부재하고
+    default 경로면 패키지 내부 ``src._prompts.system_prompt.txt``로 fallback한다.
+    """
+
+    fields: tuple
+    system_prompt_path: str = "prompts/system_prompt.txt"
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.system_prompt_path, str) or not self.system_prompt_path.strip():
+            raise ConfigError(
+                "common.persona.system_prompt_path는 빈 문자열이 아닌 str이어야 한다"
+            )
+
+
+@dataclass(frozen=True)
+class HeuristicsConfig:
     """인터뷰 휴리스틱 임계값과 키워드 리스트.
 
     이 값들을 외부화하면 사용자는 코드를 건드리지 않고 yaml에서 자동
     follow-up 트리거와 페르소나 drift 감지기를 조정할 수 있다. 범위를
     벗어난 값은 ``__post_init__``에서 거부한다.
+
+    v1.2.0(ADR-005)부터 ``InterviewConfig``에서 ``HeuristicsConfig``로 이름이
+    바뀌었다. ``system_prompt_path``와 ``persona_fields``는 ``CommonConfig.persona``로
+    이동했다.
     """
 
     short_answer_threshold: int
@@ -153,33 +197,28 @@ class InterviewConfig:
     refusal_keywords: tuple
     auto_follow_up_text: str = "조금만 더 자세히 말씀해 주실 수 있을까요?"
     auto_follow_up_max: int = 1
-    system_prompt_path: str = "prompts/system_prompt.txt"
     occupation_english_whitelist: bool = True
     llm_drift_review: bool = False
 
     def __post_init__(self) -> None:
         if self.short_answer_threshold < 0:
             raise ConfigError(
-                "interview.short_answer_threshold는 0 이상이어야 한다. "
+                "heuristics.short_answer_threshold는 0 이상이어야 한다. "
                 f"입력값: {self.short_answer_threshold}"
             )
         if not (0.0 <= self.english_ratio_threshold <= 1.0):
             raise ConfigError(
-                "interview.english_ratio_threshold는 0.0-1.0 범위만 허용한다. "
+                "heuristics.english_ratio_threshold는 0.0-1.0 범위만 허용한다. "
                 f"입력값: {self.english_ratio_threshold}"
             )
         if self.auto_follow_up_max < 0:
             raise ConfigError(
-                "interview.auto_follow_up_max는 0 이상이어야 한다. "
+                "heuristics.auto_follow_up_max는 0 이상이어야 한다. "
                 f"입력값: {self.auto_follow_up_max}"
             )
         if not isinstance(self.auto_follow_up_text, str) or not self.auto_follow_up_text.strip():
             raise ConfigError(
-                "interview.auto_follow_up_text는 빈 문자열이 아닌 str이어야 한다"
-            )
-        if not isinstance(self.system_prompt_path, str) or not self.system_prompt_path.strip():
-            raise ConfigError(
-                "interview.system_prompt_path는 빈 문자열이 아닌 str이어야 한다"
+                "heuristics.auto_follow_up_text는 빈 문자열이 아닌 str이어야 한다"
             )
 
 
@@ -197,41 +236,55 @@ class ReportConfig:
     def __post_init__(self) -> None:
         if self.cohort_min_cell < 1:
             raise ConfigError(
-                "report.cohort_min_cell는 1 이상이어야 한다. "
+                "common.report.cohort_min_cell는 1 이상이어야 한다. "
                 f"입력값: {self.cohort_min_cell}"
             )
         if self.top_n_default < 1:
             raise ConfigError(
-                "report.top_n_default는 1 이상이어야 한다. "
+                "common.report.top_n_default는 1 이상이어야 한다. "
                 f"입력값: {self.top_n_default}"
             )
         if self.histogram_bins < 1:
             raise ConfigError(
-                "report.histogram_bins는 1 이상이어야 한다. "
+                "common.report.histogram_bins는 1 이상이어야 한다. "
                 f"입력값: {self.histogram_bins}"
             )
         if not (1 <= self.bar_width <= 200):
             raise ConfigError(
-                "report.bar_width는 1-200 범위만 허용한다. "
+                "common.report.bar_width는 1-200 범위만 허용한다. "
                 f"입력값: {self.bar_width}"
             )
+
+
+@dataclass(frozen=True)
+class CommonConfig:
+    """모든 진입점이 공유하는 공통 설정 묶음.
+
+    dataset, persona, report 세 하위 dataclass를 담는다. CLI / MCP server /
+    MCP orchestrator 어떤 진입점이든 본 섹션은 동일하게 적용된다.
+    """
+
+    dataset: DatasetConfig
+    persona: PersonaConfig
+    report: ReportConfig
 
 
 @dataclass(frozen=True)
 class McpConfig:
     """MCP 서버 진입점의 동작 모드 토글.
 
-    ``mode``는 ``server``와 ``sampling`` 두 값만 허용한다(ADR-004).
+    v1.2.0(ADR-005)부터 ``mode``는 ``server``와 ``orchestrator`` 두 값만 허용한다.
+    sampling 모드는 v1.2.0에서 제거됐다(보급률 한계).
 
     - ``server`` (기본): MCP 도구 호출이 server-side ``OpenAIBackend``/
-      ``AnthropicBackend``를 사용한다. CLI와 동일한 ``LlmConfig``(provider,
-      base_url, model, api_key, ...)를 그대로 활용한다. 사용자가 mcp.json의
-      ``env``에 ``OPENAI_API_KEY``/``ANTHROPIC_API_KEY``를 박아 주어야 한다
-    - ``sampling``: MCP 도구 호출이 호스트 에이전트의 ``sampling/createMessage``
-      에 위임한다. server-side에 키가 필요 없는 대신 호스트가 sampling
-      capability를 노출해야 한다(2026 현재 보급률이 낮음)
+      ``AnthropicBackend``를 사용한다. CLI와 동일한 ``LlmConfig`` 필드를 그대로
+      활용한다. mcp.json의 ``env``에 ``OPENAI_API_KEY``/``ANTHROPIC_API_KEY``를
+      박아 주어야 한다
+    - ``orchestrator``: server-side에서 LLM을 호출하지 않는다. 호스트 sub-agent
+      가 자기 LLM으로 인터뷰를 수행하고, 본 도구는 데이터/프롬프트 helper만
+      노출한다. server-side 키 불필요
 
-    자동 fallback은 하지 않는다. 모드 전환은 명시 토글로만 가능하다(ADR-004
+    자동 fallback은 하지 않는다. 모드 전환은 명시 토글로만 가능하다(ADR-005
     §3 결정 근거).
     """
 
@@ -247,13 +300,22 @@ class McpConfig:
 
 @dataclass(frozen=True)
 class AppConfig:
-    """최상위 애플리케이션 설정."""
+    """최상위 애플리케이션 설정.
 
+    v1.2.0(ADR-005)부터 카테고리별 섹션 재구조화의 정본이다. 호환성 깨짐은
+    아래와 같다.
+
+    - ``dataset`` 필드는 ``common.dataset``으로 이동
+    - ``report`` 필드는 ``common.report``로 이동
+    - ``interview`` 필드는 ``heuristics``로 리네임. ``system_prompt_path``와
+      ``persona_fields``는 ``common.persona``로 이동
+    - ``batch.persona_fields``는 ``common.persona.fields``로 이동
+    """
+
+    common: CommonConfig
     llm: LlmConfig
     batch: BatchConfig
-    dataset: DatasetConfig
-    interview: InterviewConfig
-    report: ReportConfig
+    heuristics: HeuristicsConfig
     mcp: McpConfig
     output_dir: Path
     log_level: str
@@ -264,6 +326,50 @@ def _default_dict() -> dict:
     """가장 낮은 우선순위의 머지 레이어로 쓰이는 내장 기본값."""
 
     return {
+        "common": {
+            "dataset": {
+                "name": "nvidia/Nemotron-Personas-Korea",
+                "split": "train",
+                "field_map": {
+                    "name": None,
+                    "gender": "sex",
+                    "age": "age",
+                    "region": "province",
+                    "subregion": "district",
+                    "occupation": "occupation",
+                    "marital": "marital_status",
+                    "education": "education_level",
+                    "family_type": "family_type",
+                    "housing_type": "housing_type",
+                    "summary": "persona",
+                    "professional": "professional_persona",
+                    "sports": "sports_persona",
+                    "arts": "arts_persona",
+                    "travel": "travel_persona",
+                    "culinary": "culinary_persona",
+                    "family": "family_persona",
+                },
+                "gender_aliases": {
+                    "F": "여자",
+                    "M": "남자",
+                    "여성": "여자",
+                    "남성": "남자",
+                },
+                "province_aliases": {},
+            },
+            "persona": {
+                "fields": ["summary"],
+                "system_prompt_path": "prompts/system_prompt.txt",
+            },
+            "report": {
+                "cohort_min_cell": 3,
+                "top_n_default": 10,
+                "histogram_bins": 10,
+                "bar_width": 30,
+                "insight_model": None,
+                "estimate_wtp_from_signal": False,
+            },
+        },
         "llm": {
             "provider": "openai",
             "base_url": "https://api.openai.com/v1",
@@ -281,41 +387,10 @@ def _default_dict() -> dict:
         },
         "batch": {
             "concurrency": 4,
-            "persona_fields": ["summary"],
             "single_turn": False,
             "partial_failure_threshold": 0.5,
         },
-        "dataset": {
-            "name": "nvidia/Nemotron-Personas-Korea",
-            "split": "train",
-            "field_map": {
-                "name": None,
-                "gender": "sex",
-                "age": "age",
-                "region": "province",
-                "subregion": "district",
-                "occupation": "occupation",
-                "marital": "marital_status",
-                "education": "education_level",
-                "family_type": "family_type",
-                "housing_type": "housing_type",
-                "summary": "persona",
-                "professional": "professional_persona",
-                "sports": "sports_persona",
-                "arts": "arts_persona",
-                "travel": "travel_persona",
-                "culinary": "culinary_persona",
-                "family": "family_persona",
-            },
-            "gender_aliases": {
-                "F": "여자",
-                "M": "남자",
-                "여성": "여자",
-                "남성": "남자",
-            },
-            "province_aliases": {},
-        },
-        "interview": {
+        "heuristics": {
             "short_answer_threshold": 20,
             "english_ratio_threshold": 0.30,
             "ambiguous_keywords": [
@@ -337,17 +412,8 @@ def _default_dict() -> dict:
             ],
             "auto_follow_up_text": "조금만 더 자세히 말씀해 주실 수 있을까요?",
             "auto_follow_up_max": 1,
-            "system_prompt_path": "prompts/system_prompt.txt",
             "occupation_english_whitelist": True,
             "llm_drift_review": False,
-        },
-        "report": {
-            "cohort_min_cell": 3,
-            "top_n_default": 10,
-            "histogram_bins": 10,
-            "bar_width": 30,
-            "insight_model": None,
-            "estimate_wtp_from_signal": False,
         },
         "mcp": {
             "mode": "server",
@@ -572,52 +638,31 @@ def load_config(
         )
         batch_cfg = BatchConfig(
             concurrency=int(merged["batch"]["concurrency"]),
-            persona_fields=tuple(str(x) for x in merged["batch"]["persona_fields"]),
             single_turn=bool(merged["batch"].get("single_turn", False)),
             partial_failure_threshold=float(
                 merged["batch"].get("partial_failure_threshold", 0.5)
             ),
         )
+        common_raw = merged.get("common") or {}
+        dataset_raw = common_raw.get("dataset") or {}
         dataset_cfg = DatasetConfig(
-            name=str(merged["dataset"]["name"]),
-            split=str(merged["dataset"]["split"]),
-            field_map=dict(merged["dataset"]["field_map"]),
-            gender_aliases=dict(merged["dataset"]["gender_aliases"]),
-            province_aliases=dict(merged["dataset"]["province_aliases"]),
+            name=str(dataset_raw["name"]),
+            split=str(dataset_raw["split"]),
+            field_map=dict(dataset_raw["field_map"]),
+            gender_aliases=dict(dataset_raw["gender_aliases"]),
+            province_aliases=dict(dataset_raw["province_aliases"]),
         )
-        interview_cfg = InterviewConfig(
-            short_answer_threshold=int(merged["interview"]["short_answer_threshold"]),
-            english_ratio_threshold=float(
-                merged["interview"]["english_ratio_threshold"]
-            ),
-            ambiguous_keywords=tuple(
-                str(x) for x in merged["interview"]["ambiguous_keywords"]
-            ),
-            refusal_keywords=tuple(
-                str(x) for x in merged["interview"]["refusal_keywords"]
-            ),
-            auto_follow_up_text=str(
-                merged["interview"].get(
-                    "auto_follow_up_text",
-                    "조금만 더 자세히 말씀해 주실 수 있을까요?",
-                )
-            ),
-            auto_follow_up_max=int(
-                merged["interview"].get("auto_follow_up_max", 1)
-            ),
+        persona_raw = common_raw.get("persona") or {}
+        persona_fields_raw = persona_raw.get("fields") or ["summary"]
+        persona_cfg = PersonaConfig(
+            fields=tuple(str(x) for x in persona_fields_raw),
             system_prompt_path=str(
-                merged["interview"].get(
+                persona_raw.get(
                     "system_prompt_path", "prompts/system_prompt.txt"
                 )
             ),
-            occupation_english_whitelist=bool(
-                merged["interview"].get("occupation_english_whitelist", True)
-            ),
-            llm_drift_review=bool(
-                merged["interview"].get("llm_drift_review", False)
-            ),
         )
-        report_raw = merged.get("report") or {}
+        report_raw = common_raw.get("report") or {}
         insight_model_raw = report_raw.get("insight_model")
         insight_model_val: Optional[str] = (
             str(insight_model_raw).strip() or None
@@ -634,6 +679,38 @@ def load_config(
                 report_raw.get("estimate_wtp_from_signal", False)
             ),
         )
+        common_cfg = CommonConfig(
+            dataset=dataset_cfg,
+            persona=persona_cfg,
+            report=report_cfg,
+        )
+        heuristics_cfg = HeuristicsConfig(
+            short_answer_threshold=int(merged["heuristics"]["short_answer_threshold"]),
+            english_ratio_threshold=float(
+                merged["heuristics"]["english_ratio_threshold"]
+            ),
+            ambiguous_keywords=tuple(
+                str(x) for x in merged["heuristics"]["ambiguous_keywords"]
+            ),
+            refusal_keywords=tuple(
+                str(x) for x in merged["heuristics"]["refusal_keywords"]
+            ),
+            auto_follow_up_text=str(
+                merged["heuristics"].get(
+                    "auto_follow_up_text",
+                    "조금만 더 자세히 말씀해 주실 수 있을까요?",
+                )
+            ),
+            auto_follow_up_max=int(
+                merged["heuristics"].get("auto_follow_up_max", 1)
+            ),
+            occupation_english_whitelist=bool(
+                merged["heuristics"].get("occupation_english_whitelist", True)
+            ),
+            llm_drift_review=bool(
+                merged["heuristics"].get("llm_drift_review", False)
+            ),
+        )
         mcp_raw = merged.get("mcp") or {}
         mcp_cfg = McpConfig(
             mode=str(mcp_raw.get("mode", "server")).strip().lower(),
@@ -642,11 +719,10 @@ def load_config(
         raise ConfigError(f"설정 필드 변환 실패: {exc}") from exc
 
     return AppConfig(
+        common=common_cfg,
         llm=llm_cfg,
         batch=batch_cfg,
-        dataset=dataset_cfg,
-        interview=interview_cfg,
-        report=report_cfg,
+        heuristics=heuristics_cfg,
         mcp=mcp_cfg,
         output_dir=Path(str(merged["output"]["output_dir"])),
         log_level=str(merged["output"]["log_level"]),

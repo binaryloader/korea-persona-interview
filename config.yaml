@@ -9,129 +9,158 @@
 #   셸 히스토리에 남지 않게 하기 위함이다.
 # - 출력 디렉토리는 테스트/CI 격리를 위해 KPI_OUTPUT_DIR 환경변수를 우선 사용한다.
 #
+# 진입점은 세 가지다(v1.2.0, ADR-005). 본 yaml의 각 섹션은 진입점별 적용
+# 범위가 명시되어 있다.
+# - CLI: `python main.py ...` 또는 `kpi ...`
+# - MCP server: `python -m src.mcp_server` 또는 `kpi-mcp-server`, mcp.mode가 "server"
+# - MCP orchestrator: 같은 진입점, mcp.mode가 "orchestrator"
+#
 # 로컬 LLM 사용 팁.
 # provider=openai를 그대로 두고 --base-url을 http://localhost:PORT/v1로
 # 덮어쓰면 된다. mlx_lm.server, vLLM, llama.cpp 모두 OpenAI 호환 인터페이스를 노출한다.
 
-# llm: LLM 호출의 HTTP transport와 요청 본문 모양을 정의한다.
-#
-# 본 섹션 대부분은 CLI 진입점에만 적용된다. MCP 서버 진입점
-# (`python -m src.mcp_server`)은 추론을 host agent에 `sampling/createMessage`로
-# 위임하므로, 모델/엔드포인트/transport는 host가 결정한다. 따라서 MCP 경로는
-# backend identity에 해당하는 모든 필드를 무시한다(provider, base_url, model,
-# api_key, streaming, extra_chat_kwargs, anthropic_cache_control, timeout,
-# retry_max_attempts, retry_backoff_seconds). max_tokens와 temperature만
-# host에 전달된다(sampling 인자로 forward). context_budget은 두 경로 모두에서
-# 메시지 히스토리 truncator가 적용하므로 진입점과 무관하게 honor된다.
+# common: 모든 진입점에서 적용되는 공통 설정이다(CLI / MCP server / MCP orchestrator).
+# 데이터셋, 페르소나 토글, 리포트 렌더링 정책은 어떤 진입점이든 동일하게 적용된다.
+common:
+  # dataset: Hugging Face 데이터셋 식별자와 컬럼/값 별칭. 데이터셋 갱신 시
+  # field_map과 alias dict만 yaml에서 갱신하면 코드 변경 없이 호환 가능하다.
+  dataset:
+    name: "nvidia/Nemotron-Personas-Korea"
+    split: "train"
+    # field_map: 코드의 페르소나 슬롯명 → 데이터셋 컬럼명 매핑. 데이터셋이 컬럼을
+    # 갈아끼우면 본 매핑만 갱신하면 된다.
+    field_map:
+      name: null
+      gender: "sex"
+      age: "age"
+      region: "province"
+      subregion: "district"
+      occupation: "occupation"
+      marital: "marital_status"
+      education: "education_level"
+      family_type: "family_type"
+      housing_type: "housing_type"
+      summary: "persona"
+      professional: "professional_persona"
+      sports: "sports_persona"
+      arts: "arts_persona"
+      travel: "travel_persona"
+      culinary: "culinary_persona"
+      family: "family_persona"
+    # gender_aliases: `--filter gender:F` 류 사용자 친화 표기를 데이터셋 표기로
+    # 정규화한다. 데이터셋 표기 `남자`/`여자` 직접 입력도 그대로 통과한다.
+    gender_aliases:
+      F: "여자"
+      M: "남자"
+      여성: "여자"
+      남성: "남자"
+    # province_aliases: `서울특별시` → `서울` 류 17개 시도 풀네임을 데이터셋의
+    # 짧은 표기로 정규화한다. 데이터셋 표기 직접 입력도 그대로 통과한다.
+    province_aliases:
+      서울특별시: "서울"
+      부산광역시: "부산"
+      대구광역시: "대구"
+      인천광역시: "인천"
+      광주광역시: "광주"
+      대전광역시: "대전"
+      울산광역시: "울산"
+      세종특별자치시: "세종"
+      경기도: "경기"
+      강원도: "강원"
+      강원특별자치도: "강원"
+      충청북도: "충청북"
+      충청남도: "충청남"
+      전라북도: "전북"
+      전북특별자치도: "전북"
+      전라남도: "전남"
+      경상북도: "경상북"
+      경상남도: "경상남"
+      제주특별자치도: "제주"
+  # persona: 페르소나 토글과 시스템 프롬프트 템플릿 경로. 모든 진입점에서 사용한다.
+  persona:
+    # 시스템 프롬프트에 추가 주입할 페르소나 토글 키워드. 기본값 `summary`는
+    # 항상 주입되며, `professional`/`sports`/`arts`/`travel`/`culinary`/`family`를
+    # 추가하면 해당 자유 서술 컬럼이 페르소나 객체에 합쳐진다.
+    fields: ["summary"]
+    # 시스템 프롬프트 템플릿 파일 경로(절대 경로 또는 프로젝트 루트 기준 상대
+    # 경로). pip-installed 환경에서 본 경로가 부재하고 default 경로면 패키지
+    # 내부 `src._prompts.system_prompt.txt`로 fallback한다.
+    system_prompt_path: "prompts/system_prompt.txt"
+  # report: 마크다운 리포트 렌더링 임계값과 정성 인사이트 모델. CLI의 report
+  # 명령, MCP server의 report 도구, MCP orchestrator의 aggregate_results 도구에서
+  # 모두 적용된다.
+  report:
+    # 코호트 셀 표본이 본 값 미만이면 `표본 부족`으로 마스킹한다(1 이상).
+    cohort_min_cell: 3
+    # 거절 사유 빈도 표의 기본 상위 N. CLI `--top-n`으로 일회성 override.
+    top_n_default: 10
+    # 가격 수용가 히스토그램 구간 수.
+    histogram_bins: 10
+    # 텍스트 막대 차트 폭(셀 단위).
+    bar_width: 30
+    # 정성 인사이트 호출에만 사용할 별도 모델 ID. null이면 인터뷰와 같은
+    # llm.model을 사용한다. 인터뷰는 gpt-4o-mini로 돌리고 인사이트 한 번만
+    # gpt-4o로 깊이 있는 통찰을 받는 흐름을 단일 옵션으로 지원한다. CLI와
+    # MCP server에서만 사용한다(MCP orchestrator는 호스트가 인사이트도 직접
+    # 생성하는 흐름을 권장한다).
+    insight_model: null
+    # 명시 숫자가 빠진 인터뷰에서 acceptable_price_signal과 product 가격을 보고
+    # willingness_to_pay 추정치를 보조 표기할지 여부. 기본 false. true로 두면
+    # 정성 신호와 product 단가만으로 추정한 값이 리포트 헤더에 별도 표시된다.
+    estimate_wtp_from_signal: false
+
+# llm: LLM 호출의 HTTP transport와 요청 본문 모양을 정의한다. 본 섹션은 CLI와
+# MCP server 진입점에서만 적용된다. MCP orchestrator는 자체 LLM을 호출하지
+# 않으므로 본 섹션과 무관하다(호스트 sub-agent가 자기 LLM과 자기 정책을 사용한다).
 llm:
   # provider: "openai" | "anthropic". 로컬 OpenAI 호환 서버는 provider=openai를
-  # 그대로 두고 base_url만 바꾼다. CLI 진입점 전용.
+  # 그대로 두고 base_url만 바꾼다.
   provider: "openai"
   # base_url과 model의 기본값은 historical openai 기본값에 맞춰져 있다. provider를
   # 바꿀 때는 둘 중 하나 또는 둘 다 명시해 핀하는 것이 안전하다.
-  # CLI 전용(MCP host는 자체 엔드포인트를 소유한다).
   base_url: "https://api.openai.com/v1"
   model: "gpt-4o-mini"
-  # max_tokens / temperature는 CLI backend와 MCP sampling host 모두에 전달된다
-  # (sampling/createMessage 호출에 forward).
+  # max_tokens / temperature는 모델에 전달된다.
   max_tokens: 500
   temperature: 0.8
-  # timeout / retry_*는 CLI 전용. MCP host는 자체 retry 정책을 갖는다.
+  # timeout / retry_*는 server-side LLM 호출에 적용된다.
   timeout: 120
   retry_max_attempts: 3
   retry_backoff_seconds: [1, 2, 4]
   # context_budget은 backend로 보내기 전 multi-turn 메시지 히스토리에 cap을
-  # 씌운다. 두 경로 모두에 적용된다. 시스템 프롬프트는 보존하고, 가장 오래된
-  # user/assistant 쌍부터 drop한다.
+  # 씌운다. 시스템 프롬프트는 보존하고, 가장 오래된 user/assistant 쌍부터 drop한다.
   context_budget: 32000
   # provider=anthropic 호출에서 system 메시지에 cache_control: ephemeral 마커를
   # 박아 prompt caching을 활성화한다. 예전 Messages API 리비전이 마커를 거부하면
-  # false로 두어 끈다. CLI 전용(provider=anthropic 한정).
+  # false로 두어 끈다(provider=anthropic 한정).
   anthropic_cache_control: true
   # OpenAI Chat Completions request body에 그대로 머지되는 확장 필드 dict.
   # 예: 로컬 mlx_lm.server/vLLM의 Qwen3 thinking 토글을 끄려면
   #   extra_chat_kwargs:
   #     chat_template_kwargs:
   #       enable_thinking: false
-  # CLI + provider=openai 한정. provider=anthropic이나 MCP sampling 경로에서는
-  # 무시된다.
+  # provider=openai 한정. provider=anthropic에서는 무시된다.
   extra_chat_kwargs: {}
   # OpenAI 호환 streaming(SSE) 응답을 사용한다. true로 두면 첫 토큰 시간이
   # 빨라지지만 일부 호환 서버는 SSE 형식이 미묘하게 다르므로 default false로
-  # 둔다. CLI + provider=openai 한정. provider=anthropic이나 MCP sampling
-  # 경로에서는 무시된다.
+  # 둔다. provider=openai 한정. provider=anthropic에서는 무시된다.
   streaming: false
 
-# batch: 배치 인터뷰 동시성과 페르소나 필드 토글, 부분 실패 임계값.
+# batch: 배치 인터뷰 동시성과 부분 실패 임계값. CLI와 MCP server 진입점에서만
+# 적용된다(이 두 진입점만 server-side 배치 실행기를 직접 돈다). MCP orchestrator는
+# 호스트의 sub-agent 정책에 따른다.
 batch:
-  # 1-10 범위만 허용한다. CLI ``--concurrency``로 일회성 override 가능.
+  # 1-10 범위만 허용한다. CLI `--concurrency`로 일회성 override 가능.
   concurrency: 4
-  # 시스템 프롬프트에 추가 주입할 페르소나 토글 키워드. 기본값 ``summary``는
-  # 항상 주입되며, ``professional``/``sports``/``arts``/``travel``/``culinary``/
-  # ``family``를 추가하면 해당 자유 서술 컬럼이 페르소나 객체에 합쳐진다.
-  persona_fields: ["summary"]
   # success 비율(completed + refused + drift)이 본 값 미만이면
-  # ``BatchResultEnvelope.partial_failure``가 True가 되어 CLI exit 3으로 끝난다.
+  # `BatchResultEnvelope.partial_failure`가 True가 되어 CLI exit 3으로 끝난다.
   partial_failure_threshold: 0.5
 
-# dataset: Hugging Face 데이터셋 식별자와 컬럼/값 별칭. 데이터셋 갱신 시
-# field_map과 alias dict만 yaml에서 갱신하면 코드 변경 없이 호환 가능하다.
-dataset:
-  name: "nvidia/Nemotron-Personas-Korea"
-  split: "train"
-  # field_map: 코드의 페르소나 슬롯명 → 데이터셋 컬럼명 매핑. 데이터셋이 컬럼을
-  # 갈아끼우면 본 매핑만 갱신하면 된다.
-  field_map:
-    name: null
-    gender: "sex"
-    age: "age"
-    region: "province"
-    subregion: "district"
-    occupation: "occupation"
-    marital: "marital_status"
-    education: "education_level"
-    family_type: "family_type"
-    housing_type: "housing_type"
-    summary: "persona"
-    professional: "professional_persona"
-    sports: "sports_persona"
-    arts: "arts_persona"
-    travel: "travel_persona"
-    culinary: "culinary_persona"
-    family: "family_persona"
-  # gender_aliases: ``--filter gender:F`` 류 사용자 친화 표기를 데이터셋 표기로
-  # 정규화한다. 데이터셋 표기 ``남자``/``여자`` 직접 입력도 그대로 통과한다.
-  gender_aliases:
-    F: "여자"
-    M: "남자"
-    여성: "여자"
-    남성: "남자"
-  # province_aliases: ``서울특별시`` → ``서울``류 17개 시도 풀네임을 데이터셋의
-  # 짧은 표기로 정규화한다. 데이터셋 표기 직접 입력도 그대로 통과한다.
-  province_aliases:
-    서울특별시: "서울"
-    부산광역시: "부산"
-    대구광역시: "대구"
-    인천광역시: "인천"
-    광주광역시: "광주"
-    대전광역시: "대전"
-    울산광역시: "울산"
-    세종특별자치시: "세종"
-    경기도: "경기"
-    강원도: "강원"
-    강원특별자치도: "강원"
-    충청북도: "충청북"
-    충청남도: "충청남"
-    전라북도: "전북"
-    전북특별자치도: "전북"
-    전라남도: "전남"
-    경상북도: "경상북"
-    경상남도: "경상남"
-    제주특별자치도: "제주"
-
-# interview: 인터뷰 휴리스틱 임계값과 키워드 묶음. 자동 follow-up 트리거,
-# 페르소나 깨짐(drift) 감지, 모델 거부 감지의 정본이다.
-interview:
+# heuristics: 인터뷰 휴리스틱 임계값과 키워드 묶음. 자동 follow-up 트리거,
+# 페르소나 깨짐(drift) 감지, 모델 거부 감지의 정본이다. CLI와 MCP server에서는
+# 자동으로 적용되고, MCP orchestrator에서는 helper 도구를 호스트가 명시 호출
+# 했을 때 같은 임계값/키워드를 사용한다.
+heuristics:
   # 답변 글자 수(공백 제외)가 본 값 미만이면 자동 follow-up trigger.
   short_answer_threshold: 20
   # 응답의 영문 단어 비율이 본 값을 초과하면 drift trigger(0.0-1.0).
@@ -158,68 +187,48 @@ interview:
   auto_follow_up_text: "조금만 더 자세히 말씀해 주실 수 있을까요?"
   # 한 페르소나당 자동 follow-up 최대 횟수. 0으로 두면 자동 follow-up이 꺼진다.
   auto_follow_up_max: 1
-  # 시스템 프롬프트 템플릿 파일 경로(절대 경로 또는 프로젝트 루트 기준 상대
-  # 경로). pip-installed 환경에서 본 경로가 부재하고 default 경로면 패키지
-  # 내부 ``src._prompts.system_prompt.txt``로 fallback한다.
-  system_prompt_path: "prompts/system_prompt.txt"
   # 페르소나 직업명에 등장하는 영문 토큰을 _english_ratio 분모에서 제외한다.
   # IT 컨설턴트/UX 디자이너 같은 페르소나가 본인 직업명을 자연스럽게 언급해도
   # false positive로 drift 처리되지 않게 한다.
   occupation_english_whitelist: true
   # 휴리스틱이 drift 의심으로 판정한 record에 한해 LLM-as-judge 1회 호출로
   # 재판정한다. true positive 정확도가 올라가지만 record당 1번 추가 LLM 호출이
-  # 들어가 비용/지연이 늘어난다. 기본 OFF.
+  # 들어가 비용/지연이 늘어난다. 기본 OFF. CLI와 MCP server 진입점에서만 동작한다.
   llm_drift_review: false
 
-# report: 마크다운 리포트 렌더링 임계값과 정성 인사이트 모델.
-report:
-  # 코호트 셀 표본이 본 값 미만이면 ``표본 부족``으로 마스킹한다(1 이상).
-  cohort_min_cell: 3
-  # 거절 사유 빈도 표의 기본 상위 N. CLI ``--top-n``으로 일회성 override.
-  top_n_default: 10
-  # 가격 수용가 히스토그램 구간 수.
-  histogram_bins: 10
-  # 텍스트 막대 차트 폭(셀 단위).
-  bar_width: 30
-  # 정성 인사이트 호출에만 사용할 별도 모델 ID. null이면 인터뷰와 같은
-  # llm.model을 사용한다. 인터뷰는 gpt-4o-mini로 돌리고 인사이트 한 번만
-  # gpt-4o로 깊이 있는 통찰을 받는 흐름을 단일 옵션으로 지원한다.
-  insight_model: null
-  # 명시 숫자가 빠진 인터뷰에서 acceptable_price_signal과 product 가격을 보고
-  # willingness_to_pay 추정치를 보조 표기할지 여부. 기본 false. true로 두면
-  # 정성 신호와 product 단가만으로 추정한 값이 리포트 헤더에 별도 표시된다.
-  estimate_wtp_from_signal: false
-
 # mcp: MCP 서버 진입점(`python -m src.mcp_server` / `kpi-mcp-server`)의 동작
-# 모드 토글이다. v1.1.1에서 ADR-004로 도입했다. CLI 진입점은 본 섹션과 무관하다.
+# 모드 토글이다. CLI 진입점은 본 섹션과 무관하다. v1.2.0(ADR-005)부터 두 모드
+# 만 허용한다.
 #
 # - mode: "server" (default)
 #     server-side에서 OpenAI/Anthropic 백엔드를 직접 호출한다. CLI와 동일한
-#     llm.* 설정(provider, base_url, model, api_key, retry, timeout, ...)을
-#     그대로 활용하므로 mcp.json `env`에 OPENAI_API_KEY 또는
-#     ANTHROPIC_API_KEY를 박아 주어야 한다. 응답에 `backend: "mcp_server"`
-#     라벨이 박힌다. 일반적인 MCP 클라이언트(Claude Code Desktop, Cursor 등
-#     2026년 4월 기준 대부분의 빌드)에서 즉시 동작한다
+#     llm.* 설정을 그대로 활용하므로 mcp.json `env`에 OPENAI_API_KEY 또는
+#     ANTHROPIC_API_KEY를 박아 주어야 한다. 응답에 `backend: "mcp_server"` 라벨
+#     이 박힌다. 일반적인 MCP 클라이언트(Claude Code Desktop, Cursor 등)에서
+#     즉시 동작한다
 #
-# - mode: "sampling"
-#     호스트 에이전트의 LLM에 `sampling/createMessage`로 위임한다. server-side
-#     키가 필요 없는 대신 호스트가 sampling capability를 명시적으로 노출해야
-#     한다. 응답에 `backend: "mcp_sampling"` 라벨이 박힌다. 호스트가 sampling을
-#     지원하지 않으면 ConfigError + CLI fallback 안내로 차단된다
+# - mode: "orchestrator"
+#     server-side에서 LLM을 호출하지 않는다. 호스트 sub-agent가 자기 LLM으로
+#     인터뷰를 수행하고, 본 도구는 데이터/프롬프트 helper만 노출한다(예:
+#     build_persona_prompt, build_batch_prompts, aggregate_results, helper 도구
+#     4종). server-side 키 불필요. 응답에 `backend: "mcp_orchestrator"` 라벨이
+#     박힌다. v1.2.0(ADR-005)에서 sampling 모드 supersede로 신설됐다
 #
 # 자동 fallback은 하지 않는다. 사용자가 모드를 명시 선택해 동작 경로를 분명히
-# 한다(ADR-004 §3 결정 근거).
+# 한다.
 mcp:
-  # "server" 또는 "sampling". 기본은 "server"다.
+  # "server" 또는 "orchestrator". 기본은 "server"다.
   mode: "server"
 
 # output: 결과 JSON/마크다운/JSONL 로그가 저장되는 디렉토리와 콘솔/로그 옵션.
+# 모든 진입점에서 적용된다(CLI 콘솔, MCP server stderr/jsonl, MCP orchestrator
+# stderr/jsonl 모두 본 섹션을 따른다).
 output:
   # 결과 디렉토리. 생성 시 0700, 결과 파일은 0600 권한으로 저장된다.
-  # 환경변수 ``KPI_OUTPUT_DIR``이 설정되면 이쪽이 우선한다(테스트/CI 격리용).
+  # 환경변수 `KPI_OUTPUT_DIR`이 설정되면 이쪽이 우선한다(테스트/CI 격리용).
   output_dir: "outputs/"
-  # 루트 로거 레벨. ``DEBUG``/``INFO``/``WARNING``/``ERROR``.
+  # 루트 로거 레벨. `DEBUG`/`INFO`/`WARNING`/`ERROR`.
   log_level: "INFO"
-  # true면 ANSI 컬러를 끈다. 환경변수 ``NO_COLOR`` 또는 stdout이 TTY가 아닐
+  # true면 ANSI 컬러를 끈다. 환경변수 `NO_COLOR` 또는 stdout이 TTY가 아닐
   # 때도 자동으로 꺼진다(no-color.org 표준).
   no_color: false
