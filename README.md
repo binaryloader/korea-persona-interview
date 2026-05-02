@@ -11,19 +11,27 @@ The tool ships four CLI subcommands (`healthcheck`, `list-personas`, `interview`
 - Multi-turn interviews with 1M+ Korean synthetic personas (NVIDIA Nemotron-Personas-Korea, CC BY 4.0)
 - Three inference targets: OpenAI Chat Completions API, Anthropic Messages API, and any OpenAI-compatible local server (mlx_lm.server, vLLM, llama.cpp)
 - `--provider openai|anthropic`, `--base-url URL`, `--model MODEL_ID` CLI flags for one-off backend overrides
+- `--persona-id` to pin a specific persona (or list of personas) by uuid for A/B comparisons; `--resume PATH` to re-run only the failed records of a previous batch and merge them with the existing completed/refused/drift entries
+- `--insight-model` (and `report.insight_model` yaml key) to run the per-question interview on a small model and the qualitative-insight call on a larger one
+- OpenAI streaming response support (`llm.streaming: true`, opt-in default off) for faster time-to-first-token
+- Anthropic prompt caching via `cache_control: ephemeral` markers on the system prompt (`llm.anthropic_cache_control: true`, default on); `cache_creation_input_tokens` and `cache_read_input_tokens` both feed into the same `cached_tokens` counter
+- `llm.extra_chat_kwargs` free-form dict forwarded into the OpenAI request body for backend-specific extensions (e.g. `chat_template_kwargs.enable_thinking` on mlx_lm.server / vLLM Qwen3)
+- LLM-as-judge drift refinement (`interview.llm_drift_review: true`, opt-in default off) that revisits heuristic drift detections with a single 1-token verdict call to clear false positives
+- `acceptable_price_signal` (`cheap`/`fair`/`expensive`/`null`) on every structured summary so price sentiment lands on every record even when the persona never names a number; `report.estimate_wtp_from_signal` opts into a recommendation prompt that uses the signal distribution alongside explicit numbers
 - MCP server (`python -m src.mcp_server`) that exposes the four CLI commands as tools to Claude Code, Cursor, and Codex. Inference is delegated to the host agent via `sampling/createMessage`, so the server itself holds no API key
 - Automatic markdown report after every interview run (toggle off with `--no-report` for JSON-only pipelines)
-- `--json` root mode that emits a single JSON document on stdout for shell scripts and external agents
+- `--json` root mode that emits a single JSON document on stdout for shell scripts and external agents; every JSON envelope (CLI and MCP) carries an explicit `ok: true|false` field for one-key branching
 - Single-turn mode (`--single-turn`) that bundles every question into one chat call to cut tokens at scale
 - Async batch runner with concurrency 1-10 (default 4), tqdm progress, SIGINT partial save, and exit-code 3 partial-failure detection
 - Token usage (prompt / completion / cached) printed at the end of every run, also written into the result JSON and report header
 - Prompt-caching-friendly system prompt structure. OpenAI cached input tokens and Anthropic `cache_read_input_tokens` are tracked separately
 - Per-process persona-pool cache so `list-personas` -> `interview` -> `interview --dry-run` on the same filter/seed reuses the sampled list
-- External system-prompt template (`prompts/system_prompt.txt`) for domain tone customization without code changes
-- Externalized heuristic thresholds (English ratio, ambiguous keywords, refusal keywords, follow-up text, cohort masking, partial failure ratio) in `config.yaml`
+- External system-prompt template (`prompts/system_prompt.txt`) for domain tone customization without code changes; pip-installed users get a packaged fallback at `src/_prompts/system_prompt.txt`
+- Externalized heuristic thresholds (English ratio, ambiguous keywords, refusal keywords, follow-up text, cohort masking, partial failure ratio, occupation English whitelist) in `config.yaml`
 - Filter DSL with `age`, `gender`, `region`, `subregion`, `occupation_keyword` keys plus AND/OR combination and 17-province aliases
-- Persona drift detection (English ratio, CJK ideograph ratio, age/gender/region/family-type contradiction) and short-answer auto follow-up
+- Persona drift detection that uses sentence-bounded first-person assertions for the gender/age/region/family-type axes (with negation guards and third-person exclusion) and an English-ratio safety net that excludes the persona's own occupation tokens
 - Reproducible sampling via `--seed`. Same seed plus same filter plus same dataset version returns the same personas
+- Operational hardening: persona ids are sha256-masked in logs (demographic fields drop to DEBUG), the `outputs/` directory is created with mode 0700 and result files with 0600, and `--product` plus per-question text are length-capped at 2000 characters with system-prompt section markers escaped to block prompt injection
 - No external telemetry. Outbound calls go only to the configured LLM endpoint and (on first run) Hugging Face Hub for the dataset
 
 ## Requirements
@@ -192,6 +200,33 @@ python main.py interview --product "1인 가구용 반찬 정기배송, 월 39,9
 
 Expected outcome: a single 100-persona JSON plus markdown report. The auto follow-up is disabled in single-turn mode, so plan your questions to be self-contained.
 
+### Scenario F: A/B copy comparison on the exact same personas
+
+You want to remove sampling noise entirely. Pin the same persona ids across the two runs by extracting them from the first batch and replaying them on the second.
+
+```bash
+# Run A
+python main.py interview --product "직장인 1인 가구를 위한 건강 반찬, 월 39,900원" --filter "age:25-39,region:서울특별시" --n 10 --seed 42 --questions "쓸 의향?" "월 얼마면?" "거절 사유?" --output outputs/copy-a/
+
+# Pull the persona ids out
+python -c "import json,sys; d=json.load(open(sys.argv[1])); print('\n'.join(r['persona_id'] for r in d['records']))" outputs/copy-a/interview_*.json > /tmp/persona_ids.txt
+
+# Run B with --persona-id replayed
+xargs -I {} echo --persona-id {} < /tmp/persona_ids.txt | xargs python main.py interview --product "주말에 받는 1주일치 한식 반찬 박스, 월 39,900원" --questions "쓸 의향?" "월 얼마면?" "거절 사유?" --output outputs/copy-b/
+```
+
+Expected outcome: both runs interview the exact same persona ids, so the only variable is the product copy. The qualitative-insight diff is more trustworthy than seed-only A/B.
+
+### Scenario G: resume after a partial-failure exit
+
+A 30-person batch hit rate-limit storms and the run exited with code 3. Re-run only the failed records on top of the previous JSON.
+
+```bash
+python main.py interview --product "..." --filter "..." --n 30 --seed 42 --questions "..." --resume outputs/interview_korea-persona-interview_20260502_120000.json
+```
+
+Expected outcome: a fresh result JSON whose completed/refused/drift records come from the original run and whose `failed` records are replaced by retried records. `meta_extra.previous_run_id` is set to the original `interview_id` so the two runs can be linked.
+
 ## CLI Reference
 
 ### Subcommands
@@ -229,6 +264,7 @@ These apply to every subcommand and must be placed before the subcommand name.
 | Option | Default | Description |
 | --- | --- | --- |
 | `--filter SPEC` | none | Filter DSL (see Filter DSL below) |
+| `--persona-id UUID` | none, repeatable | Pin specific persona ids by uuid. Disables `--limit` and `--seed` randomization. Combine with `--filter` for an intersection |
 | `--limit N` | `20` | Number of personas to print |
 | `--seed N` | `42` | Sampling seed |
 
@@ -236,9 +272,10 @@ These apply to every subcommand and must be placed before the subcommand name.
 
 | Option | Default | Description |
 | --- | --- | --- |
-| `--product TEXT` | required | One-line product description |
-| `--questions TEXT` | required, repeatable | Each question is one `--questions` flag |
+| `--product TEXT` | required | One-line product description (max 2000 chars) |
+| `--questions TEXT` | required, repeatable | Each question is one `--questions` flag (max 2000 chars each) |
 | `--filter SPEC` | none | Filter DSL |
+| `--persona-id UUID` | none, repeatable | Pin specific persona ids by uuid. Disables `--n` and `--seed` randomization. Combine with `--filter` for an intersection |
 | `--n N` | `10` | Number of personas |
 | `--seed N` | `42` | Sampling seed |
 | `--concurrency N` | `4` | Async concurrency, range 1-10 |
@@ -248,6 +285,7 @@ These apply to every subcommand and must be placed before the subcommand name.
 | `--dry-run` | off | Run one persona, print to console, write neither JSON nor report |
 | `--output DIR` | `outputs/` | Result JSON directory |
 | `--report / --no-report` | `--report` | Auto-generate the markdown report after the interview. `--no-report` keeps JSON only |
+| `--resume PATH` | none | Re-run only the `failed` records of a previous result JSON. The merged JSON gets a fresh timestamp and `meta_extra.previous_run_id` |
 | `--provider {openai,anthropic}` | from `llm.provider` | LLM provider |
 | `--base-url URL` | from `llm.base_url` | LLM server base URL |
 | `--model MODEL_ID` | from `llm.model` | One-shot model override |
@@ -263,6 +301,7 @@ These apply to every subcommand and must be placed before the subcommand name.
 | `--provider {openai,anthropic}` | from `llm.provider` | LLM provider |
 | `--base-url URL` | from `llm.base_url` | LLM server base URL |
 | `--model MODEL_ID` | from `llm.model` | One-shot model override for the qualitative-insight call |
+| `--insight-model MODEL_ID` | from `report.insight_model` or `--model` | Use a different model for the qualitative-insight call only. Useful when interviews run on a small model and you want a larger model for the synthesis step |
 
 ### Filter DSL
 
@@ -292,14 +331,16 @@ Interview results are written to `outputs/interview_{slug}_{YYYYMMDD_HHMMSS}.jso
 | --- | --- | --- |
 | `interview_id` | string (uuid) | One per run |
 | `slug` | string | Always `korea-persona-interview` |
+| `schema_version` | int | `2` since v1.1.0 (was `1` in v1.0.x). Readers can branch on this to handle the `acceptable_price_signal` field |
 | `model` | string | Resolved model id (e.g. `gpt-4o-mini`) |
 | `seed` | int | Sampling seed |
 | `meta_extra.usage` | object | Aggregated `prompt_tokens`, `completion_tokens`, `total_tokens`, `cached_tokens` |
+| `meta_extra.previous_run_id` | string or absent | Set when the run came from `--resume`. Holds the source run's `interview_id` |
 | `records[].status` | enum | `completed` / `refused` / `failed` / `drift` |
-| `records[].structured_summary` | object or null | `intent`, `willingness_to_pay`, `willingness_to_pay_currency`, `rejection_reasons`, `one_line` |
+| `records[].structured_summary` | object or null | `intent`, `acceptable_price_signal`, `willingness_to_pay`, `willingness_to_pay_currency`, `rejection_reasons`, `one_line`. In schema v2 `willingness_to_pay` is filled only for explicit numbers; qualitative price sentiment lives on `acceptable_price_signal` (`cheap`/`fair`/`expensive`/`null`) |
 | `records[].flags` | object | `persona_drift`, `auto_follow_up_used`, `refusal_detected`, `truncated`, `parse_failed` |
 
-See `docs/prd/korea-persona-interview.md` section 5.4 for the full schema.
+See `docs/prd/korea-persona-interview.md` section 5.4 for the full schema. v1 JSON files (with `schema_version: 1`) load fine on v1.1+: the loader fills `acceptable_price_signal=null` for those records.
 
 ### Markdown report
 
@@ -355,7 +396,6 @@ Notable yaml keys.
 - `dataset.field_map`, `dataset.gender_aliases`, `dataset.province_aliases` - column and value aliases. Update the YAML if NVIDIA changes the dataset schema, no code change needed
 - `interview.short_answer_threshold` - 20 character trigger for the auto follow-up
 - `interview.english_ratio_threshold` - 0.30 trigger for persona drift detection
-- `interview.hanja_ratio_threshold` - 0.05 trigger for persona drift detection (CJK ideograph leakage safety net)
 - `interview.ambiguous_keywords` - tokens that trigger an auto follow-up when present in a response (default `글쎄요`, `잘 모르겠습니다`, etc.)
 - `interview.refusal_keywords` - tokens that mark a response as refused (default `답변할 수 없습니다`, `I cannot`, `As an AI`, etc.)
 - `interview.auto_follow_up_text` - the user message sent when the auto follow-up fires. Edit it to fit your domain tone
@@ -364,6 +404,18 @@ Notable yaml keys.
 - `report.cohort_min_cell` - cohort cell sample-size mask threshold (default 3, raise to 5 for more conservative reporting)
 - `report.histogram_bins` - price histogram bin count (default 10)
 - `report.bar_width` - text bar chart width (default 30, lower for narrow terminals)
+
+Knobs added in v1.1.
+
+| Key | Default | Purpose |
+| --- | --- | --- |
+| `llm.streaming` | `false` | Opt into OpenAI Server-Sent Events for faster time-to-first-token. The chunked stream is reassembled into a single `ChatResponse` and the final `usage` block is mapped via `stream_options.include_usage`. CLI + `provider=openai` only |
+| `llm.anthropic_cache_control` | `true` | Mark the system prompt with `cache_control: ephemeral` so Anthropic prompt caching applies. Set to `false` if you target an older Messages API revision that rejects the marker. CLI + `provider=anthropic` only |
+| `llm.extra_chat_kwargs` | `{}` | Free-form dict merged into the OpenAI Chat Completions request body. Reserved keys (`model`, `messages`, `max_tokens`, `temperature`) are skipped. Common use: `chat_template_kwargs.enable_thinking: false` to disable Qwen3 thinking on mlx_lm.server / vLLM. CLI + `provider=openai` only |
+| `interview.occupation_english_whitelist` | `true` | Exclude English tokens that appear in the persona's occupation (`IT 컨설턴트`, `UX 디자이너`) from the English-ratio drift denominator |
+| `interview.llm_drift_review` | `false` | Send heuristic drift detections to a single 1-token LLM verdict call. An `ok` clears the drift flag, `drift` keeps it. Adds one extra LLM call per drift candidate |
+| `report.insight_model` | `null` | Model id used only for the qualitative-insight call. When unset, the per-question interview model is reused. CLI `--insight-model` overrides this for a single run |
+| `report.estimate_wtp_from_signal` | `false` | Add a recommendation block that combines `acceptable_price_signal` distribution with the explicit number distribution when willingness-to-pay numbers are sparse |
 
 The full annotated yaml lives in [config.yaml](config.yaml).
 
@@ -603,17 +655,23 @@ API billing is the user's responsibility. Token usage (prompt / completion / cac
 
 Legal and ethical review of the output is the user's responsibility. The tool does not run any compliance or PII filter beyond the input-secret policy.
 
+Specific limitations to note for v1.1.
+
+- Streaming responses (`llm.streaming: true`) cover the OpenAI provider only. The Anthropic provider and the MCP sampling path do not stream
+- LLM-as-judge drift refinement (`interview.llm_drift_review: true`) is opt-in because it adds a small extra LLM call per drift candidate. The default heuristic-only path keeps the cost predictable
+- Schema bumped from v1 to v2 in v1.1.0 with the new `acceptable_price_signal` field. v1 result JSONs still load on v1.1+ (the loader fills `acceptable_price_signal=null`), but v1.1+ result JSONs cannot be read by older v1.0.x consumers
+- The `--persona-id` flag re-fetches the dataset to filter by uuid, so the persona-pool cache does not help on that path. Repeated calls with the same id list will still re-read the parquet files
+
 ## Roadmap
 
-A short list of v1.1 candidates, full details in [docs/backlog/v1.1.md](docs/backlog/v1.1.md).
+A short list of v1.2 candidates, full details in [docs/backlog/v1.2.md](docs/backlog/v1.2.md).
 
-- `--resume` for partial-failure recovery
 - FastAPI REST API on top of the same application layer
-- OpenAI Batch API path for the 50% discount on offline runs
-- Streaming responses for the dry-run command
-- Split inference: cheap model for interviews, larger model for the qualitative insight
-- LLM-as-judge persona-drift signal on top of the heuristic
-- Keychain-backed secret storage on macOS
+- OpenAI Batch API path for offline runs
+- Multi-model A/B routing (run the same persona sample on two different models and diff the outputs)
+- Provider quality validation report (golden-dataset drift measurement for OpenAI, Anthropic, local LLM, MCP sampling)
+- macOS Keychain / Linux libsecret / Windows Credential Manager integration for API keys
+- Per-record streaming write to disk so OOM/crash mid-batch loses fewer records than the SIGINT partial save
 
 ## Dataset and Credits
 

@@ -55,11 +55,10 @@
 - 토큰 윈도우는 32000(system + 최근 N턴 보존, 가장 오래된 user/assistant 페어부터 truncate)이다
 - 자동 follow-up 상한은 1회(`interview.auto_follow_up_max`)다. 본 값을 0으로 두면 비활성화된다
 
-### 3.3. 휴리스틱과 임계값(라운드 B 외부화 결과)
+### 3.3. 휴리스틱과 임계값(라운드 B 외부화 + 라운드 G 정밀화 결과)
 
 - 짧은 답변 트리거는 `interview.short_answer_threshold`(기본 20자, 공백 제거)다
 - 영어 비율 임계값은 `interview.english_ratio_threshold`(기본 0.30)다
-- 한자 비율 임계값은 `interview.hanja_ratio_threshold`(기본 0.05)다
 - 모호 키워드는 `interview.ambiguous_keywords` 리스트로 외부화한다(기본 6종)
 - 거부 키워드는 `interview.refusal_keywords` 리스트로 외부화한다(기본 7종)
 - 자동 follow-up 발화는 `interview.auto_follow_up_text`(기본 `조금만 더 자세히 말씀해 주실 수 있을까요?`)다
@@ -67,7 +66,9 @@
 - 거절 사유 상위 N 기본은 `report.top_n_default`(기본 10)다
 - 가격 히스토그램 구간은 `report.histogram_bins`(기본 10)다
 - 텍스트 막대 폭은 `report.bar_width`(기본 30)다
-- 페르소나 깨짐 거주 형태 축은 `family_type` 기준 같은 문장 단위 1인칭 + 거주 동사 정밀 정규식만 매칭한다(false positive 방지)
+- 페르소나 깨짐 4축(연령/성별/지역/거주 형태) 모두 같은 문장 단위 1인칭 + 단언/계사 정밀 정규식 + 부정문 가드 + 3인칭 일반화 제외로 통일된다(라운드 G 정밀화)
+- 직업명 영문 화이트리스트 옵션은 `interview.occupation_english_whitelist`(기본 ON)다. 페르소나 직업명에 등장하는 영문 토큰을 영어 비율 분모에서 제외한다
+- LLM-as-judge drift 옵션은 `interview.llm_drift_review`(기본 OFF)다. 휴리스틱 trigger record에 한해 1-token LLM 호출로 재판정한다
 
 ### 3.4. 백엔드/시크릿/환경변수
 
@@ -79,15 +80,16 @@
 - `.env` 파일은 stdlib 파서로 비밀만 환경에 승격한다. setdefault 의미라 이미 set된 환경변수는 덮지 않는다
 - 기존 `LlmConfig.backend` 토글은 제거됐다. yaml에 잔존해도 graceful하게 무시된다(ADR-003)
 
-### 3.5. 토큰 사용량(라운드 A + multi-provider)
+### 3.5. 토큰 사용량(라운드 A + multi-provider + v1.1 cache_control)
 
 - OpenAI 응답: `usage.prompt_tokens_details.cached_tokens`를 `TokenUsage.cached_tokens`로 매핑한다
-- Anthropic 응답: `usage.input_tokens`/`output_tokens`/`cache_read_input_tokens`를 `TokenUsage` 같은 모양으로 매핑한다
+- Anthropic 응답: `usage.input_tokens`/`output_tokens`/`cache_read_input_tokens` + `cache_creation_input_tokens`를 `TokenUsage` 같은 모양으로 매핑한다(creation + read 합산이 cached_tokens)
 - MCP sampling 응답: usage 미반환이라 0으로 채운다
 - 배치 종료 시 모든 record의 `RawResponse.usage`를 `BatchResultEnvelope.usage`로 합산한다
 - 콘솔 출력, 결과 JSON `meta_extra.usage`, 리포트 헤더 표 세 곳에 prompt/completion/cached 카운트를 동일하게 박는다
-- USD 비용 추정은 본 라운드(v1.0.0) 시점에 제거됐다. 단가 표 갱신 부담과 추정치-실제 청구 차이를 사용자가 직접 감내해야 한다는 점이 도구 신뢰성을 해친다는 판단이다. 토큰 사용량을 보고 사용자가 자신의 provider 청구서와 대조하는 흐름으로 이관한다
-- prompt caching: OpenAI는 prefix 1024 토큰 이상 자동 적용 구조로 설계되어 있다(TDD §9.1). Anthropic의 `cache_control` 마커는 v1.1 백로그
+- USD 비용 추정은 v1.0.0 시점에 제거됐다. 단가 표 갱신 부담과 추정치-실제 청구 차이를 사용자가 직접 감내해야 한다는 점이 도구 신뢰성을 해친다는 판단이다. 토큰 사용량을 보고 사용자가 자신의 provider 청구서와 대조하는 흐름으로 이관한다
+- prompt caching은 양 provider 모두 활성화된다. OpenAI는 prefix 1024 토큰 이상 자동 적용 구조다(TDD §9.1). Anthropic은 v1.1.0부터 `llm.anthropic_cache_control: true`(기본 ON)로 system 메시지에 `cache_control: ephemeral` 마커를 박아 활성화한다
+- v1.1.0부터 OpenAI streaming(`llm.streaming: true`, 기본 OFF) 지원. SSE 응답을 `_parse_streaming_body`가 chunk별로 합치고 마지막 chunk의 usage 블록을 그대로 매핑한다(`stream_options.include_usage`)
 
 ### 3.6. 시스템 프롬프트와 페르소나 풀(라운드 B4, B5)
 
@@ -155,3 +157,4 @@
 - 2026-05-02 multi-provider + MCP sampling 전용 단순화. ADR-003 채택. `LlmConfig.provider`(openai/anthropic) 도입, `AnthropicBackend` 추가(httpx 직접, anthropic SDK 의존 없음), 로컬 LLM은 provider=openai + `--base-url` override 패턴. CLI에 `--provider`/`--base-url` 옵션 추가. MCP 서버는 sampling 전용으로 단순화(host LLM 위임, 키 불필요). `LlmConfig.backend` 토글 제거. `src/_pricing.py`에 Claude 단가 추가(haiku/sonnet/opus). 콘솔 메시지 사전을 provider-agnostic하게 갱신("OpenAI 서버" → "LLM 서버"). 코드 주석을 SDK 공개 수준으로 재작성(internal-only 한국어 주석 정리, 영어 docstring 통일). 회귀 504 → 521개. 본 라운드 ADR-002 supersede
 - 2026-05-02 버전 1.0.0 안정 릴리즈, 비용 추정 제거. `src/_pricing.py` 모듈, `BatchResultEnvelope.estimated_cost_usd` 필드, `meta_extra.estimated_cost_usd` JSON 키, 콘솔 "비용 추정: $X.XXXX" 한 줄, 리포트 헤더 비용 행, `--json` 응답의 `estimated_cost_usd` 필드를 모두 제거. 토큰 사용량(prompt/completion/cached) 노출은 유지. 단가 표가 자주 변하고 추정치와 실제 청구 금액이 일치하지 않아 신뢰성을 해친다는 판단. 회귀 521 → 509개. `pyproject.toml`/`src/__init__.py`/README/CHANGELOG/CONTRIBUTING/SECURITY/PRD/TDD/ADR/v1.1 백로그 동기 갱신
 - 2026-05-02 버전 1.1.0 릴리즈, 라운드 G 27개 항목 일괄 적용. 기능 추가는 `--persona-id` 명시 페르소나 고정, `--resume` 부분 실패 재시도, `--insight-model` 단계별 모델 분리, `--json` 응답에 `ok` 필드, Anthropic prompt caching `cache_control` 마커, `llm.extra_chat_kwargs` 자유 양식 dict, OpenAI streaming SSE 응답, LLM-as-judge drift 옵트인, `acceptable_price_signal` 정성 신호 필드(BREAKING `schema_version` 1→2), `LLMClient` 클래스명(BREAKING, `MlxLLMClient` 제거), `_run_dry_run` 모듈 분리, prompts 패키지 fallback. 보안/관측성으로 `persona_id` 해시 마스킹, 인구통계 DEBUG 격하, `--output` 경로 정규화 경고, `outputs/` 0700 + 결과 파일 0600, product/질문 길이 상한과 시스템 프롬프트 마커 escape, `gender_aliases` 역방향 정규화. 휴리스틱 정밀화로 region/age/gender 축에 family_type과 같은 같은 문장 단위 정밀 정규식 + 부정문 가드 + 3인칭 제외, 직업명 영문 화이트리스트. 패키징 정리로 `requirements.txt`를 `-e .`로 단순화하고 `pyproject.toml`을 단일 정본으로. 회귀 509 → 555개. v1.1 backlog 27개 처리 완료, v1.2 backlog로 4개 항목(FastAPI REST, keychain, Batch API, multi-model A/B + 신규 streaming 저장 + provider 품질 검증) 이관
+- 2026-05-02 v1.1.0 push 직전 최종 정리. config.yaml line 43 dangling 주석 제거, llm 섹션 헤더에 진입점별 적용 범위 명시(CLI 전용 / MCP sampling 전달 / 양쪽 적용 분리). batch/dataset/interview/report/output 섹션 주석을 SDK 공개 수준으로 다듬음. McpSamplingBackend 적용 범위를 코드 검증으로 확정(messages/max_tokens/system_prompt/temperature 4개만 host에 전달, 나머지는 호스트가 소유)하고 README/TDD §12에 동기 반영. src/batch.py 모듈 docstring과 run_batch docstring을 영어 SDK 수준으로 재작성, src/dry_run.py에 누락되었던 acceptable_price_signal 필드 dump 추가, src/interview.py와 src/llm_client.py의 일부 한국어 주석을 일관성 있는 영어 주석으로 정리. README Features/Configuration/Usage Examples/Output Format/Limitations/Roadmap을 v1.1.0 신기능 전체로 갱신. PRD §5.1, §5.2, §5.4, §5.8, §5.9, §6.1, §6.6 갱신. TDD §1, §8, §12.2, §13, §16 갱신. UI 콘솔 출력 샘플을 v1.1.0 형식으로 갱신. 회귀 555 통과 유지

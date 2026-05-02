@@ -77,20 +77,20 @@ ANSI 컬러 코드는 PRD §6.7에 따라 기본 활성화되며 `--no-color` �
 ANSI 컬러 적용 시 출력은 아래와 같다. `[OK]`는 녹색, 모델 ID는 청록색, 본문은 일반 텍스트다.
 
 ```text
-[OK] OpenAI API 응답 정상
+[OK] LLM 서버 응답 정상
+  Provider: openai
   Base URL: https://api.openai.com/v1
-  사용 모델: gpt-4o-mini
-  응답 지연: 412ms
+  사용 가능한 모델 일부: gpt-4o-mini, gpt-4o, ...
 종료 코드: 0
 ```
 
 `--no-color` 적용 시 출력은 동일하지만 ANSI 이스케이프가 제거된 일반 텍스트만 남는다.
 
 ```text
-[OK] OpenAI API 응답 정상
+[OK] LLM 서버 응답 정상
+  Provider: openai
   Base URL: https://api.openai.com/v1
-  사용 모델: gpt-4o-mini
-  응답 지연: 412ms
+  사용 가능한 모델 일부: gpt-4o-mini, gpt-4o, ...
 종료 코드: 0
 ```
 
@@ -203,20 +203,17 @@ ANSI 컬러 적용 시 출력은 아래와 같다. `[OK]`는 녹색, 모델 ID�
 
 ```text
 [INFO] 헬스체크 통과(모델: gpt-4o-mini)
-[INFO] 데이터셋 로드 완료
 [INFO] 적용 필터: age:25-39, region:서울특별시
 [INFO] 매칭 페르소나: 384명, 표본 추출: 30명(seed=42)
-[INFO] 사업 아이템: "1인 가구용 반찬 정기배송, 월 39,9..."(길이 38자)
-[INFO] 사업 아이템 본문은 OpenAI 서버로 송신됩니다. 민감 정보는 입력하지 마세요.
-[INFO] 질문 수: 3개, 동시성: 2, 멀티턴: 활성
+[INFO] 모델: gpt-4o-mini, 동시성: 4
+[INFO] 질문 수: 3개, 인원: 30명, 시드: 42
 
 인터뷰 진행 중
  60%|██████████████████████          | 18/30 [00:54<00:36, 1.8s/persona] 완료=17 실패=1
 
-[INFO] 모든 페르소나 인터뷰 완료
-  완료: 28명, 거부: 1명, 실패: 1명, 드리프트: 0명
-  평균 지연: 1.9s/persona, 총 소요 시간: 1분 4초
-  결과 저장: outputs/interview_korea-persona-interview_20260502_143000.json
+[INFO] 완료: 28명, 거부: 1명, 실패: 1명, 드리프트: 0명
+[INFO] 토큰 사용량: prompt 12,340 / completion 5,180 / cached 9,200
+[INFO] 결과 저장: outputs/interview_korea-persona-interview_20260502_143000.json
 [INFO] 리포트 자동 생성 시작(--no-report로 끌 수 있음, 정성 인사이트 LLM 호출 1회 추가)
 [OK] 리포트 저장: outputs/report_korea-persona-interview_20260502_143000.md
 
@@ -224,7 +221,9 @@ ANSI 컬러 적용 시 출력은 아래와 같다. `[OK]`는 녹색, 모델 ID�
 종료 코드: 0
 ```
 
-기본 동작은 `--report`(인터뷰 종료 직후 같은 JSON으로 마크다운 리포트까지 자동 생성)다. `--no-report`로 끄면 JSON만 저장하며 외부 분석 파이프라인(Claude Code, Cursor, Codex 등)이 마크다운 없이 record 배열만 받아 후처리할 때 사용한다. `--dry-run`은 본 옵션과 무관하게 JSON/리포트 모두 만들지 않는다.
+기본 동작은 `--report`(인터뷰 종료 직후 같은 JSON으로 마크다운 리포트까지 자동 생성)다. `--no-report`로 끄면 JSON만 저장하며 외부 분석 파이프라인(Claude Code, Cursor, Codex 등)이 마크다운 없이 record 배열만 받아 후처리할 때 사용한다. `--dry-run`은 본 옵션과 무관하게 JSON/리포트 모두 만들지 않는다. 비용 추정 라인은 v1.0.0 시점에 제거되었으며 사용자가 토큰 카운트를 자신의 provider 청구서와 직접 대조하는 흐름으로 이관되었다. v1.1.0부터 OpenAI streaming(`llm.streaming: true`)을 옵트인하면 첫 토큰 시간이 빨라지지만 콘솔 출력 형식은 동일하다.
+
+`--persona-id UUID`를 다중 지정하면 `--n`/`--seed`가 무시되고 입력한 ID 순서대로 인터뷰가 실행된다. 같은 페르소나 표본에 다른 product/questions로 비교 인터뷰를 돌릴 때 사용한다. `--resume PATH`는 이전 결과 JSON에서 status가 failed인 record만 재시도하며, 새 결과 JSON에 `meta_extra.previous_run_id`가 박혀 두 run을 link할 수 있다.
 
 #### 2.3.2. 정상 출력(dry-run, 단일 페르소나)
 

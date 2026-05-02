@@ -88,6 +88,7 @@
   - 사용자 정의 follow-up: 명령행 인자 `--follow-up "질문 1" "질문 2"`로 모든 페르소나에 공통 적용되는 후속 질문을 추가할 수 있다
 - 인터뷰 종료 후 별도 프롬프트로 구조화 요약을 생성한다(2단계 흐름)
 - 멀티턴은 v1의 기본값이다. 단일턴 옵션은 `--single-turn` 플래그로 명시한 경우에만 동작한다(빠른 dry-run, 토큰 절약 목적). 단일턴 모드는 모든 질문(메인 + 사용자 정의 follow-up)을 한 번의 chat 호출에 묶어 보내고, 모델 응답 텍스트를 `1. ... 2. ... 3. ...` 번호 형식으로 question_index별 분리한다. 자동 follow-up은 단일턴에서 비활성화된다(한 번에 다 묶어 보내므로). 응답 번호 파싱이 실패하면 `flags.parse_failed: true`로 표시하고 마지막 question에 통째 텍스트를 fallback으로 저장해 데이터를 잃지 않는다
+- v1.1.0부터 `--resume PATH` 옵션을 지원한다. 이전 결과 JSON 경로를 받아 status가 `failed`인 record만 재시도하고 나머지(`completed`/`refused`/`drift`)는 그대로 보존한다. personas는 입력 JSON과 같은 시드/필터/ID 매칭으로 다시 샘플링되며, 새 결과는 새 timestamp 파일로 저장되고 `meta_extra.previous_run_id`에 입력 JSON의 `interview_id`가 박힌다. 모든 record가 이미 completed인 경우 LLM 호출 자체를 건너뛴다
 
 ### 5.2. 페르소나 주입
 
@@ -101,6 +102,8 @@
 - 시스템 프롬프트 본문은 `prompts/system_prompt.txt` 외부 파일에 보관한다(라운드 B4). 사용자는 본 파일을 편집하거나 `interview.system_prompt_path` 설정으로 다른 파일을 가리켜 도메인 맞춤 톤/지침을 적용할 수 있다. 템플릿에는 `{persona_json}`과 `{product}` 두 placeholder가 반드시 포함되어야 하며, 누락 또는 파일 부재 시 ConfigError로 차단된다(에러 메시지에 경로와 조치 안내 포함)
 
 데이터셋의 실제 컬럼명은 추측하지 않는다. 구현 단계 첫 게이트(§5.10)에서 `ds['train'].column_names` 출력을 확인한 후 위 묶음과 매핑한다. 매핑 결과를 `config.yaml`의 `dataset.field_map` 섹션에 기록해 어디서든 같은 매핑을 사용한다.
+
+v1.1.0부터 사용자는 페르소나를 두 가지 방식으로 고를 수 있다. `--filter` + `--n` + `--seed` 조합은 시드 고정 샘플링이고, `--persona-id UUID` 다중 지정은 명시 페르소나 직접 매칭이다. `--persona-id`를 쓰면 `--n`과 `--seed`는 무시되며 입력한 ID 순서대로 인터뷰가 실행된다. 같은 페르소나 표본에 다른 product/questions로 비교 인터뷰를 돌릴 때(시드 고정 샘플링은 시드 충돌이 있을 수 있으므로) 사용한다. `--filter`와 `--persona-id`를 함께 지정하면 ID 매칭 후 추가로 필터를 통과한 row만 채택한다(교집합). 일부 ID가 데이터셋에 없으면 누락된 ID 목록을 ConfigError 메시지에 담아 즉시 차단한다.
 
 ### 5.3. 답변 포맷
 
@@ -157,6 +160,7 @@
       ],
       "structured_summary": {
         "intent": "positive | neutral | negative",
+        "acceptable_price_signal": "cheap | fair | expensive | null",
         "willingness_to_pay": 39900,
         "willingness_to_pay_currency": "KRW",
         "rejection_reasons": ["string"],
@@ -176,6 +180,8 @@
 ```
 
 스키마 미세 조정 근거는 데이터셋 실제 컬럼 확인 결과(TDD §1)를 반영한 결정이다. `persona_meta.name`은 데이터셋에 별도 이름 컬럼이 없어 v1에서 `null`을 채택한다. `persona_meta.marital`과 `persona_meta.education`은 데이터셋의 `marital_status`, `education_level` 컬럼을 분석 가치를 위해 보존한다. `flags.truncated`는 멀티턴 누적 컨텍스트가 토큰 윈도우(8000)를 초과해 가장 오래된 페어를 제거한 경우를 표시한다(ADR-001 §2, TDD §7). `flags.parse_failed`는 단일턴 모드 응답에서 번호 파싱이 실패해 fallback으로 마지막 question에 통째 텍스트를 저장한 경우를 표시한다(라운드 B1 추가).
+
+v1.1.0에서 schema_version을 1에서 2로 올렸다. 변경 사항은 두 가지다. 첫째, `structured_summary.acceptable_price_signal`을 신설했다. `cheap`/`fair`/`expensive`/`null` 네 값 중 하나가 들어가며, 인터뷰 본문에 명시 숫자가 없어도 정성 가격 신호를 모든 record에 가능한 한 채운다. 둘째, `structured_summary.willingness_to_pay`의 의미를 좁혔다. v1에서는 정성 신호와 명시 숫자가 모두 들어갈 수 있었지만 v2에서는 명시 숫자만 정수로 들어가고 그렇지 않으면 `null`이다. v1 JSON은 `load_interview_json` 단계에서 `acceptable_price_signal=null`로 채워 호환 로드된다. resume 모드(§5.1)에서 생성되는 결과 JSON은 `meta_extra.previous_run_id`에 입력 JSON의 `interview_id`를 함께 박는다.
 
 JSON 스키마 결정 근거는 아래와 같다.
 
@@ -226,7 +232,7 @@ JSON 스키마 결정 근거는 아래와 같다.
 
 도구가 처리해야 할 실패 모드와 대응은 아래와 같다.
 
-- 페르소나 깨짐 감지: 응답 텍스트의 영어 단어 비율이 30%를 초과하거나, 한자 비율이 5%를 초과하거나, 페르소나의 연령/성별/지역/거주 형태(`family_type`)와 명백히 모순되는 자기소개가 발견되면 `flags.persona_drift: true`와 `status: "drift"`로 기록한다. 거주 형태 모순 휴리스틱은 페르소나의 `family_type`이 `1인가구`인데 응답에 가족과 동거를 단언하는 케이스, 또는 `family_type`이 `배우자와 거주`/`부모와 거주`인데 응답에 1인 가구를 단언하는 케이스를 본다. 거주 형태 축은 같은 문장(`.`/`!`/`?` boundary) 안의 1인칭 주어 + 거주 동사 정밀 정규식만 매칭한다. `혼자 사시는 분들에겐` 같은 3인칭 일반화, `혼자서 끼니를 해결` 같은 행동 표현, 응답에 우연히 들어온 product 키워드(`1인 가구용`)는 trigger에서 제외해 false positive를 줄인다. 한자 비율은 OpenAI 응답이 어쩌다 한자(중국어/일본어 한자)를 혼입하는 회귀 사례를 잡는 안전망이다. false positive를 줄이기 위해 페르소나 자체에 등장하는 한자/영문 토큰은 분모에서 제외한다(TDD §8.2 참조)
+- 페르소나 깨짐 감지: 응답 텍스트의 영어 단어 비율이 30%를 초과하거나, 페르소나의 연령/성별/지역/거주 형태(`family_type`)와 명백히 모순되는 자기소개가 발견되면 `flags.persona_drift: true`와 `status: "drift"`로 기록한다. v1.1.0부터 연령/성별/지역 축은 거주 형태 축과 동일한 정밀도로 격상되었다. 같은 문장(`.`/`!`/`?` boundary) 안에서 1인칭 주어(`저는`/`나는`/`제가`/`내가`/`난`)와 단언/계사가 함께 등장할 때만 trigger한다. 부정문(`아니`/`아닌`/`아닙`)이 같은 문장에 있으면 정합한 답변으로 보고 제외하고, 3인칭 일반화 표현(`다른 사람들은`/`보통 사람`/`남들`/`타인`)이 같은 문장에 있어도 제외한다. 거주 형태 축은 1인칭 주어 + 거주 동사 정밀 정규식만 매칭하며 `혼자 사시는 분들에겐` 같은 3인칭, `혼자서 끼니를 해결` 같은 행동 표현, 응답에 우연히 들어온 product 키워드(`1인 가구용`)는 trigger에서 제외한다. 영어 비율 분모에서 페르소나 직업명에 등장하는 영문 토큰(`IT 컨설턴트`, `UX 디자이너`)은 옵션(`interview.occupation_english_whitelist: true`, 기본 ON)에 따라 제외한다. v1.1.0에 도입된 `interview.llm_drift_review: true`(기본 OFF) 옵션은 휴리스틱이 drift 의심으로 판정한 record에 한해 1-token LLM 호출로 재판정한다. ok 판정이면 drift 플래그를 해제해 false positive를 줄이며, drift 판정이거나 호출 실패면 보수적으로 drift 라벨을 유지한다(TDD §8.2 참조)
 - 짧은 답변: 답변 길이가 20자 미만이면 자동 follow-up 1회 시도 후에도 짧으면 그대로 record에 기록한다. 자동 follow-up 사용 여부는 `flags.auto_follow_up_used`에 기록한다
 - 모델 거부: 응답에 거부 키워드(예: "답변할 수 없습니다", "I cannot", "I'm sorry, but")가 포함되면 `flags.refusal_detected: true`와 `status: "refused"`로 기록한다. retry는 시도하지 않는다(같은 거부가 반복될 가능성이 높다)
 - 토큰 루프 가드: 동일 토큰/구절이 max_tokens 한도에 가까워질 때까지 반복되는 응답을 감지하면 해당 record를 `status: "failed"`로 기록한다. OpenAI gpt-4o-mini에서는 거의 발생하지 않지만 회귀 안전망으로 둔다
@@ -241,10 +247,10 @@ CLI는 4개 서브커맨드를 제공한다. 매크로 명령(예: `run-all`)은
 
 | 명령 | 설명 | 주요 인자/옵션 | 종료 코드 |
 | --- | --- | --- | --- |
-| `healthcheck` | OpenAI API 응답과 모델 가용성 확인 | `--base-url`(기본 `https://api.openai.com/v1`), `--model`(일회성 모델 ID 덮어쓰기, 기본 config.yaml의 `llm.model`) | 0 정상, 1 키 미설정/401/서버 도달 불가 |
-| `list-personas` | 필터 결과 미리 보기 | `--filter`, `--limit`(기본 20), `--seed` | 0 정상, 2 결과 0건 |
-| `interview` | 배치 인터뷰 실행 | `--product`(필수), `--questions`(다중, 필수), `--filter`, `--n`(기본 10), `--seed`, `--concurrency`(기본 4, 1-10), `--persona-fields`, `--follow-up`(다중), `--single-turn`, `--dry-run`, `--output`(기본 `outputs/`), `--report/--no-report`(기본 `--report`. 인터뷰 종료 후 마크다운 리포트 자동 생성. `--no-report`는 외부 분석 도구로 JSON만 받을 때 사용. `--dry-run`은 본 옵션과 무관하게 JSON/리포트 모두 미생성), `--model`(일회성 모델 ID 덮어쓰기) | 0 정상, 1 서버 오류, 2 표본 부족, 3 부분 실패(완료된 record 50% 미만) |
-| `report` | 결과 JSON에서 리포트 생성 | 인자 1개(JSON 파일 경로), `--top-n`(기본 10), `--include-drift`(드리프트 record 포함), `--output-dir`(기본 입력 JSON과 같은 디렉토리), `--model`(정성 인사이트 호출의 일회성 모델 ID 덮어쓰기) | 0 정상, 1 입력 파일 오류, 2 정상 record 0건 |
+| `healthcheck` | LLM API 응답과 모델 가용성 확인 | `--provider`(openai/anthropic), `--base-url`(provider별 default), `--model`(일회성 모델 ID 덮어쓰기, 기본 config.yaml의 `llm.model`) | 0 정상, 1 키 미설정/401/서버 도달 불가 |
+| `list-personas` | 필터 결과 미리 보기 | `--filter`, `--persona-id`(다중, 명시 uuid), `--limit`(기본 20), `--seed` | 0 정상, 2 결과 0건 |
+| `interview` | 배치 인터뷰 실행 | `--product`(필수, 2000자 상한), `--questions`(다중, 필수, 각 2000자 상한), `--filter`, `--persona-id`(다중, 명시 uuid 페르소나 고정), `--n`(기본 10), `--seed`, `--concurrency`(기본 4, 1-10), `--persona-fields`, `--follow-up`(다중), `--single-turn`, `--dry-run`, `--output`(기본 `outputs/`), `--report/--no-report`(기본 `--report`. 인터뷰 종료 후 마크다운 리포트 자동 생성. `--no-report`는 외부 분석 도구로 JSON만 받을 때 사용. `--dry-run`은 본 옵션과 무관하게 JSON/리포트 모두 미생성), `--resume PATH`(이전 결과 JSON에서 status=failed record만 재시도. `meta_extra.previous_run_id`로 link), `--provider`, `--base-url`, `--model`(일회성 모델 ID 덮어쓰기) | 0 정상, 1 서버 오류, 2 표본 부족, 3 부분 실패(완료된 record 50% 미만) |
+| `report` | 결과 JSON에서 리포트 생성 | 인자 1개(JSON 파일 경로), `--top-n`(기본 10), `--include-drift`(드리프트 record 포함), `--output-dir`(기본 입력 JSON과 같은 디렉토리), `--provider`, `--base-url`, `--model`(정성 인사이트 호출의 일회성 모델 ID 덮어쓰기), `--insight-model`(인사이트 호출만 다른 모델로. 인터뷰는 mini, 인사이트는 4o/sonnet 류 흐름) | 0 정상, 1 입력 파일 오류, 2 정상 record 0건 |
 
 ### 5.10. 사용자 상호작용 게이트(개발 단계)
 
@@ -262,6 +268,7 @@ CLI는 4개 서브커맨드를 제공한다. 매크로 명령(예: `run-all`)은
 - 100명 인터뷰 1회를 5-10분 이내에 완료한다(질문 5개, 동시성 4 가정). gpt-4o-mini 기준 한 턴 응답이 약 1-3초로 추정되며 동시성 4-10 구간은 OpenAI rate limit 여유 안에서 처리량을 크게 끌어올린다. v1.0의 30분 SLO는 로컬 MLX 시절 보수 추정치였고 v1.x OpenAI 백엔드에서는 5-10분 SLO로 갱신한다
 - 데이터셋 첫 로드는 5분 이내에 완료한다(`~/.cache/huggingface` 캐시 활용). 두 번째 실행부터는 30초 이내에 시작한다
 - 동시성 기본값은 4로 둔다. `asyncio.Semaphore(4)` 기준이다. 사용자가 `--concurrency` 옵션으로 1-10 범위에서 조정할 수 있다. 11 이상은 차단한다(OpenAI rate limit 부하 방지). v1.0 시절 1-3 범위는 로컬 MLX 메모리 가드였고, OpenAI 백엔드에서는 메모리 가드가 무관해 1-10으로 상향했다
+- v1.1.0부터 OpenAI 호환 streaming 응답을 옵션(`llm.streaming: true`, 기본 OFF)으로 지원한다. 첫 토큰 시간이 빨라지지만 일부 호환 서버는 SSE 형식이 미묘하게 다르므로 default OFF를 유지한다. provider=anthropic이나 MCP sampling 경로에서는 무시된다
 
 ### 6.2. 신뢰성
 
@@ -306,6 +313,7 @@ CLI는 4개 서브커맨드를 제공한다. 매크로 명령(예: `run-all`)은
 - 로그는 구조화된 형태(JSON Lines)로 `outputs/logs/run_{timestamp}.jsonl`에도 동시 기록한다
 - 민감 정보(사용자가 `--product`에 적은 사업 아이템 본문)는 로그 본문에 그대로 기록하지 않고 첫 30자 + 길이 형태로 마스킹한다
 - API 키는 로그에 절대 기록하지 않는다. `Authorization` 헤더 출력이 필요한 경우 `Bearer sk-***` 형식으로 마스킹한다(security.md §1, logging.md §2)
+- v1.1.0부터 페르소나 식별자 보호를 강화했다. `persona_id`는 sha256 hex prefix 12자(`persona_id_hash`) 형태로 로그에 박힌다. 동일 페르소나라는 사실은 유지되지만 원본 uuid 추적은 차단된다. 인구통계 필드(연령/성별/지역)는 INFO에서 DEBUG로 격하되어 기본 운영 환경에서는 식별 가능한 인구통계 자체가 노출되지 않는다
 - 토큰 사용량(prompt/completion/cached)을 인터뷰 종료 시 콘솔에 한 줄 노출하고 결과 JSON `meta_extra.usage`, 리포트 마크다운 헤더 표에도 함께 박는다. USD 비용 추정은 v1.0.0 시점에 제거했다. 단가 표 갱신 부담과 추정-실제 청구 차이가 도구 신뢰성을 해친다는 판단이며 사용자가 토큰 카운트를 자신의 provider 청구서와 직접 대조하는 흐름으로 이관한다
 
 ### 6.7. 접근성과 출력

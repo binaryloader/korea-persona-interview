@@ -151,12 +151,12 @@ PRD §5.10 게이트 2를 메인 세션에서 통과 처리했다. dev-planner�
 
 architecture.md §1의 계층 분리 원칙을 단일 도메인 CLI에 맞춰 4계층으로 단순화한다. 모놀리식이지만 모듈 단위로 컨텍스트를 분리한다(architecture.md §5).
 
-- presentation 계층은 click 기반 CLI인 main.py 한 파일이며 사용자 입력 파싱과 결과 출력만 담당한다
+- presentation 계층은 click 기반 CLI인 main.py와 src/cli_views.py(페르소나 표 렌더, --json dict 변환), src/console.py(메시지 사전, ANSI 컬러 헬퍼), src/dry_run.py(--dry-run 콘솔 덤프)다. main.py는 click 라우팅에 집중하고 dry-run/표 렌더 같은 presentation 보조는 별도 모듈로 분리한다(라운드 G, B6 결과)
 - application 계층은 src/interview.py, src/batch.py, src/report.py 세 파일이며 유스케이스를 오케스트레이션한다
-- domain 계층은 src/models.py에 정의된 dataclass와 도메인 예외, 그리고 src/load_personas.py 안의 PersonaFilter 클래스(도메인 규칙)다
-- infrastructure 계층은 외부 LLM HTTP를 다루는 src/llm_client.py, HF datasets를 다루는 src/load_personas.py의 PersonaLoader, 그리고 src/logging_setup.py와 src/config.py다
+- domain 계층은 src/models.py에 정의된 dataclass와 도메인 예외, 그리고 src/load_personas.py 안의 PersonaFilter 클래스(도메인 규칙)다. v1.1.0에서 schema_version을 1에서 2로 올리고 `StructuredSummary.acceptable_price_signal` 필드를 신설했다
+- infrastructure 계층은 외부 LLM HTTP를 다루는 src/llm_client.py(LLMClient. v1.0의 MlxLLMClient → LLMClient 리네임)와 src/llm_backend.py(LLMBackend protocol, OpenAIBackend, AnthropicBackend, McpSamplingBackend), HF datasets를 다루는 src/load_personas.py의 데이터셋 로더, 그리고 src/logging_setup.py와 src/config.py다. src/_prompts/ 패키지는 시스템 프롬프트 템플릿을 패키지 리소스로 fallback 제공한다(pip-installed 환경 호환)
 
-의존성 방향은 main → batch/report → interview → llm_client/load_personas → models 한 방향이다. 순환 의존을 두지 않는다.
+의존성 방향은 main → batch/report → interview → llm_backend → llm_client → models 한 방향이다. 순환 의존을 두지 않는다.
 
 #### 2.1. src/models.py
 
@@ -623,15 +623,14 @@ PRD §7.2에서 v1 Should로 상향된 두 가드레일이다.
 
 #### 8.2. 페르소나 깨짐 감지
 
-- 영어 비율은 `re.findall(r"[A-Za-z]+", text)` 글자 수를 전체 글자 수(공백/구두점 제외)로 나눠 0.30 초과를 임계로 본다. 페르소나 메타(`occupation`, `bachelors_field` 등)에 등장하는 영문 토큰은 분모/분자에서 모두 제외한다(false positive 방지). 직업명이 `IT 컨설턴트`인 페르소나가 응답에 `IT`를 자연스럽게 사용해도 drift로 판정되지 않게 한다
-- 한자 비율은 `re.findall(r"[一-鿿]", text)` 글자 수를 전체 한국어 글자(한글+한자) 수로 나눠 0.05 초과를 임계로 본다. OpenAI 응답이 어쩌다 중국어/일본어 한자를 혼입하는 회귀를 잡는 안전망이다. 페르소나 메타에 등장하는 한자 토큰은 분모/분자에서 모두 제외한다
-- 정면 모순 휴리스틱은 연령대, 성별, 지역, 거주 형태 네 축으로 적용한다
-  - 연령대 축은 페르소나가 70대(70 이상 80 미만)인데 응답에 `저는 20대`, `저는 학생인데`, `미성년자` 등이 등장하는 케이스를 본다. 연령 구간은 10대, 20대, 30대, 40대, 50대, 60대 이상의 6개로 산출한다. 자기 구간이 아닌 구간을 자기소개로 단언하면 매칭한다
-  - 성별 축은 페르소나가 `여자`인데 응답에 `저는 남자`/`아저씨`를 단언하거나, `남자`인데 `저는 여자`/`아줌마`를 단언하는 케이스를 본다
-  - 지역 축은 페르소나가 `서울`인데 응답에 `저는 부산 사람`을 단언하는 케이스를 본다. 17개 시도 중 자기 시도가 아닌 시도를 거주지로 단언하면 매칭한다
-  - 거주 형태 축은 페르소나의 `family_type`이 `1인가구`인데 응답에 `남편이`, `아내가`, `우리 아이`, `가족과 함께` 같은 동거 단언이 등장하면 매칭한다. 반대로 `family_type`이 `배우자와 거주`/`부모와 거주`/`자녀와 거주`인데 응답에 `저는 1인 가구`, `혼자 살고 있어서` 같은 1인 가구 단언이 등장하면 매칭한다. 25세 1인 가구 페르소나가 ``1인 가구가 아니라서 필요성을 못 느끼겠네요``로 응답하는 회귀 사례를 잡는 핵심 가드다(PRD §5.2). 매칭 단위는 같은 문장(`.`/`!`/`?` boundary) 안의 1인칭 주어 + 거주 동사 정밀 정규식이다. 30자 윈도우 단순 토큰 매칭은 `혼자 사시는 분들`(3인칭), `혼자서 끼니를 해결`(행동 표현), `1인 가구용 반찬 서비스`(product 키워드 누설) 같은 false positive를 내므로 사용하지 않는다
-- 매칭 휴리스틱은 `re.search(rf"저는\s*{대안_시도}\s*(사람|에서|살고)", text)` 형태의 정규식 묶음으로 구현한다
-- LLM 기반 감지는 v1에서 제외한다(비용/지연 문제). 필요하면 v1.1에서 도입한다
+- 영어 비율은 응답에 등장하는 단어를 한글+영문 단어 단위로 세고 영문 단어 수를 분자에 둔다. 0.30 초과를 임계로 본다. v1.1.0부터 `interview.occupation_english_whitelist`(기본 ON) 옵션으로 페르소나 직업명에 등장하는 영문 토큰을 분모에서 제외해 false positive를 줄인다. 직업명이 `IT 컨설턴트`인 페르소나가 응답에 `IT`를 자연스럽게 사용해도 drift로 판정되지 않게 한다
+- 정면 모순 휴리스틱은 연령대, 성별, 지역, 거주 형태 네 축으로 적용한다. v1.1.0부터 네 축 모두 같은 정밀도(같은 문장 단위 1인칭 + 단언/계사 정밀 정규식, 부정문 가드, 3인칭 일반화 제외)로 통일되었다
+  - 연령대 축은 페르소나가 70대(70 이상 80 미만)인데 응답에 `저는 20대`, `저는 학생인데`, `미성년자` 등이 등장하는 케이스를 본다. 연령 구간은 10대, 20대, 30대, 40대, 50대, 60대 이상의 6개로 산출한다. 자기 구간이 아닌 구간을 1인칭 주어와 함께 같은 문장에서 단언하면 매칭한다
+  - 성별 축은 페르소나가 `여자`인데 응답에 `저는 남자`/`아저씨`를 단언하거나, `남자`인데 `저는 여자`/`아줌마`를 단언하는 케이스를 본다. 1인칭 주어와 함께 같은 문장 안에서 단언할 때만 매칭한다
+  - 지역 축은 페르소나가 `서울`인데 응답에 `저는 부산 사람`/`부산에 살고`/`부산에서 자랐` 등을 단언하는 케이스를 본다. 17개 시도 중 자기 시도가 아닌 시도를 1인칭 주어와 함께 거주지로 단언하면 매칭한다. 자기 시도가 같은 문장에 함께 등장하면 `저는 서울 출신이지만 부산에도` 같은 false positive를 막기 위해 매칭에서 제외한다
+  - 거주 형태 축은 페르소나의 `family_type`이 단독 거주(`1인 가구`/`혼자 거주`)인데 응답에 가족과 동거를 단언하면 매칭한다. 반대로 가족 동거(`배우자와 거주`/`부모와 거주` 등)인데 응답에 단독 거주를 단언하면 매칭한다. 25세 1인 가구 페르소나가 `1인 가구가 아니라서 필요성을 못 느끼겠네요`로 응답하는 회귀 사례를 잡는 핵심 가드다. `혼자 사시는 분들`(3인칭), `혼자서 끼니를 해결`(행동 표현), `1인 가구용 반찬 서비스`(product 키워드 누설)는 trigger에서 제외한다
+  - 모든 축에서 부정문(`아니`/`아닌`/`아닙`)이 같은 문장에 있으면 정합한 답변으로 보고 매칭에서 제외한다. 3인칭 일반화 표현(`다른 사람들은`/`보통 사람`/`남들`/`타인`)이 같은 문장에 있어도 본인 단언이 아닐 가능성이 크므로 보수적으로 제외한다
+- v1.1.0에서 LLM-as-judge 옵션을 도입했다. `interview.llm_drift_review: true`(기본 OFF)로 활성화하면 휴리스틱이 drift 의심으로 판정한 record에 한해 1-token LLM 호출로 재판정한다. judge가 `ok`로 답하면 drift 플래그를 해제한다. 호출 실패는 보수적으로 drift 라벨을 유지한다. record당 1번의 추가 LLM 호출이 들어가므로 비용/지연 트레이드오프를 고려해 옵트인으로 둔다
 - 결과는 `status="drift"`와 `flags.persona_drift=True`로 기록한다. 정량 집계에서 자동 제외하며 `--include-drift` 플래그로 선택적 포함이 가능하다
 
 #### 8.3. 모델 거부 감지
@@ -790,7 +789,12 @@ Request body는 아래와 같다.
 }
 ```
 
-`chat_template_kwargs`(Qwen3 thinking 토글) 같은 OSS 추론 서버 전용 파라미터는 도입하지 않는다. OpenAI API 표준 파라미터(`model`, `messages`, `max_tokens`, `temperature`, 필요 시 `response_format`)만 사용한다.
+v1.1.0에서 두 가지 옵션을 추가했다.
+
+- `llm.streaming: true`(기본 false): 본 옵션이 활성화되면 request body에 `"stream": true`와 `"stream_options": {"include_usage": true}`를 추가한다. 응답은 SSE(`data: {...}\n\n` 반복 + 마지막 `data: [DONE]`)로 받으며 `_parse_streaming_body`가 chunk별 `choices[0].delta.content`를 합치고 마지막 chunk의 `usage` 블록을 추출한다. 일부 호환 서버는 SSE 형식이 미묘하게 다를 수 있어 default OFF로 둔다
+- `llm.extra_chat_kwargs: dict`(기본 빈 dict): OpenAI Chat Completions request body에 그대로 머지되는 확장 필드다. 예를 들어 mlx_lm.server/vLLM의 Qwen3 thinking 토글을 끄려면 `extra_chat_kwargs.chat_template_kwargs.enable_thinking: false`를 yaml에 박는다. 예약 키(`model`/`messages`/`max_tokens`/`temperature`)는 머지에서 건너뛴다
+
+Anthropic Messages API는 별도다. v1.1.0부터 `llm.anthropic_cache_control: true`(기본 ON) 옵션으로 system 메시지에 `cache_control: {type: ephemeral}` 마커를 박아 prompt caching을 활성화한다. 응답의 `usage.cache_creation_input_tokens`와 `usage.cache_read_input_tokens`가 둘 다 `TokenUsage.cached_tokens`로 합산되어 OpenAI의 `cached_tokens`와 동일 모양으로 비교 가능하다.
 
 Response body는 아래와 같다.
 
@@ -831,9 +835,12 @@ security.md §1(시크릿), §3(입력 검증), §4(데이터 보호)와 PRD §6
 - 인증 헤더는 provider에 따라 다르다. OpenAI는 `Authorization: Bearer ${OPENAI_API_KEY}`이고 Anthropic은 `x-api-key: ${ANTHROPIC_API_KEY}` + `anthropic-version: 2023-06-01`이다. 로그 출력 시 둘 다 마스킹한다(logging.md §2)
 - `base_url`은 OpenAI 엔드포인트(`https://api.openai.com/v1`)를 기본 허용한다. ADR-002 이전의 localhost-only chat 가드는 OpenAI 백엔드 전환과 함께 제거한다. 다만 잘못된 base_url(예: 오타로 다른 도메인 지정)에 키와 사업 아이템이 송신되는 사고를 막기 위해 base_url을 INFO 로그에 명시 출력하여 사용자가 실행 직후 검증할 수 있게 한다. 향후 사용자 정의 OpenAI 호환 엔드포인트(예: Azure OpenAI, 사내 프록시) 지원이 필요하면 별도 ADR로 도입한다
 - product 본문 마스킹은 로그에 `mask_product()`를 적용한다(첫 30자 + 길이). 결과 JSON에는 원문 그대로 저장한다(로컬 파일이므로 외부 노출 위험 없음). 단 product 본문은 OpenAI 서버로 송신되므로 사용자가 실행 전 인지해야 한다(README와 도구 첫 실행 메시지에서 명시)
-- 페르소나 이름 마스킹은 로그에만 적용한다. 결과 JSON의 `persona_meta.name`은 원문을 보존한다(분석 시 필요)
-- `outputs/`는 `.gitignore` 처리한다. 결과 JSON과 로그 파일은 커밋되지 않는다
-- 사용자 입력 검증 정책은 아래와 같다. `--filter` DSL 파싱 시 알 수 없는 키는 `ConfigError`로 처리한다. `--concurrency` 4 이상은 `ConfigError`로 처리한다. `--n` 0 이하는 `ConfigError`로 처리한다
+- v1.1.0에서 product/질문 본문에 길이 상한(2000자)과 prompt-injection 마커 escape를 추가했다. 시스템 프롬프트의 가변 영역 마커(`[페르소나 정보]`, `[인터뷰 주제]` 등)가 사용자 입력에 들어 있으면 마커 첫 글자를 zero-width space로 갈아 끼워 형태는 보존하면서 마커 일치를 깨뜨린다. 한도 초과는 즉시 ConfigError로 차단한다
+- 페르소나 식별자 보호는 v1.1.0에서 강화되었다. 로그의 `persona_id`는 sha256 hex prefix 12자(`persona_id_hash`)로 마스킹된다. 동일 페르소나라는 사실은 유지되지만 원본 uuid 추적은 차단된다. 인구통계 필드(연령/성별/지역)는 INFO에서 DEBUG로 격하되어 기본 운영 환경에서는 노출되지 않는다. 결과 JSON의 `persona_meta`는 원문을 보존한다(분석 시 필요)
+- `gender_aliases`는 `_build_persona_meta` 단계에서도 reverse 정규화된다. 데이터셋이 `남성`/`여성`/`M`/`F` 같은 표기로 갱신되어도 PersonaMeta 검증을 통과한다(라운드 G16)
+- `outputs/`는 `.gitignore` 처리한다. 결과 JSON과 로그 파일은 커밋되지 않는다. v1.1.0부터 디렉토리는 0700, 결과 JSON과 마크다운 리포트는 0600 권한으로 저장된다(security.md §1, §4). Windows에서는 chmod가 무시되지만 호출 자체는 안전하다
+- `--output`/`--output-dir`이 현재 작업 디렉토리 외부면 사람용 모드에서 한 번 경고를 출력한다(json_mode는 묵음). 권한/sandbox 문제 가능성을 알리는 안내일 뿐 경로 자체를 막지는 않는다
+- 사용자 입력 검증 정책은 아래와 같다. `--filter` DSL 파싱 시 알 수 없는 키는 `ConfigError`로 처리한다. `--concurrency` 11 이상은 `ConfigError`로 처리한다(v1.x). `--n` 0 이하는 `ConfigError`로 처리한다
 - CORS, JWT, RBAC은 외부 API 미제공이라 v1 비대상이다
 
 ### 14. 폴더/파일 트리(확정안)
@@ -943,8 +950,8 @@ def report(...): ...
 
 PRD §6.8과 dependency.md §10(빌드 도구 핀)을 따른다.
 
-- 프레임워크는 pytest 8, pytest-asyncio 0.23, pytest-httpx 0.30 조합이다
-- LLM 호출 mock은 pytest-httpx로 `chat/completions` 응답을 픽스처별로 정의한다
+- 프레임워크는 pytest 8, pytest-asyncio 0.23, pytest-httpx 0.30 조합이다. v1.1.0 시점 회귀 테스트는 555개다(v1.0.0 509개 + 라운드 G의 46개)
+- LLM 호출 mock은 pytest-httpx로 `chat/completions`와 `/messages` 응답을 픽스처별로 정의한다
 - datasets 로드 mock은 conftest.py에서 `datasets.load_dataset`을 `monkeypatch`로 가짜 함수로 교체한다. 가짜 데이터셋은 5-10명짜리 dict 리스트로 둔다
 - 핵심 테스트 케이스는 아래와 같다
   - `test_filter_dsl.py`는 AND/OR 결합, 별칭(`F` → `여자`, `서울특별시` → `서울`), 잘못된 키 거부, 시군구 부분 매칭을 검증한다
