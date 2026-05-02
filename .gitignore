@@ -22,6 +22,9 @@ dist/
 *.egg-info/
 *.egg
 
+# uv lockfile: requirements.lock이 정본이므로 추적하지 않는다
+uv.lock
+
 # 환경 변수
 # .env: 표준 OPENAI_API_KEY 등 시크릿 보관 파일
 # .env.*: .env.local, .env.staging.local 같은 셸 관례 패턴 모두 차단
