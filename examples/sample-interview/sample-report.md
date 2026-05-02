@@ -113,11 +113,11 @@ negative  ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇�
 
 ## 4. 한계와 출처
 
-본 리포트는 합성 페르소나 데이터(`nvidia/Nemotron-Personas-Korea`)와 OpenAI Chat Completions API 추론 결과를 결합하여 생성되었습니다. 합성 페르소나의 분포는 실제 인구 통계 분포와 일치하지 않을 수 있고, 응답은 모델의 추론 결과이므로 실제 한국인 응답자의 의견을 대체하지 않습니다. 본 도구는 실제 인터뷰 직전 단계의 가설 검증과 질문지 점검 용도로 사용하시기 바랍니다. 사업 아이템 본문(`--product`)은 인터뷰 호출 시 OpenAI 서버로 송신됩니다.
+본 리포트는 합성 페르소나 데이터(`nvidia/Nemotron-Personas-Korea`)와 사용자가 설정한 LLM 백엔드의 추론 결과를 결합하여 생성되었습니다. 합성 페르소나의 분포는 실제 인구 통계 분포와 일치하지 않을 수 있고, 응답은 모델의 추론 결과이므로 실제 한국인 응답자의 의견을 대체하지 않습니다. 본 도구는 실제 인터뷰 직전 단계의 가설 검증과 질문지 점검 용도로 사용하시기 바랍니다. 사업 아이템 본문(`--product`)과 페르소나 정보는 인터뷰 호출 시 사용자가 설정한 LLM 백엔드(OpenAI / Anthropic / 로컬 LLM / MCP 호스트 에이전트)로 송신됩니다.
 
 - 데이터셋: Nemotron-Personas-Korea
 - 저작자: NVIDIA Corporation(2025)
 - 출처: https://huggingface.co/datasets/nvidia/Nemotron-Personas-Korea
 - 라이선스: CC BY 4.0(https://creativecommons.org/licenses/by/4.0/)
 - 변형 여부: 없음. Hugging Face Hub에서 런타임에 다운로드하여 메모리 내에서 샘플링만 수행했습니다
-- 추론 모델: gpt-4o-mini(OpenAI Chat Completions API)
+- 추론 모델: gpt-4o-mini
