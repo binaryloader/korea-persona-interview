@@ -639,6 +639,19 @@ def list_personas(
     ),
 )
 @click.option(
+    "--resume",
+    "resume_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help=(
+        "부분 실패 결과 JSON 경로. 본 옵션을 지정하면 status=failed record만 "
+        "재시도하고 기존 completed/refused/drift record는 그대로 보존한다. "
+        "personas는 같은 시드/필터로 재샘플링되며 persona_id 매칭으로 합쳐진다. "
+        "결과는 새 timestamp 파일로 저장되고 meta_extra.previous_run_id에 입력 "
+        "JSON의 interview_id가 박힌다."
+    ),
+)
+@click.option(
     "--provider",
     type=click.Choice(["openai", "anthropic"], case_sensitive=False),
     default=None,
@@ -680,6 +693,7 @@ def interview(
     dry_run: bool,
     output_dir: Path,
     auto_report: bool,
+    resume_path: Optional[Path],
     provider: Optional[str],
     base_url: Optional[str],
     model_override: Optional[str],
@@ -884,6 +898,42 @@ def interview(
                 show_exit_code_line=False,
             )
 
+    # ``--resume`` 옵션이 있으면 입력 JSON에서 record 리스트와 interview_id를
+    # 추출해 run_batch에 그대로 넘긴다. 본 단계는 LLM 호출 없는 디스크 read만
+    # 수반하므로 헬스체크 전에 수행해도 안전하다.
+    resume_records: Optional[list] = None
+    resume_run_id: Optional[str] = None
+    if resume_path is not None:
+        try:
+            from src.report import _records_from_payload, load_interview_json
+
+            payload = load_interview_json(resume_path)
+            resume_records = _records_from_payload(payload)
+            meta = payload.get("meta") or {}
+            if isinstance(meta, dict):
+                resume_run_id = (
+                    str(meta.get("interview_id"))
+                    if meta.get("interview_id")
+                    else None
+                )
+        except ConfigError as exc:
+            _exit_with_error(
+                json_mode=json_mode,
+                console=console,
+                error_code="input_file_schema",
+                message=MESSAGES["input_file_schema"],
+                exit_code=1,
+                hints=[f"원인: {exc}"],
+            )
+        if not json_mode:
+            failed_count = sum(
+                1 for r in (resume_records or []) if r.status == "failed"
+            )
+            console.info(
+                f"--resume 모드: 기존 record {len(resume_records or [])}건 중 "
+                f"{failed_count}건 재시도"
+            )
+
     # 배치 모드. 헬스체크 → run_batch → 결과 안내.
     try:
         envelope = asyncio.run(
@@ -895,6 +945,8 @@ def interview(
                 config=config,
                 output_dir=output_dir,
                 seed=seed,
+                resume_records=resume_records,
+                resume_run_id=resume_run_id,
             )
         )
     except ServerNotReachableError as exc:
@@ -1072,6 +1124,8 @@ async def _run_batch_async(
     config: AppConfig,
     output_dir: Path,
     seed: int,
+    resume_records: Optional[list] = None,
+    resume_run_id: Optional[str] = None,
 ) -> BatchResultEnvelope:
     async with build_cli_backend(config.llm) as client:
         return await run_batch(
@@ -1084,6 +1138,8 @@ async def _run_batch_async(
             output_dir=output_dir,
             slug="korea-persona-interview",
             seed=seed,
+            resume_records=resume_records,
+            resume_run_id=resume_run_id,
         )
 
 

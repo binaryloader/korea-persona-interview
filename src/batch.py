@@ -368,6 +368,88 @@ def _classify_exception(exc: BaseException) -> str:
     return "unhandled_exception"
 
 
+def _build_resume_only_envelope(
+    *,
+    records: list,
+    product: str,
+    questions: list,
+    follow_ups: list,
+    config: AppConfig,
+    output_dir: Path,
+    slug: str,
+    seed: int,
+    save: bool,
+    previous_run_id: Optional[str] = None,
+) -> "BatchResultEnvelope":
+    """모든 record가 이미 completed인 resume 호출의 짧은 경로.
+
+    LLM 호출과 SIGINT 핸들러 부착 없이 기존 결과를 그대로 ``BatchResultEnvelope``
+    로 감싸 반환한다. JSON 저장도 새 timestamp로 한 번 더 수행해 호출 시점의
+    파일이 완성된 결과와 동일한 형식으로 남는다.
+    """
+
+    started_at = _now_iso()
+    file_timestamp = _timestamp_filename()
+    interview_id = uuid.uuid4().hex
+    summary = _summarize_records(records, requested=len(records), cancelled=0)
+    failure_reasons = _count_failure_reasons(records)
+    aggregated_usage = _aggregate_usage(list(records))
+
+    config_snapshot = {
+        "concurrency": int(config.batch.concurrency),
+        "temperature": config.llm.temperature,
+        "max_tokens": config.llm.max_tokens,
+        "timeout": config.llm.timeout,
+        "context_budget": config.llm.context_budget,
+        "single_turn": bool(config.batch.single_turn),
+        "persona_fields": list(config.batch.persona_fields),
+    }
+    meta = RunMeta(
+        interview_id=interview_id,
+        slug=slug,
+        schema_version=SCHEMA_VERSION,
+        product=product,
+        questions=list(questions),
+        follow_up_questions=list(follow_ups),
+        model=config.llm.model,
+        seed=int(seed),
+        started_at=started_at,
+        finished_at=_now_iso(),
+        config_snapshot=config_snapshot,
+    )
+    result = BatchResult(meta=meta, records=list(records))
+
+    output_path: Optional[Path] = None
+    if save:
+        extra_meta: dict = {
+            "cancelled": False,
+            "cancelled_count": 0,
+            "summary": dataclasses.asdict(summary),
+            "failure_reason_counts": failure_reasons,
+            "product_masked": mask_product(product),
+            "usage": dataclasses.asdict(aggregated_usage),
+        }
+        if previous_run_id:
+            extra_meta["previous_run_id"] = previous_run_id
+        output_path = save_batch_result(
+            result,
+            output_dir=output_dir,
+            slug=slug,
+            timestamp=file_timestamp,
+            partial=False,
+            extra_meta=extra_meta,
+        )
+    return BatchResultEnvelope(
+        result=result,
+        output_path=output_path,
+        summary=summary,
+        partial_failure=False,
+        cancelled=False,
+        failure_reason_counts=failure_reasons,
+        usage=aggregated_usage,
+    )
+
+
 def _build_failed_record(
     persona: PersonaMeta,
     exc: BaseException,
@@ -466,6 +548,8 @@ async def run_batch(
     seed: int = 0,
     save: bool = True,
     progress_disable: bool = False,
+    resume_records: Optional[list] = None,
+    resume_run_id: Optional[str] = None,
 ) -> BatchResultEnvelope:
     """페르소나 N명에 대한 배치 인터뷰를 수행한다(TDD §3.6, §9).
 
@@ -500,6 +584,53 @@ async def run_batch(
         raise ConfigError("personas가 비어 있다. 1명 이상 지정해 주세요")
     if not questions:
         raise ConfigError("questions가 비어 있다. 1개 이상 지정해 주세요")
+
+    # ``resume_records`` 분기는 기존 부분 실패 결과 JSON에서 status=failed 또는
+    # cancelled로 표시된 record만 재시도하는 흐름이다. 호출자는 같은 시드/필터로
+    # personas를 다시 샘플링한 뒤 본 인자에 직전 record 리스트를 넘긴다. 본
+    # 함수는 status가 ``failed``가 아닌 record는 그대로 보존하고, 해당 persona
+    # 들은 재실행 대상에서 제외한다.
+    resume_completed_records: list = []
+    if resume_records:
+        completed_persona_ids: set = set()
+        for r in resume_records:
+            status = getattr(r, "status", None)
+            pid = getattr(r, "persona_id", None)
+            if not status or not pid:
+                continue
+            if status != "failed":
+                resume_completed_records.append(r)
+                completed_persona_ids.add(pid)
+        # 같은 persona_id가 personas 목록에 있으면 재실행에서 제외한다.
+        personas = [p for p in personas if p.persona_id not in completed_persona_ids]
+        logger.info(
+            "resume 모드 진입",
+            extra={
+                "resume_completed": len(resume_completed_records),
+                "to_retry": len(personas),
+                "previous_run_id": resume_run_id,
+            },
+        )
+
+    if not personas and resume_completed_records:
+        # 모든 record가 이미 completed인 resume 호출. 기존 결과만 보존하고 LLM
+        # 호출 없이 envelope을 만들어 반환한다.
+        logger.info(
+            "resume 호출이지만 재시도할 failed record가 없다. 기존 결과 그대로 보존",
+            extra={"completed": len(resume_completed_records)},
+        )
+        return _build_resume_only_envelope(
+            records=resume_completed_records,
+            product=product,
+            questions=questions,
+            follow_ups=follow_ups,
+            config=config,
+            output_dir=output_dir,
+            slug=slug,
+            seed=seed,
+            save=save,
+            previous_run_id=resume_run_id,
+        )
 
     concurrency = int(config.batch.concurrency)
     if not (1 <= concurrency <= 10):
@@ -635,9 +766,13 @@ async def run_batch(
                 pass
 
     finished_at = _now_iso()
+    # resume 모드: 기존 completed/refused/drift record를 새 records 앞에 합친다.
+    # cancelled 카운트는 본 호출 안에서 발생한 것만 센다.
+    if resume_completed_records:
+        records = list(resume_completed_records) + list(records)
     summary = _summarize_records(
         records,
-        requested=len(personas),
+        requested=len(personas) + len(resume_completed_records),
         cancelled=cancelled_count,
     )
     failure_reasons = _count_failure_reasons(records)
@@ -692,6 +827,8 @@ async def run_batch(
             "product_masked": mask_product(product),
             "usage": dataclasses.asdict(aggregated_usage),
         }
+        if resume_run_id:
+            extra_meta["previous_run_id"] = resume_run_id
         output_path = save_batch_result(
             result,
             output_dir=output_dir,

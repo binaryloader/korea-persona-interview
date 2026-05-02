@@ -58,6 +58,38 @@ def _persona(persona_id: str = "p-x", age: int = 27) -> PersonaMeta:
     )
 
 
+def _completed_record(persona_id: str = "p-x") -> InterviewRecord:
+    """completed 상태의 ``InterviewRecord``를 만든다(resume 테스트용)."""
+
+    return InterviewRecord(
+        persona_id=persona_id,
+        persona_meta=_persona(persona_id),
+        started_at="2026-05-02T12:00:00+00:00",
+        finished_at="2026-05-02T12:01:00+00:00",
+        status="completed",
+        messages=[],
+        raw_responses=[],
+        structured_summary=None,
+        flags=Flags(),
+        error=None,
+    )
+
+
+def _failed_record(persona_id: str = "p-x") -> InterviewRecord:
+    return InterviewRecord(
+        persona_id=persona_id,
+        persona_meta=_persona(persona_id),
+        started_at="2026-05-02T12:00:00+00:00",
+        finished_at="2026-05-02T12:01:00+00:00",
+        status="failed",
+        messages=[],
+        raw_responses=[],
+        structured_summary=None,
+        flags=Flags(),
+        error={"type": "retry_exhausted", "message": "boom"},
+    )
+
+
 def _add_models_response(httpx_mock) -> None:
     httpx_mock.add_response(
         method="GET",
@@ -743,3 +775,123 @@ async def test_run_batch_concurrency_제한_2_동시실행(
 
     assert envelope.summary.requested == 5
     assert counter["peak"] <= 2  # Semaphore(2) 제한 보장
+
+
+# ---------------------------------------------------------------------------
+# resume 모드(라운드 G9)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_batch_resume_failed만_재시도(
+    httpx_mock,
+    make_app_config,
+    tmp_path: Path,
+) -> None:
+    """resume_records로 status=failed record만 재시도한다.
+
+    completed/refused/drift record는 재실행하지 않고 그대로 보존된다.
+    """
+
+    _add_models_response(httpx_mock)
+    # 재시도되는 1명에 대한 chat 응답 2건(질문 + 요약). drift 휴리스틱을 자극하지
+    # 않도록 평이한 한국어로 채운다.
+    _add_chat_response(httpx_mock, "가격이 합리적이라 한번 시도해 볼 만한 것 같아요.")
+    _add_chat_response(
+        httpx_mock,
+        json.dumps(
+            {
+                "intent": "positive",
+                "willingness_to_pay": 39900,
+                "willingness_to_pay_currency": "KRW",
+                "rejection_reasons": [],
+                "one_line": "긍정",
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    config = make_app_config(concurrency=1)
+    # personas는 같은 시드/필터로 재샘플링된 가정. 3명 중 1명(p-2)이 직전 round
+    # 에서 failed였고 나머지 2명은 completed였다고 가정한다.
+    personas = [_persona(f"p-{i}") for i in range(3)]
+    resume_records = [
+        _completed_record("p-0"),
+        _completed_record("p-1"),
+        _failed_record("p-2"),
+    ]
+
+    async with LLMClient(config.llm) as client:
+        envelope = await run_batch(
+            personas=personas,
+            product="반찬",
+            questions=["Q1"],
+            follow_ups=[],
+            llm=client,
+            config=config,
+            output_dir=tmp_path,
+            slug="resume-test",
+            seed=42,
+            progress_disable=True,
+            resume_records=resume_records,
+            resume_run_id="prev-id-abc",
+        )
+
+    # 기존 completed 2명 + 새로 완료된 1명 = 총 3명.
+    assert envelope.summary.requested == 3
+    assert envelope.summary.completed == 3
+    assert envelope.summary.failed == 0
+    # 결과 JSON에 previous_run_id가 박힌다.
+    payload = json.loads(envelope.output_path.read_text(encoding="utf-8"))
+    assert payload["meta_extra"]["previous_run_id"] == "prev-id-abc"
+
+
+@pytest.mark.asyncio
+async def test_run_batch_resume_모두_completed_LLM_미호출(
+    make_app_config,
+    tmp_path: Path,
+) -> None:
+    """모든 record가 이미 completed면 LLM 호출 없이 envelope을 만든다."""
+
+    config = make_app_config(concurrency=1)
+    personas = [_persona(f"p-{i}") for i in range(3)]
+    resume_records = [
+        _completed_record("p-0"),
+        _completed_record("p-1"),
+        _completed_record("p-2"),
+    ]
+
+    # llm은 빈 backend라도 healthcheck 자체가 실행되지 않아야 한다(짧은 경로).
+    class _NoCallBackend:
+        async def healthcheck(self) -> list:  # pragma: no cover - 호출되면 안 됨
+            raise AssertionError("healthcheck가 호출되면 안 된다")
+
+        async def chat(self, *args, **kwargs):  # pragma: no cover
+            raise AssertionError("chat이 호출되면 안 된다")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+    backend = _NoCallBackend()
+    envelope = await run_batch(
+        personas=personas,
+        product="반찬",
+        questions=["Q1"],
+        follow_ups=[],
+        llm=backend,  # type: ignore[arg-type]
+        config=config,
+        output_dir=tmp_path,
+        slug="resume-only",
+        seed=42,
+        progress_disable=True,
+        resume_records=resume_records,
+        resume_run_id="prev-2",
+    )
+
+    assert envelope.summary.completed == 3
+    assert envelope.partial_failure is False
+    payload = json.loads(envelope.output_path.read_text(encoding="utf-8"))
+    assert payload["meta_extra"]["previous_run_id"] == "prev-2"
