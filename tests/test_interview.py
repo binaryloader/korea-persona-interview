@@ -147,6 +147,32 @@ def test_build_system_prompt_거주_형태_지침_포함(fake_persona_meta) -> N
     assert "추측하지" in prompt
 
 
+def test_build_system_prompt_페르소나_톤_지침_5종_포함(fake_persona_meta) -> None:
+    """[지침] 섹션에 페르소나 1인칭 톤 강화 지침 5종이 모두 포함된다.
+
+    gpt-4o-mini의 ``혼자 사시는 분들에겐 좋은 서비스`` 류 일반화 응답 회귀
+    방지를 위한 톤 가드 지침이다. 본 지침이 누락되면 인터뷰 응답이 페르소나의
+    family_type/housing_type 입장에서 벗어나 3인칭 일반화로 흐를 수 있다.
+    """
+
+    prompt = build_system_prompt(
+        fake_persona_meta,
+        product="반찬",
+        persona_fields=("summary",),
+        field_map=_FIELD_MAP,
+    )
+    # 1) 2-4문장 간결 지침(기존)
+    assert "2-4문장" in prompt
+    # 2) 본인 입장 고정 지침
+    assert "본인의 경험과 입장에서만" in prompt
+    # 3) 3인칭 일반화 회피 지침
+    assert "3인칭 일반화" in prompt
+    # 4) family_type/housing_type 그대로 따르기 지침
+    assert "family_type/housing_type을 그대로" in prompt
+    # 5) 거주 형태 추측 금지 지침(기존, family_type 단독)
+    assert "거주 형태에 대해" in prompt and "추측하지" in prompt
+
+
 def test_build_system_prompt_family_type_None이면_JSON에_미주입() -> None:
     """family_type이 None이면 페르소나 JSON 객체에 키가 등장하지 않는다.
 
