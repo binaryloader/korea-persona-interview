@@ -52,6 +52,15 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("NO_COLOR", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
+    # 페르소나 풀 in-memory 캐시는 프로세스 단위로 누적되므로 테스트 간 격리
+    # 위해 매 테스트마다 비운다.
+    try:
+        from src.load_personas import clear_persona_pool_cache
+
+        clear_persona_pool_cache()
+    except Exception:  # noqa: BLE001 - import 실패 시 안전망
+        pass
+
     # 프로젝트 루트 .env가 자동 탐색되어 실제 ``OPENAI_API_KEY``를 주입하던
     # 회귀를 막는다. 명시 경로를 받는 호출과 cwd가 프로젝트 루트가 아닌
     # 호출(monkeypatch.chdir(tmp_path) 사용)은 그대로 통과시킨다. 그래야 cwd를

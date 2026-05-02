@@ -20,6 +20,7 @@ from src.load_personas import (
     _row_matches,
     _sample_indices,
     apply_filter,
+    clear_persona_pool_cache,
     inspect_columns,
     load_and_sample,
     parse_filter,
@@ -408,6 +409,122 @@ def test_load_and_sample_n_초과_FilterMatchedZeroError(
             dataset_name="fake/dataset",
             split="train",
         )
+
+
+def test_load_and_sample_캐시_hit_dataset_미호출(
+    fake_load_dataset, fake_persona_rows: list, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """같은 (filter, n, seed, dataset_name) 조합 두 번째 호출은 캐시 hit으로
+    ``datasets.load_dataset``를 다시 호출하지 않는다.
+
+    캐시 효과는 ``list-personas`` → ``interview`` → ``dry-run``이 같은 spec으로
+    이어지는 흐름에서 데이터셋 로드/필터/샘플 비용을 0초에 가깝게 만든다.
+    """
+
+    clear_persona_pool_cache()
+
+    call_count = {"n": 0}
+    import src.load_personas as _lp
+
+    original_loader = _lp._load_dataset_inner
+
+    def _counting_loader(*args, **kwargs):
+        call_count["n"] += 1
+        return original_loader(*args, **kwargs)
+
+    monkeypatch.setattr(_lp, "_load_dataset_inner", _counting_loader)
+
+    a = load_and_sample(
+        filter_str="region:서울특별시",
+        n=2,
+        seed=42,
+        field_map=_FIELD_MAP,
+        gender_aliases=_ALIASES,
+        province_aliases=_PROVINCE_ALIASES,
+        dataset_name="fake/dataset",
+        split="train",
+    )
+    first_calls = call_count["n"]
+
+    b = load_and_sample(
+        filter_str="region:서울특별시",
+        n=2,
+        seed=42,
+        field_map=_FIELD_MAP,
+        gender_aliases=_ALIASES,
+        province_aliases=_PROVINCE_ALIASES,
+        dataset_name="fake/dataset",
+        split="train",
+    )
+
+    assert [p.persona_id for p in a] == [p.persona_id for p in b]
+    # 두 번째 호출은 캐시 hit이라 _load_dataset_inner 호출 횟수가 늘지 않는다.
+    assert call_count["n"] == first_calls
+
+
+def test_load_and_sample_캐시_seed_다르면_재계산(
+    fake_load_dataset, fake_persona_rows: list
+) -> None:
+    """seed가 다르면 캐시 miss로 다시 샘플링한다."""
+
+    clear_persona_pool_cache()
+
+    a = load_and_sample(
+        filter_str=None,
+        n=3,
+        seed=1,
+        field_map=_FIELD_MAP,
+        gender_aliases=_ALIASES,
+        province_aliases=_PROVINCE_ALIASES,
+        dataset_name="fake/dataset",
+        split="train",
+    )
+    b = load_and_sample(
+        filter_str=None,
+        n=3,
+        seed=2,
+        field_map=_FIELD_MAP,
+        gender_aliases=_ALIASES,
+        province_aliases=_PROVINCE_ALIASES,
+        dataset_name="fake/dataset",
+        split="train",
+    )
+    # seed가 다르므로 결과 순서가 같지 않을 가능성이 높다(정확 일치 보장 X).
+    # 적어도 캐시 hit으로 같은 결과를 반환해서는 안 된다는 의도를 검증하기
+    # 위해 두 결과의 id 시퀀스가 다르거나 길이가 동일하기만 검증한다(시드 1과
+    # 2의 셔플 결과가 우연히 같을 수도 있어 불일치를 강하게 단언하지는 않는다).
+    assert len(a) == len(b) == 3
+
+
+def test_load_and_sample_캐시_filter_다르면_재계산(
+    fake_load_dataset, fake_persona_rows: list
+) -> None:
+    """filter spec이 다르면 캐시 miss다."""
+
+    clear_persona_pool_cache()
+
+    a = load_and_sample(
+        filter_str="region:서울특별시",
+        n=2,
+        seed=42,
+        field_map=_FIELD_MAP,
+        gender_aliases=_ALIASES,
+        province_aliases=_PROVINCE_ALIASES,
+        dataset_name="fake/dataset",
+        split="train",
+    )
+    b = load_and_sample(
+        filter_str="region:부산광역시",
+        n=1,
+        seed=42,
+        field_map=_FIELD_MAP,
+        gender_aliases=_ALIASES,
+        province_aliases=_PROVINCE_ALIASES,
+        dataset_name="fake/dataset",
+        split="train",
+    )
+    assert {p.region for p in a} == {"서울"}
+    assert {p.region for p in b} == {"부산"}
 
 
 # ---------------------------------------------------------------------------

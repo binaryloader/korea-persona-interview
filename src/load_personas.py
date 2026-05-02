@@ -460,6 +460,12 @@ def load_and_sample(
 ) -> list:
     """필터 DSL 적용 후 시드 샘플링으로 ``PersonaMeta`` 리스트를 반환한다.
 
+    같은 ``(filter_str, n, seed, field_map, dataset_name, split)`` 조합으로 다시
+    호출하면 in-memory 캐시 hit으로 즉시 반환한다. ``list-personas``/``interview``/
+    ``dry-run``에서 같은 표본을 반복 조회하는 흐름의 중복 비용을 제거한다.
+    디스크 캐시는 v1.1 백로그(필터 결과를 디스크에 저장하면 다른 프로세스에서도
+    재사용 가능).
+
     Args:
         filter_str: 필터 DSL 문자열. None이면 전체에서 샘플링.
         n: 샘플 인원.
@@ -478,6 +484,31 @@ def load_and_sample(
         DatasetUnavailableError: 데이터셋 로드 실패.
         FilterMatchedZeroError: 필터 결과가 n보다 적음.
     """
+
+    cache_key = _build_cache_key(
+        filter_str=filter_str,
+        n=n,
+        seed=seed,
+        field_map=field_map,
+        gender_aliases=gender_aliases,
+        province_aliases=province_aliases,
+        dataset_name=dataset_name,
+        split=split,
+    )
+    cached = _PERSONA_POOL_CACHE.get(cache_key)
+    if cached is not None:
+        logger.info(
+            "페르소나 풀 캐시 hit",
+            extra={
+                "filter": filter_str or "(전체)",
+                "n": n,
+                "seed": seed,
+                "cached_count": len(cached),
+            },
+        )
+        # frozen dataclass 리스트라 얕은 복사로 호출자가 누적/수정해도 캐시
+        # 원본을 오염시키지 않게 한다.
+        return list(cached)
 
     spec = parse_filter(filter_str, gender_aliases, province_aliases)
 
@@ -523,7 +554,60 @@ def load_and_sample(
         "페르소나 샘플링 완료",
         extra={"sampled": len(personas), "seed": seed},
     )
+    _PERSONA_POOL_CACHE[cache_key] = list(personas)
     return personas
+
+
+# ---------------------------------------------------------------------------
+# 페르소나 풀 in-memory 캐시(같은 프로세스 안 반복 호출 단축)
+# ---------------------------------------------------------------------------
+
+
+# key는 ``_build_cache_key``가 반환하는 hashable 튜플, value는 ``PersonaMeta``
+# 리스트다. CLI 단일 프로세스 한 번 실행 안에서 ``list-personas``/``interview``/
+# ``dry-run``이 같은 spec으로 반복 호출되는 흐름을 단축한다. 프로세스 종료 시
+# 함께 사라진다(디스크 캐시는 v1.1 백로그).
+_PERSONA_POOL_CACHE: dict = {}
+
+
+def _build_cache_key(
+    *,
+    filter_str: Optional[str],
+    n: int,
+    seed: int,
+    field_map: dict,
+    gender_aliases: dict,
+    province_aliases: dict,
+    dataset_name: str,
+    split: str,
+) -> tuple:
+    """샘플링 입력 전체를 hashable 튜플 키로 만든다.
+
+    field_map/gender_aliases/province_aliases 같은 dict는 정렬된 항목 튜플로
+    동결해 키에 포함한다. dict 순서가 같아도 파이썬 dict는 hashable이 아니라
+    캐시 키로 직접 쓸 수 없다. 같은 데이터셋 컬럼 매핑/별칭 변경이 캐시 무효화
+    조건에 정확히 들어가도록 한다.
+    """
+
+    def _freeze(d: dict) -> tuple:
+        return tuple(sorted((str(k), v) for k, v in d.items()))
+
+    return (
+        filter_str or "",
+        int(n),
+        int(seed),
+        _freeze(field_map),
+        _freeze(gender_aliases),
+        _freeze(province_aliases),
+        dataset_name,
+        split,
+    )
+
+
+def clear_persona_pool_cache() -> None:
+    """캐시를 비운다. 테스트 격리와 모듈 외부 수동 무효화용."""
+
+    _PERSONA_POOL_CACHE.clear()
 
 
 def _select_random_subset(ds, *, n: int, seed: int):
