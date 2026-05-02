@@ -440,9 +440,17 @@ def _load_dataset_inner(
             split=config.split,
             streaming=streaming,
         )
-    except Exception as exc:  # datasets 내부 예외 종류가 광범위하다
+    except (OSError, ValueError, RuntimeError, ImportError) as exc:
+        # datasets 라이브러리는 네트워크/캐시/스키마 오류를 주로 위 4종 또는 그 하위
+        # 클래스로 던진다. 본 명시 분기로 좁히되, 본 라이브러리 새 버전이 다른
+        # Exception 계열을 도입할 가능성을 안전망으로 흡수한다(아래 BLE001).
         raise DatasetUnavailableError(
             f"데이터셋을 로드할 수 없습니다: {exc}. "
+            "인터넷 연결과 ~/.cache/huggingface 권한을 확인해 주세요"
+        ) from exc
+    except Exception as exc:  # noqa: BLE001 - datasets 내부 예외가 광범위해 안전망 유지
+        raise DatasetUnavailableError(
+            f"데이터셋을 로드할 수 없습니다(예상치 못한 예외 흡수): {exc}. "
             "인터넷 연결과 ~/.cache/huggingface 권한을 확인해 주세요"
         ) from exc
     return ds
@@ -544,9 +552,15 @@ def load_and_sample(
             )
     except FilterMatchedZeroError:
         raise
-    except Exception as exc:  # 데이터셋 내부 예외(KeyError 등)
+    except (KeyError, IndexError, ValueError, RuntimeError) as exc:
+        # datasets의 row 순회/select는 컬럼 누락(KeyError), 인덱스 범위 오류,
+        # 매개변수 검증 실패(ValueError), 내부 RuntimeError를 던진다.
         raise DatasetUnavailableError(
             f"데이터셋 row 순회 또는 select 실패: {exc}"
+        ) from exc
+    except Exception as exc:  # noqa: BLE001 - datasets 신규 버전 예외 안전망
+        raise DatasetUnavailableError(
+            f"데이터셋 row 순회 또는 select 실패(예상치 못한 예외 흡수): {exc}"
         ) from exc
 
     personas = [_build_persona_meta(row, field_map) for row in sampled_subset]
@@ -719,9 +733,13 @@ def inspect_columns(
             raise DatasetUnavailableError(
                 "데이터셋이 비어 있다(streaming 모드, 첫 row 없음)"
             ) from exc
-        except Exception as exc:
+        except (OSError, ValueError, RuntimeError) as exc:
             raise DatasetUnavailableError(
                 f"데이터셋 첫 row 추출 실패(streaming): {exc}"
+            ) from exc
+        except Exception as exc:  # noqa: BLE001 - datasets 신규 버전 예외 안전망
+            raise DatasetUnavailableError(
+                f"데이터셋 첫 row 추출 실패(streaming, 예상치 못한 예외): {exc}"
             ) from exc
         column_names = list(first_record.keys()) if isinstance(first_record, dict) else []
     else:

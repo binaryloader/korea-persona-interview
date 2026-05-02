@@ -799,25 +799,6 @@ def interview(
 
     json_mode: bool = bool(ctx.obj.get("json_mode"))
 
-    try:
-        config, console = _common_setup(
-            config_path=ctx.obj["config_path"],
-            no_color=ctx.obj["no_color"],
-            log_level=ctx.obj["log_level"],
-        )
-    except ConfigError as exc:
-        if json_mode:
-            _emit_json_error(
-                "config_error",
-                MESSAGES["config_error"].format(reason=exc),
-                exit_code=1,
-            )
-        else:
-            Console(color=_resolve_color(False)).err(
-                MESSAGES["config_error"].format(reason=exc)
-            )
-        sys.exit(1)
-
     # CLI 옵션을 config에 반영. concurrency와 persona_fields는 batch 섹션에 박는다.
     fields_tuple = tuple(
         s.strip() for s in persona_fields.split(",") if s.strip()
@@ -833,20 +814,26 @@ def interview(
     }
     if model_override:
         overrides["llm"] = {"model": model_override}
+
     try:
-        config = load_config(
-            yaml_path=ctx.obj["config_path"],
+        config, console = _common_setup(
+            config_path=ctx.obj["config_path"],
+            no_color=ctx.obj["no_color"],
+            log_level=ctx.obj["log_level"],
             cli_overrides=overrides,
         )
     except ConfigError as exc:
-        _exit_with_error(
-            json_mode=json_mode,
-            console=console,
-            error_code="config_error",
-            message=MESSAGES["config_error"].format(reason=exc),
-            exit_code=1,
-            show_exit_code_line=False,
-        )
+        if json_mode:
+            _emit_json_error(
+                "config_error",
+                MESSAGES["config_error"].format(reason=exc),
+                exit_code=1,
+            )
+        else:
+            Console(color=_resolve_color(False)).err(
+                MESSAGES["config_error"].format(reason=exc)
+            )
+        sys.exit(1)
 
     if not questions:
         _exit_with_error(

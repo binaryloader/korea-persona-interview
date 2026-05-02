@@ -1205,7 +1205,12 @@ class InterviewSession:
                 structured_summary = await summarize_interview(
                     messages, self._client, self._llm_cfg
                 )
-            except Exception as exc:  # noqa: BLE001 - 안전망
+            except (
+                RetryExhaustedError,
+                ServerNotReachableError,
+                ConfigError,
+                StructuredSummaryParseError,
+            ) as exc:
                 # summarize_interview 자체가 실패해도 인터뷰 본체는 보존한다.
                 logger.warning(
                     "구조화 요약 단계 예외(structured_summary=None로 보존)",

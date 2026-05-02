@@ -347,13 +347,16 @@ async def _run_single(
             return _build_failed_record(persona, exc)
         except Exception as exc:  # noqa: BLE001 - 안전망
             # 예상 못한 예외가 새어 나오면 본 layer에서 흡수한다(다른 task가
-            # 죽지 않도록). status="failed"로 변환해 record를 만든다.
+            # 죽지 않도록). status="failed"로 변환해 record를 만든다. 추적
+            # 정보를 stack trace로 남겨 사후 분석을 돕는다.
             logger.error(
                 "페르소나 인터뷰 예외(흡수)",
                 extra={
                     "persona_id": persona.persona_id,
                     "reason": str(exc),
+                    "exception_type": type(exc).__name__,
                 },
+                exc_info=True,
             )
             return _build_failed_record(persona, exc)
 
@@ -441,8 +444,11 @@ class _ProgressTracker:
 
         try:
             self._bar.write(message)
-        except Exception:
-            # tqdm가 disable인 환경에서도 메시지를 보존하기 위해 직접 print.
+        except (AttributeError, OSError):
+            # AttributeError: tqdm이 disable이라 일부 메서드가 결손인 케이스.
+            # OSError: stderr가 닫혀 print/write 실패하는 케이스(긴 배치 종료 시).
+            print(message)
+        except Exception:  # noqa: BLE001 - tqdm 신규 버전 예외 안전망
             print(message)
 
     def close(self) -> None:
@@ -544,7 +550,8 @@ async def run_batch(
                     "한 번 더 Ctrl+C를 누르면 즉시 종료합니다.",
                     flush=True,
                 )
-            except Exception:
+            except (OSError, ValueError):
+                # stderr가 닫혀 print 실패하는 케이스. 핸들러 안이라 무시한다.
                 pass
         else:
             # 2회: 기본 KeyboardInterrupt 흐름 복원해 즉시 종료.

@@ -558,7 +558,10 @@ def _build_cohort(
     for r in records:
         try:
             label = key(r)
-        except Exception:
+        except (AttributeError, TypeError, ValueError, KeyError):
+            # key 함수는 record의 persona_meta 필드(연령/지역/성별)를 dict 또는
+            # 속성 접근으로 추출한다. 누락/타입 오류 시 본 record는 코호트
+            # 분류에서 건너뛴다(다른 record는 그대로 진행).
             continue
         if label not in grouped:
             grouped[label] = []
