@@ -140,7 +140,70 @@ Exit code 130 is reserved for `SIGINT` (Ctrl-C). The first interrupt saves a par
 
 ## Integration with External Agents
 
-For non-interactive use from agents like Claude Code, Cursor, or Codex, pass `--json` at the root group. The mode disables tqdm progress, ANSI color, and the Korean `[OK]/[INFO]/[ERR]` labels, and emits a single JSON document on stdout. Logs continue to flow to stderr and `outputs/logs/run_*.jsonl`.
+There are two ways to drive this tool from external agents like Claude Code, Cursor, or Codex. Pick the one that matches the agent.
+
+### Option A: MCP server (recommended)
+
+The project ships a Model Context Protocol (MCP) server that exposes the four CLI commands as tools. Once registered in the agent's `mcp.json`, the agent can call them by name from natural-language prompts (for example "1인 가구 대상 반찬 정기배송 30명 인터뷰 돌려줘").
+
+The server speaks JSON-RPC over stdio. Logs flow to stderr and `outputs/logs/run_*.jsonl`, so they do not pollute the stdio channel that the agent reads.
+
+Run the server manually to verify it starts.
+
+```bash
+python -m src.mcp_server
+```
+
+Register it in Claude Code by adding the snippet below to `~/.claude/mcp.json` (create the file if it does not exist). The `cwd` must point at the project root so that `config.yaml`, `prompts/system_prompt.txt`, and `outputs/` resolve correctly.
+
+```json
+{
+  "mcpServers": {
+    "korea-persona-interview": {
+      "command": "/absolute/path/to/.venv/bin/python",
+      "args": ["-m", "src.mcp_server"],
+      "cwd": "/absolute/path/to/korea-persona-interview",
+      "env": {
+        "OPENAI_API_KEY": "sk-..."
+      }
+    }
+  }
+}
+```
+
+Register it in Cursor by adding the snippet below to `.cursor/mcp.json` at the project root or to the global Cursor MCP settings.
+
+```json
+{
+  "mcpServers": {
+    "korea-persona-interview": {
+      "command": "uv",
+      "args": ["run", "--", "python", "-m", "src.mcp_server"],
+      "cwd": "/absolute/path/to/korea-persona-interview",
+      "env": {
+        "OPENAI_API_KEY": "sk-..."
+      }
+    }
+  }
+}
+```
+
+The four tools exposed are below. Each tool returns a single JSON document; on failure the document is `{"error": {"code": "...", "message": "...", "exit_code": N}}`.
+
+| Tool | Purpose | Required arguments |
+| --- | --- | --- |
+| `healthcheck` | Verify OpenAI API reachability and model availability | (none) |
+| `list_personas` | Preview personas matching a filter | (none) |
+| `interview` | Run a batch interview, write the result JSON, return summary | `product`, `questions` |
+| `report` | Generate a markdown report from a result JSON | `json_path` |
+
+A natural-language example: ask the agent "1인 가구 대상 반찬 정기배송 (월 39,900원)을 25-39세 서울 30명에게 인터뷰 돌리고 리포트까지 만들어 줘" and it will call `interview` then `report` back-to-back, returning the markdown path.
+
+Example MCP server config files live under `examples/mcp/` for both Claude Code and Cursor.
+
+### Option B: --json mode (one-shot calls)
+
+For agents that drive a CLI directly (or for shell scripts), pass `--json` at the root group. The mode disables tqdm progress, ANSI color, and the Korean `[OK]/[INFO]/[ERR]` labels, and emits a single JSON document on stdout. Logs continue to flow to stderr and `outputs/logs/run_*.jsonl`.
 
 ```bash
 python main.py --json healthcheck

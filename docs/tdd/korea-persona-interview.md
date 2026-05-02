@@ -248,6 +248,17 @@ JSON 결과 파일을 읽어 마크다운 리포트를 생성한다.
 
 click CLI 엔트리다. 비동기 진입점은 `asyncio.run(main_async())` 패턴을 사용한다. 4개 서브커맨드만 노출하고 매크로 명령은 두지 않는다.
 
+#### 2.10. src/mcp_server.py
+
+MCP(Model Context Protocol) 서버 진입점이다. 라운드 C1에서 추가했다. 외부 에이전트(Claude Code, Cursor, Codex 등)가 본 도구를 stdio 기반 도구로 등록해 자연어로 호출할 수 있게 한다.
+
+- 공식 `mcp` Python SDK(1.27.0) 위에 stdio JSON-RPC 서버를 띄운다. 직접 JSON-RPC 구현 대신 표준 호환성과 SDK lifecycle 처리에 의존하기 위함이다(dependency.md §1, leftpad 회피)
+- 4개 도구를 노출한다. 도구명은 MCP 관례인 snake_case다(`healthcheck`, `list_personas`, `interview`, `report`). `list-personas` CLI와 표기가 다른 것은 도구 호출 명세가 식별자이기 때문이다
+- 각 도구는 application 계층(`run_batch`, `generate_report`, `MlxLLMClient`)을 그대로 재사용한다. 도구 응답은 `{"ok": true, ...}` 또는 `{"error": {"code": "...", "message": "...", "exit_code": N}}` 두 형태 중 하나로 통일하며, 한국어를 보존한 JSON 텍스트로 ``TextContent``에 담는다
+- MCP는 비대화식이라 tqdm/ANSI 컬러/[OK] 라벨은 출력하지 않는다. 진행률 표시는 `progress_disable=True`로 끈다. 로그는 stderr/`outputs/logs/run_*.jsonl`에 그대로 흘려 stdio JSON-RPC 채널을 오염시키지 않는다(logging.md §3)
+- `mcp` SDK가 부재한 환경(예: lock 미동기화)에서도 본 모듈 import 자체가 깨지지 않도록 `mcp` import는 `main()` 진입 시점의 `_serve_stdio()` 안에서 lazy하게 수행한다. import 실패 시 stderr로 친절한 한국어 안내를 내고 exit 1로 종료한다(error-handling.md §1)
+- 진입점은 `python -m src.mcp_server`(모듈 단위 실행)와 라운드 C4의 console script `kpi-mcp-server` 두 가지를 둔다
+
 ### 3. 클래스/함수 시그니처
 
 타입 힌트는 PEP 604(`X | Y`) 표기를 사용한다(Python 3.10+).

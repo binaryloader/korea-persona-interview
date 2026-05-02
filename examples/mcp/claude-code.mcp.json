@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "korea-persona-interview": {
+      "command": "/absolute/path/to/korea-persona-interview/.venv/bin/python",
+      "args": ["-m", "src.mcp_server"],
+      "cwd": "/absolute/path/to/korea-persona-interview",
+      "env": {
+        "OPENAI_API_KEY": "sk-replace-with-your-key"
+      }
+    }
+  }
+}
