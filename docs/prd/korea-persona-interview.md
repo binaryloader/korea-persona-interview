@@ -305,6 +305,7 @@ CLI는 4개 서브커맨드를 제공한다. 매크로 명령(예: `run-all`)은
 - CLI 출력은 ANSI 컬러 코드를 사용한다. `--no-color` 옵션으로 비활성화 가능하다
 - 모든 사용자 안내 문구와 에러 메시지는 한국어로 작성한다(에러 코드, 식별자 등 영문 관용어는 그대로)
 - 리포트 마크다운은 옵시디안, GitHub, VS Code 미리보기에서 모두 정상 렌더된다(특수 문자, em dash 사용 금지)
+- 외부 에이전트(Claude Code, Cursor, Codex 등) 통합용으로 root group에 `--json` 옵션을 둔다. 본 옵션을 켜면 tqdm 진행률, ANSI 컬러, [OK]/[INFO]/[ERR] 한국어 메시지를 모두 끄고 stdout에 결과 JSON 한 덩어리만 출력한다. 에러도 `{"error": {"code", "message", "exit_code"}}` 형태로 stdout에 내보낸다. logging JSON Lines는 그대로 stderr와 `outputs/logs/run_*.jsonl` 두 곳에 남는다
 
 ### 6.8. 테스트
 

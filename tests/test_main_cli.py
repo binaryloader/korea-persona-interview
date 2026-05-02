@@ -509,6 +509,227 @@ def test_interview_정상_3명_completed_exit_0_auto_report(
     assert "리포트 자동 생성 시작" in result.output
 
 
+def _make_json_runner() -> CliRunner:
+    """``--json`` 모드 테스트용 CliRunner. stdout과 stderr를 분리해 stdout에서만 결과 JSON을 검증한다.
+
+    stderr에는 logging JSON Lines가 흘러 들어오므로 stdout만 파싱해야 한다. click 8.1의
+    ``mix_stderr=False``로 분리한다(click 8.2에서는 기본 분리 정책으로 바뀐다).
+    """
+
+    return CliRunner(mix_stderr=False)
+
+
+def _stdout_json(result) -> dict:
+    """``CliRunner(mix_stderr=False)`` 결과의 stdout만 한 덩어리 JSON으로 파싱한다."""
+
+    return json.loads(result.stdout.strip())
+
+
+def test_json_mode_healthcheck_정상_stdout_JSON(httpx_mock, tmp_path: Path) -> None:
+    """``--json`` 모드 healthcheck: stdout에 ``{"ok": true, ...}`` 한 줄."""
+
+    httpx_mock.add_response(
+        method="GET",
+        url="https://api.openai.com/v1/models",
+        json={"data": [{"id": "gpt-4o-mini"}, {"id": "gpt-4o"}]},
+        status_code=200,
+    )
+
+    runner = _make_json_runner()
+    result = runner.invoke(
+        cli,
+        ["--json", "healthcheck"],
+        env={
+            "KPI_OUTPUT_DIR": str(tmp_path),
+            "OPENAI_API_KEY": "test-key",
+        },
+    )
+    assert result.exit_code == 0, result.stdout + result.stderr
+    payload = _stdout_json(result)
+    assert payload["ok"] is True
+    assert payload["model"] == "gpt-4o-mini"
+    assert "gpt-4o-mini" in payload["models"]
+    # 사람용 라벨이 stdout에 등장하지 않아야 한다.
+    assert "[OK]" not in result.stdout
+    assert "[INFO]" not in result.stdout
+
+
+def test_json_mode_healthcheck_서버_다운_stdout_JSON_error(
+    httpx_mock, tmp_path: Path
+) -> None:
+    import httpx
+
+    httpx_mock.add_exception(
+        httpx.ConnectError("connection refused"),
+        url="https://api.openai.com/v1/models",
+    )
+
+    runner = _make_json_runner()
+    result = runner.invoke(
+        cli,
+        ["--json", "healthcheck"],
+        env={
+            "KPI_OUTPUT_DIR": str(tmp_path),
+            "OPENAI_API_KEY": "test-key",
+        },
+    )
+    assert result.exit_code == 1
+    payload = _stdout_json(result)
+    assert payload["error"]["code"] == "server_not_reachable"
+    assert payload["error"]["exit_code"] == 1
+
+
+def test_json_mode_list_personas_정상_stdout_JSON(
+    fake_load_dataset, tmp_path: Path
+) -> None:
+    runner = _make_json_runner()
+    result = runner.invoke(
+        cli,
+        ["--json", "list-personas", "--limit", "2", "--seed", "42"],
+        env={"KPI_OUTPUT_DIR": str(tmp_path)},
+    )
+    assert result.exit_code == 0, result.stdout + result.stderr
+    payload = _stdout_json(result)
+    assert payload["count"] == 2
+    assert len(payload["personas"]) == 2
+    # 첫 페르소나에 핵심 키들이 들어 있고 raw는 빠져 있다(요약 응답).
+    first = payload["personas"][0]
+    assert "persona_id" in first
+    assert "gender" in first
+    assert "raw" not in first
+
+
+def test_json_mode_list_personas_필터_0건_error_payload(
+    fake_load_dataset, tmp_path: Path
+) -> None:
+    runner = _make_json_runner()
+    result = runner.invoke(
+        cli,
+        [
+            "--json",
+            "list-personas",
+            "--filter",
+            "age:90-99",
+            "--limit",
+            "1",
+        ],
+        env={"KPI_OUTPUT_DIR": str(tmp_path)},
+    )
+    assert result.exit_code == 2
+    payload = _stdout_json(result)
+    assert payload["error"]["code"] == "filter_matched_zero"
+    assert payload["error"]["exit_code"] == 2
+
+
+def test_json_mode_interview_정상_3명_stdout_JSON(
+    httpx_mock, fake_load_dataset, tmp_path: Path
+) -> None:
+    """``--json`` 모드 인터뷰: stdout에 결과 메타 JSON 한 줄, JSON 파일은 파일에 저장."""
+
+    httpx_mock.add_response(
+        method="GET",
+        url="https://api.openai.com/v1/models",
+        json={"data": [{"id": "test-model"}]},
+        status_code=200,
+    )
+    _add_interview_chat_responses(httpx_mock, n=3)
+    # 자동 report 정성 인사이트 호출.
+    _add_qualitative_insight_response(httpx_mock)
+
+    runner = _make_json_runner()
+    result = runner.invoke(
+        cli,
+        [
+            "--json",
+            "interview",
+            "--product",
+            "반찬",
+            "--questions",
+            "Q1",
+            "--n",
+            "3",
+            "--output",
+            str(tmp_path),
+        ],
+        env={
+            "KPI_OUTPUT_DIR": str(tmp_path),
+            "OPENAI_API_KEY": "test-key",
+        },
+    )
+    assert result.exit_code == 0, result.stdout + result.stderr
+    payload = _stdout_json(result)
+    assert payload["ok"] is True
+    assert payload["output_path"].endswith(".json")
+    assert payload["report_path"].endswith(".md")
+    assert payload["summary"]["completed"] == 3
+    assert payload["summary"]["requested"] == 3
+    # config default 모델 ID가 들어온다(테스트는 KPI_LLM_MODEL을 설정하지 않았다).
+    assert payload["model"] == "gpt-4o-mini"
+    # 파일은 실제로 생성되었어야 한다.
+    assert Path(payload["output_path"]).exists()
+    assert Path(payload["report_path"]).exists()
+
+
+def test_json_mode_report_정상_stdout_JSON(httpx_mock, tmp_path: Path) -> None:
+    """``--json`` 모드 report: stdout에 ``{"ok": true, "output_path": ...}``."""
+
+    from src.models import Flags, InterviewRecord, PersonaMeta, StructuredSummary
+
+    persona = PersonaMeta(
+        persona_id="x",
+        name=None,
+        gender="여자",
+        age=27,
+        region="서울",
+        subregion="서울-X",
+        occupation="x",
+        marital="x",
+        education="x",
+        raw={},
+    )
+    summary = StructuredSummary(
+        intent="positive",
+        willingness_to_pay=30000,
+        willingness_to_pay_currency="KRW",
+        rejection_reasons=[],
+        one_line="x",
+    )
+    records = [
+        InterviewRecord(
+            persona_id=f"p{i}",
+            persona_meta=persona,
+            started_at="t",
+            finished_at="t",
+            status="completed",
+            messages=[],
+            raw_responses=[],
+            structured_summary=summary,
+            flags=Flags(),
+            error=None,
+        )
+        for i in range(3)
+    ]
+
+    json_path = tmp_path / "interview_korea-persona-interview_20260502_120000.json"
+    _write_full_payload(json_path, records=records)
+    _add_qualitative_insight_response(httpx_mock)
+
+    runner = _make_json_runner()
+    result = runner.invoke(
+        cli,
+        ["--json", "report", str(json_path)],
+        env={
+            "KPI_OUTPUT_DIR": str(tmp_path),
+            "OPENAI_API_KEY": "test-key",
+        },
+    )
+    assert result.exit_code == 0, result.stdout + result.stderr
+    payload = _stdout_json(result)
+    assert payload["ok"] is True
+    assert payload["output_path"].endswith(".md")
+    assert Path(payload["output_path"]).exists()
+
+
 def test_interview_dry_run은_자동_리포트도_안만든다(
     httpx_mock,
     fake_load_dataset,

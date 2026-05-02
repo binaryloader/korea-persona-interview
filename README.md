@@ -138,6 +138,27 @@ Expected outcome: two reports per cohort. The cohort intent table inside each re
 
 Exit code 130 is reserved for `SIGINT` (Ctrl-C). The first interrupt saves a partial JSON to `outputs/`. The second interrupt terminates immediately.
 
+## Integration with External Agents
+
+For non-interactive use from agents like Claude Code, Cursor, or Codex, pass `--json` at the root group. The mode disables tqdm progress, ANSI color, and the Korean `[OK]/[INFO]/[ERR]` labels, and emits a single JSON document on stdout. Logs continue to flow to stderr and `outputs/logs/run_*.jsonl`.
+
+```bash
+python main.py --json healthcheck
+# {"ok": true, "base_url": "https://api.openai.com/v1", "model": "gpt-4o-mini", "models": [...]}
+
+python main.py --json list-personas --filter "age:25-39,region:서울특별시" --limit 5
+# {"personas": [...], "count": 5, "filter": "age:25-39,region:서울특별시", "seed": 42}
+
+python main.py --json interview --product "..." --questions "..." --n 10
+# {"ok": true, "output_path": "outputs/interview_*.json", "report_path": "outputs/report_*.md",
+#  "summary": {"requested": 10, "completed": 10, ...}, "usage": {...}, "estimated_cost_usd": 0.012, "model": "gpt-4o-mini"}
+
+python main.py --json report outputs/interview_*.json
+# {"ok": true, "output_path": "outputs/report_*.md", "input_path": "outputs/interview_*.json", ...}
+```
+
+Errors are emitted as `{"error": {"code": "...", "message": "...", "exit_code": N}}` with a non-zero exit code. Interview record bodies stay in the saved JSON file so the stdout payload remains compact.
+
 ## Output Format
 
 Interview results are written to `outputs/interview_{slug}_{YYYYMMDD_HHMMSS}.json`. The report subcommand emits `outputs/report_{slug}_{YYYYMMDD_HHMMSS}.md` next to the input JSON by default.
