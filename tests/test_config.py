@@ -854,11 +854,14 @@ def test_load_config_dotenv_주석_라인_무시(
 # ---------------------------------------------------------------------------
 
 
-def test_mcp_config_default_mode_server(tmp_path: Path) -> None:
-    """yaml 미존재일 때 ``mcp.mode`` default는 ``server``다(ADR-005)."""
+def test_mcp_config_default_mode_orchestrator(tmp_path: Path) -> None:
+    """yaml 미존재일 때 ``mcp.mode`` default는 ``orchestrator``다.
+
+    v1.2.0 후속 정리에서 default가 ``server``에서 ``orchestrator``로 바뀌었다. orchestrator는 mcp.json env 추가 없이 즉시 동작하므로 신규 사용자 마찰이 가장 적다.
+    """
 
     cfg = load_config(yaml_path=tmp_path / "no.yaml")
-    assert cfg.mcp.mode == "server"
+    assert cfg.mcp.mode == "orchestrator"
 
 
 def test_mcp_config_yaml_orchestrator_override(tmp_path: Path) -> None:
@@ -909,8 +912,8 @@ def test_mcp_config_대소문자_정규화(tmp_path: Path) -> None:
 def test_mcp_config_dataclass_직접_생성_허용() -> None:
     from src.config import McpConfig
 
-    assert McpConfig().mode == "server"
-    assert McpConfig(mode="orchestrator").mode == "orchestrator"
+    assert McpConfig().mode == "orchestrator"
+    assert McpConfig(mode="server").mode == "server"
 
 
 def test_mcp_config_dataclass_직접_생성_검증() -> None:

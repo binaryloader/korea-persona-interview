@@ -284,7 +284,9 @@ async def test_handle_list_personas_필터_결과_0건(
 async def test_handle_interview_product_누락_에러(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # interview 도구는 server 모드에만 노출되므로 default(orchestrator)에서 차단되지 않도록 명시 pin한다.
     monkeypatch.setenv("KPI_OUTPUT_DIR", str(tmp_path))
+    _pin_mode(tmp_path, monkeypatch, "server")
 
     result = await dispatch_tool(
         "interview",
@@ -301,6 +303,7 @@ async def test_handle_interview_questions_빈_리스트_에러(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("KPI_OUTPUT_DIR", str(tmp_path))
+    _pin_mode(tmp_path, monkeypatch, "server")
 
     result = await dispatch_tool(
         "interview",
@@ -317,6 +320,7 @@ async def test_handle_interview_concurrency_범위_검증(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("KPI_OUTPUT_DIR", str(tmp_path))
+    _pin_mode(tmp_path, monkeypatch, "server")
 
     result = await dispatch_tool(
         "interview",
@@ -336,6 +340,7 @@ async def test_handle_interview_n_범위_검증(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("KPI_OUTPUT_DIR", str(tmp_path))
+    _pin_mode(tmp_path, monkeypatch, "server")
 
     result = await dispatch_tool(
         "interview",
@@ -451,17 +456,20 @@ def test_build_backend_orchestrator_mode_ConfigError(
 
 
 # ---------------------------------------------------------------------------
-# Default mode = "server" (ADR-005)
+# Default mode = "orchestrator" (ADR-005 + v1.2.0 후속 정리)
 # ---------------------------------------------------------------------------
 
 
-def test_mcp_default_mode_server() -> None:
-    """yaml 미존재일 때 ``mcp.mode`` default는 ``server``다(ADR-005)."""
+def test_mcp_default_mode_orchestrator() -> None:
+    """yaml 미존재일 때 ``mcp.mode`` default는 ``orchestrator``다.
+
+    v1.2.0 후속 정리에서 default가 ``server``에서 ``orchestrator``로 바뀌었다. orchestrator는 mcp.json env 추가 없이 즉시 동작해 신규 사용자 마찰이 가장 적다.
+    """
 
     from src.config import load_config
 
     config = load_config(yaml_path=Path("/nonexistent/no.yaml"))
-    assert config.mcp.mode == "server"
+    assert config.mcp.mode == "orchestrator"
 
 
 def test_backend_label_helper_server_mode(make_app_config) -> None:

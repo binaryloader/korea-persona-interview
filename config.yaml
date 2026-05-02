@@ -206,26 +206,15 @@ heuristics:
   # 들어가 비용/지연이 늘어난다. 기본 OFF. CLI와 MCP server 진입점에서만 동작한다.
   llm_drift_review: false
 
-# mcp: MCP 서버 진입점(`python -m src.mcp_server` / `kpi-mcp-server`)의 동작
-# 모드 토글이다. CLI 진입점은 본 섹션과 무관하다. v1.2.0(ADR-005)부터 두 모드
-# 만 허용한다.
+# mcp: MCP 서버 진입점(`python -m src.mcp_server` / `kpi-mcp-server`)의 동작 모드 토글이다. CLI 진입점은 본 섹션과 무관하다. v1.2.0(ADR-005)부터 두 모드만 허용한다.
 #
-# - mode: "server" (default)
-#     server-side에서 OpenAI/Anthropic 백엔드를 직접 호출한다. CLI와 동일한
-#     llm.* 설정을 그대로 활용하므로 mcp.json `env`에 OPENAI_API_KEY 또는
-#     ANTHROPIC_API_KEY를 박아 주어야 한다. 응답에 `backend: "mcp_server"` 라벨
-#     이 박힌다. 일반적인 MCP 클라이언트(Claude Code Desktop, Cursor 등)에서
-#     즉시 동작한다
+# - mode: "orchestrator" (default)
+#     server-side에서 LLM을 호출하지 않는다. 호스트 sub-agent가 자기 LLM으로 인터뷰를 수행하고, 본 도구는 데이터/프롬프트 helper만 노출한다(예: build_persona_prompt, build_batch_prompts, aggregate_results, helper 도구 4종). server-side 키 불필요. 응답에 `backend: "mcp_orchestrator"` 라벨이 박힌다. v1.2.0 후속 정리에서 default가 "server"에서 본 값으로 바뀌었다(키 설정 없이 즉시 동작하므로 신규 사용자 마찰 최소화)
 #
-# - mode: "orchestrator"
-#     server-side에서 LLM을 호출하지 않는다. 호스트 sub-agent가 자기 LLM으로
-#     인터뷰를 수행하고, 본 도구는 데이터/프롬프트 helper만 노출한다(예:
-#     build_persona_prompt, build_batch_prompts, aggregate_results, helper 도구
-#     4종). server-side 키 불필요. 응답에 `backend: "mcp_orchestrator"` 라벨이
-#     박힌다. v1.2.0(ADR-005)에서 sampling 모드 supersede로 신설됐다
+# - mode: "server"
+#     server-side에서 OpenAI/Anthropic 백엔드를 직접 호출한다. CLI와 동일한 llm.* 설정을 그대로 활용하므로 mcp.json `env` 또는 프로젝트 루트 `.env`에 OPENAI_API_KEY 또는 ANTHROPIC_API_KEY를 박아 주어야 한다. 응답에 `backend: "mcp_server"` 라벨이 박힌다. 호스트 sub-agent를 거치지 않고 server-side LLM을 직접 호출하고 싶을 때 명시 지정한다
 #
-# 자동 fallback은 하지 않는다. 사용자가 모드를 명시 선택해 동작 경로를 분명히
-# 한다.
+# 자동 fallback은 하지 않는다. 사용자가 모드를 명시 선택해 동작 경로를 분명히 한다.
 mcp:
-  # "server" 또는 "orchestrator". 기본은 "server"다.
-  mode: "server"
+  # "orchestrator" (default) 또는 "server".
+  mode: "orchestrator"

@@ -1,11 +1,11 @@
 # ADR-004: MCP 동작 모드 토글(server default, sampling opt-in)
 
 - 일자: 2026-05-02
-- 상태: 채택(historical, sampling 부분은 ADR-005로 supersede)
+- 상태: 채택(historical, sampling 부분과 server-default 결정은 모두 ADR-005로 supersede)
 - 결정자: 프로젝트 오너
-- 관련: PRD §6.5, TDD §2.10, TDD §12, ADR-003(2026-05-02-multi-provider-backend.md, MCP sampling-only 결정 부분만 supersede), ADR-005(2026-05-02-orchestrator-mode-and-sampling-removal.md, 본 ADR의 sampling 부분을 supersede)
+- 관련: PRD §6.5, TDD §2.10, TDD §12, ADR-003(2026-05-02-multi-provider-backend.md, MCP sampling-only 결정 부분만 supersede), ADR-005(2026-05-02-orchestrator-mode-and-sampling-removal.md, 본 ADR의 sampling 부분과 server-default 결정을 모두 supersede)
 
-> 본 ADR의 server default 결정은 v1.2.0에서도 그대로 유효하다. sampling opt-in 결정만 ADR-005에서 supersede됐다(보급률 한계 사유). 본 ADR의 sampling 관련 단락은 시점별 의사결정 기록 가치를 위해 historical context로 보존한다.
+> 본 ADR의 sampling opt-in 결정은 ADR-005에서 supersede됐다(보급률 한계 사유). server-default 결정도 v1.2.0 후속 정리에서 default가 `server`에서 `orchestrator`로 바뀌면서 함께 supersede됐다. 본 ADR의 단락들은 시점별 의사결정 기록 가치를 위해 historical context로 보존한다.
 
 ## 1. 배경
 

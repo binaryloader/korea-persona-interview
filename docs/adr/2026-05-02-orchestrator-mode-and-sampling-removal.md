@@ -21,8 +21,8 @@ sampling 모드는 정책 일관성은 있지만 실 사용처가 0에 수렴해
 
 `mcp.mode` 화이트리스트를 아래와 같이 변경한다(BREAKING).
 
-- `mcp.mode: "server"`(기본): 그대로 유지된다. ADR-004의 server default 결정은 본 ADR에서도 유효하다
-- `mcp.mode: "orchestrator"`(신규): server-side에서 LLM을 호출하지 않는다. 호스트 sub-agent가 자기 LLM으로 인터뷰를 수행하고, 본 도구는 데이터/프롬프트 helper만 노출한다. server-side 키 불필요. 응답 backend 라벨은 `"mcp_orchestrator"`다
+- `mcp.mode: "orchestrator"`(신규, default): server-side에서 LLM을 호출하지 않는다. 호스트 sub-agent가 자기 LLM으로 인터뷰를 수행하고, 본 도구는 데이터/프롬프트 helper만 노출한다. server-side 키 불필요. 응답 backend 라벨은 `"mcp_orchestrator"`다. v1.2.0 후속 정리에서 default가 `server`에서 본 값으로 바뀌었다(키 설정 없이 즉시 동작하므로 신규 사용자 마찰이 가장 작다. ADR-004의 server-default 결정은 본 변경으로 supersede된다)
+- `mcp.mode: "server"`: server-side에서 OpenAI/Anthropic을 직접 호출한다. mcp.json env 또는 `.env`에 `OPENAI_API_KEY`/`ANTHROPIC_API_KEY`가 필요하다. 응답 backend 라벨은 `"mcp_server"`다
 - `mcp.mode: "sampling"`(제거): v1.2.0에서 화이트리스트와 코드 양쪽에서 제거된다. `McpSamplingBackend` 클래스, sampling capability check, `_convert_to_sampling_messages`, `_extract_sampling_text` 헬퍼도 함께 정리된다
 
 도구 노출 정책은 mode별로 분리된다.
@@ -39,7 +39,7 @@ sampling 모드는 정책 일관성은 있지만 실 사용처가 0에 수렴해
 | --- | --- | --- | --- | --- |
 | CLI(`kpi`) | n/a | 적용 | 미적용 | provider에 따라 |
 | MCP server | `mcp.mode: "server"` | 적용 | 미적용 | provider에 따라 |
-| MCP orchestrator | `mcp.mode: "orchestrator"` | 미적용 | 적용(sub-agent) | 불필요 |
+| MCP orchestrator | `mcp.mode: "orchestrator"`(default) | 미적용 | 적용(sub-agent) | 불필요 |
 
 ## 3. 결과
 

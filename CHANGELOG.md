@@ -22,6 +22,7 @@ Minor release that introduces the MCP orchestrator mode and removes the MCP samp
 - `config.yaml` is restructured into five category-aligned sections (`common`, `llm`, `batch`, `heuristics`, `mcp`). Each section header lists the entry points it applies to (CLI / MCP server / MCP orchestrator). The previous flat layout (`dataset`, `interview`, `report`, `batch`, `mcp`, `output`) is removed; existing yaml files must be migrated. See the migration guide below
 - `AppConfig` exposes `common.dataset`, `common.persona`, `common.report`, `common.output` instead of the previous `dataset`, `report`, top-level `output_dir` / `log_level` / `no_color` fields. `interview` is renamed to `heuristics`. `batch.persona_fields` moves to `common.persona.fields`, `interview.system_prompt_path` moves to `common.persona.system_prompt_path`. The previous top-level `output` yaml block moves to `common.output` for consistency with the other entries that apply on every entry point. The `InterviewConfig` dataclass is renamed to `HeuristicsConfig`; a new `OutputConfig` dataclass holds `output_dir` / `log_level` / `no_color`
 - `mcp_server.py` is now a thin entry point. The handler logic lives in `src/mcp_handlers/`. External imports of `_TOOL_HANDLERS` still work but the canonical dispatch path is `src.mcp_handlers.HANDLERS` keyed by `(mode, name)`
+- `mcp.mode` default flips from `server` to `orchestrator`. Orchestrator mode runs without any server-side API key because the host agent's sub-agent owns the LLM call, so first-run friction is minimal. Existing v1.1.x users who relied on the implicit `server` default must add `mcp.mode: "server"` to `config.yaml` (or merge the migration script below) to keep server-side OpenAI/Anthropic calls. Users who explicitly set `mcp.mode: "server"` already are unaffected. ADR-004's server-default decision is superseded by ADR-005
 
 ### Removed (BREAKING)
 
@@ -99,6 +100,8 @@ print(f"[migrate] wrote {src}")
 ```
 
 If you used `mcp.mode: "sampling"` and want the closest replacement, switch to `mcp.mode: "orchestrator"`. The new mode also avoids server-side keys but uses the host agent's sub-agent (which is mainstream-supported) instead of the host sampling capability (which was not). The orchestrator workflow is documented in the README and `examples/mcp/README.md`.
+
+If you relied on the implicit `mcp.mode: "server"` default in v1.1.x and want to keep server-side OpenAI/Anthropic calls, add `mcp.mode: "server"` to `config.yaml` explicitly. The default flipped to `orchestrator` because that mode works without any extra mcp.json env or `.env` and removes the most common first-run failure mode (missing `OPENAI_API_KEY`).
 
 ## [1.1.2] - 2026-05-02
 

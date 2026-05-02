@@ -18,7 +18,7 @@ The tool ships four CLI subcommands (`healthcheck`, `list-personas`, `interview`
 - `llm.extra_chat_kwargs` free-form dict forwarded into the OpenAI request body for backend-specific extensions (e.g. `chat_template_kwargs.enable_thinking` on mlx_lm.server / vLLM Qwen3)
 - LLM-as-judge drift refinement (`heuristics.llm_drift_review: true`, opt-in default off) that revisits heuristic drift detections with a single 1-token verdict call to clear false positives
 - `acceptable_price_signal` (`cheap`/`fair`/`expensive`/`null`) on every structured summary so price sentiment lands on every record even when the persona never names a number; `common.report.estimate_wtp_from_signal` opts into a recommendation prompt that uses the signal distribution alongside explicit numbers
-- MCP entry point (`python -m src.mcp_server`) that exposes interview-pipeline tools to Claude Code, Cursor, and Codex. The `mcp.mode` toggle picks between two inference paths: `server` (default) calls OpenAI/Anthropic directly server-side using the same `LlmConfig` the CLI uses, and `orchestrator` exposes data and prompt helpers that the host agent's sub-agent uses to run interviews with its own LLM (no server-side API key required)
+- MCP entry point (`python -m src.mcp_server`) that exposes interview-pipeline tools to Claude Code, Cursor, and Codex. The `mcp.mode` toggle picks between two inference paths: `orchestrator` (default) exposes data and prompt helpers that the host agent's sub-agent uses to run interviews with its own LLM (no server-side API key required), and `server` calls OpenAI/Anthropic directly server-side using the same `LlmConfig` the CLI uses
 - Automatic markdown report after every interview run (toggle off with `--no-report` for JSON-only pipelines)
 - `--json` root mode that emits a single JSON document on stdout for shell scripts and external agents; every JSON envelope (CLI and MCP) carries an explicit `ok: true|false` field for one-key branching
 - Single-turn mode (`--single-turn`) that bundles every question into one chat call to cut tokens at scale
@@ -407,7 +407,7 @@ Notable yaml keys.
 - `heuristics.refusal_keywords` - tokens that mark a response as refused (default `답변할 수 없습니다`, `I cannot`, `As an AI`, etc.)
 - `heuristics.auto_follow_up_text` - the user message sent when the auto follow-up fires. Edit it to fit your domain tone
 - `heuristics.auto_follow_up_max` - per-persona cap on auto follow-ups (default 1, set to 0 to disable)
-- `mcp.mode` - MCP entry point inference path. `server` (default) calls OpenAI/Anthropic server-side using the same `LlmConfig` the CLI uses. `orchestrator` exposes data and prompt helpers and lets the host agent's sub-agent do the LLM work; no server-side API key required. No automatic fallback. See ADR-005 for the rationale
+- `mcp.mode` - MCP entry point inference path. `orchestrator` (default) exposes data and prompt helpers and lets the host agent's sub-agent do the LLM work; no server-side API key required. `server` calls OpenAI/Anthropic server-side using the same `LlmConfig` the CLI uses. No automatic fallback. See ADR-005 for the rationale
 
 Knobs added in v1.1.
 
@@ -469,8 +469,8 @@ There are three entry points for driving this tool: CLI, MCP server, and MCP orc
 | Entry point | mode (yaml) | Server-side LLM call | Host LLM call | API key required |
 | --- | --- | --- | --- | --- |
 | CLI (`kpi`) | n/a | yes | no | provider-dependent |
-| MCP server | `mcp.mode: "server"` (default) | yes | no | provider-dependent |
-| MCP orchestrator | `mcp.mode: "orchestrator"` | no | yes (host sub-agent) | none |
+| MCP server | `mcp.mode: "server"` | yes | no | provider-dependent |
+| MCP orchestrator | `mcp.mode: "orchestrator"` (default) | no | yes (host sub-agent) | none |
 
 Choose by these rules.
 
@@ -554,11 +554,7 @@ Register it in Cursor by adding the snippet below to `.cursor/mcp.json` at the p
 
 In MCP server mode, drop your `OPENAI_API_KEY` (or `ANTHROPIC_API_KEY`) into the project's `.env` before the first run; in MCP orchestrator mode no key is needed. Drop-in copies live under [examples/mcp/](examples/mcp/).
 
-### MCP server mode (default) usage
-
-A natural-language example: ask the agent "1인 가구 대상 반찬 정기배송 (월 39,900원)을 25-39세 서울 30명에게 인터뷰 돌리고 리포트까지 만들어 줘" and it will call `interview` then `report` back-to-back, returning the markdown path. The interview tool runs the batch on the server side using your `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`.
-
-### MCP orchestrator mode usage
+### MCP orchestrator mode (default) usage
 
 The host agent owns the LLM. The flow is below.
 
@@ -584,6 +580,10 @@ for p in prompts.prompts:
     records.append({...})  # see interview_record_schema for shape
 mcp.call("aggregate_results", {"records": records, "product": "...", "output_dir": "outputs/"})
 ```
+
+### MCP server mode usage
+
+Set `mcp.mode: "server"` in `config.yaml` to call OpenAI/Anthropic server-side instead. A natural-language example: ask the agent "1인 가구 대상 반찬 정기배송 (월 39,900원)을 25-39세 서울 30명에게 인터뷰 돌리고 리포트까지 만들어 줘" and it will call `interview` then `report` back-to-back, returning the markdown path. The interview tool runs the batch on the server side using your `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`.
 
 ### --json mode for shell scripts
 

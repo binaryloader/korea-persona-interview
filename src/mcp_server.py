@@ -517,14 +517,14 @@ def _list_tools_metadata_for_mode(mode: str) -> list:
 def _list_tools_metadata() -> list:
     """기존 호출자 호환용. 현재 yaml의 mode 기준으로 mode별 tool 리스트를 돌려준다.
 
-    config 로드에 실패하면 server 모드 도구를 돌려준다(가장 일반적인 default).
+    config 로드에 실패하면 orchestrator 모드 도구를 돌려준다(default mode와 일치).
     """
 
     try:
         config = load_config(yaml_path=None, cli_overrides=None)
         mode = config.mcp.mode
     except ConfigError:
-        mode = "server"
+        mode = "orchestrator"
     return _list_tools_metadata_for_mode(mode)
 
 

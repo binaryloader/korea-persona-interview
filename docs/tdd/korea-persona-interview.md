@@ -768,7 +768,7 @@ dependency.md §1 leftpad 안티패턴 회피와 직접 통제 목적으로 아�
 | `anthropic` | `POST {base_url}/messages` | `x-api-key: ${ANTHROPIC_API_KEY}` + `anthropic-version: 2023-06-01` | top-level `system` 필드, messages는 user/assistant만 |
 | MCP orchestrator (host 위임, `mcp.mode: "orchestrator"`) | host sub-agent의 자기 LLM | 없음(server-side 호출 없음) | 본 도구는 시스템 프롬프트와 페르소나 dict만 build_persona_prompt/build_batch_prompts로 넘기고, 호스트가 record를 모아 aggregate_results로 리포트 생성 |
 
-MCP 진입점은 두 모드를 노출한다(ADR-005). `mcp.mode: "server"`(기본)는 위 표의 OpenAI 또는 Anthropic 계약을 server-side에서 그대로 호출한다. `mcp.mode: "orchestrator"`는 server-side LLM 호출 없이 표의 마지막 행처럼 호스트 sub-agent에 인터뷰를 위임한다.
+MCP 진입점은 두 모드를 노출한다(ADR-005). `mcp.mode: "orchestrator"`(기본)는 server-side LLM 호출 없이 표의 마지막 행처럼 호스트 sub-agent에 인터뷰를 위임한다. `mcp.mode: "server"`는 위 표의 OpenAI 또는 Anthropic 계약을 server-side에서 그대로 호출한다. v1.2.0 후속 정리에서 default가 `server`에서 `orchestrator`로 바뀌었다(키 설정 없이 즉시 동작하므로 신규 사용자 마찰이 가장 작다).
 
 §12.1, §12.2는 OpenAI 계약을 구체적으로 기술한다. Anthropic 계약 차이는 `src/llm_backend.py`의 `AnthropicBackend`에 구현되어 있다.
 
@@ -849,7 +849,7 @@ OpenAI gpt-4o-mini는 EOS 토큰 인식이 안정적이라 토큰 루프 사례(
 
 security.md §1(시크릿), §3(입력 검증), §4(데이터 보호)와 PRD §6.3(보안과 개인정보), ADR-002, ADR-003을 따른다.
 
-- API 키는 provider에 따라 환경변수에서 로드한다. provider가 openai면 `OPENAI_API_KEY`이고 anthropic이면 `ANTHROPIC_API_KEY`다. 코드/설정/.env 파일/로그에 하드코딩하지 않는다(security.md §1). MCP 진입점은 `mcp.mode`에 따라 다르다. `mcp.mode: "server"` 모드(기본)는 server-side 키가 필요하고 mcp.json env 또는 `.env`에 박아 주어야 한다. `mcp.mode: "orchestrator"` 모드는 server-side 키가 불필요하다(호스트 sub-agent가 자기 LLM 호출). 두 경로 모두 yaml/CLI에 키를 적지 않는 정책은 동일하다
+- API 키는 provider에 따라 환경변수에서 로드한다. provider가 openai면 `OPENAI_API_KEY`이고 anthropic이면 `ANTHROPIC_API_KEY`다. 코드/설정/.env 파일/로그에 하드코딩하지 않는다(security.md §1). MCP 진입점은 `mcp.mode`에 따라 다르다. `mcp.mode: "orchestrator"` 모드(기본)는 server-side 키가 불필요하다(호스트 sub-agent가 자기 LLM 호출). `mcp.mode: "server"` 모드는 server-side 키가 필요하고 mcp.json env 또는 `.env`에 박아 주어야 한다. 두 경로 모두 yaml/CLI에 키를 적지 않는 정책은 동일하다
 - 인증 헤더는 provider에 따라 다르다. OpenAI는 `Authorization: Bearer ${OPENAI_API_KEY}`이고 Anthropic은 `x-api-key: ${ANTHROPIC_API_KEY}` + `anthropic-version: 2023-06-01`이다. 로그 출력 시 둘 다 마스킹한다(logging.md §2)
 - `base_url`은 OpenAI 엔드포인트(`https://api.openai.com/v1`)를 기본 허용한다. ADR-002 이전의 localhost-only chat 가드는 OpenAI 백엔드 전환과 함께 제거한다. 다만 잘못된 base_url(예: 오타로 다른 도메인 지정)에 키와 사업 아이템이 송신되는 사고를 막기 위해 base_url을 INFO 로그에 명시 출력하여 사용자가 실행 직후 검증할 수 있게 한다. 향후 사용자 정의 OpenAI 호환 엔드포인트(예: Azure OpenAI, 사내 프록시) 지원이 필요하면 별도 ADR로 도입한다
 - product 본문 마스킹은 로그에 `mask_product()`를 적용한다(첫 30자 + 길이). 결과 JSON에는 원문 그대로 저장한다(로컬 파일이므로 외부 노출 위험 없음). 단 product 본문은 사용자가 설정한 LLM 백엔드(OpenAI / Anthropic / 로컬 LLM / MCP 호스트 에이전트)로 송신되므로 사용자가 실행 전 인지해야 한다(README와 도구 첫 실행 메시지에서 명시)
