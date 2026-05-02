@@ -13,4 +13,4 @@ CLI 진입점은 ``main.py``를 통해 노출된다(콘솔 스크립트 ``kpi``)
 서버는 ``src.mcp_server``에 있다(콘솔 스크립트 ``kpi-mcp-server``).
 """
 
-__version__ = "1.1.1"
+__version__ = "1.1.2"

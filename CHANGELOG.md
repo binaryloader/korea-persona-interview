@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-05-02
+
+Documentation patch release. After the multi-provider rollout (v1.1.0) and the `mcp.mode` toggle (v1.1.1) the report footer, PRD, TDD, UI spec, task spec, and SECURITY summary all still claimed `--product` was sent specifically to OpenAI servers. The actual destination is whichever LLM backend the user configures (OpenAI Chat Completions API, Anthropic Messages API, an OpenAI-compatible local server, or the MCP host agent's LLM), governed by `provider`, `base_url`, and `mcp.mode`. No code behavior changes; the regression suite stays at 571 passing tests.
+
+### Fixed
+
+- Report markdown footer no longer claims `--product` is sent to OpenAI servers. The disclaimer paragraph now enumerates the four possible destinations (OpenAI / Anthropic / local LLM / MCP host agent) and the inference-model row drops the hard-coded "(OpenAI Chat Completions API)" suffix so it reflects whatever model id was actually used (`src/report.py` `_render_footer`)
+
+### Documentation
+
+- External transmission disclaimer rephrased to multi-provider phrasing across PRD sections 1, 6.3, and 10.6, TDD section 13, UI spec section 4.5, the task spec T10 row, the SECURITY summary, and the `examples/sample-interview/sample-report.md` artifact. ADR-002 and the v1.0 INDEX revision-log entry are left as-is because they are point-in-time records of when the OpenAI-only assumption was actually true
+- v1.0.0 changelog Security entry stating `--product` was "sent to OpenAI servers as part of the Chat Completions request" is left unchanged. That statement was correct as of v1.0.0 and rewriting historical changelog rows would erase the audit trail. This v1.1.2 entry is the canonical correction for current versions
+
 ## [1.1.1] - 2026-05-02
 
 Patch release that adds the MCP `mcp.mode` toggle. The MCP server entry point now picks between server-side OpenAI/Anthropic calls (default, immediate usability with mainstream MCP clients) and host-LLM delegation through `sampling/createMessage` (opt-in, no server-side API key). There is no automatic fallback. Test count climbs from 555 to 571.
@@ -134,7 +147,8 @@ First stable release. The previous `0.1.0` line is folded into `1.0.0` because t
 - Default model: `gpt-4o-mini` (configurable)
 - License: MIT (see [LICENSE](LICENSE))
 
-[Unreleased]: https://github.com/binaryloader/korea-persona-interview/compare/v1.1.1...HEAD
+[Unreleased]: https://github.com/binaryloader/korea-persona-interview/compare/v1.1.2...HEAD
+[1.1.2]: https://github.com/binaryloader/korea-persona-interview/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/binaryloader/korea-persona-interview/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/binaryloader/korea-persona-interview/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/binaryloader/korea-persona-interview/releases/tag/v1.0.0

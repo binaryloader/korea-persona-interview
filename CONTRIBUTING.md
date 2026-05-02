@@ -46,7 +46,7 @@ The full directory tree is documented in the README under `Project Structure`. Q
 
 - `main.py` - click CLI entry point
 - `src/` - application code (config loader, LLM client, persona loader, interview engine, batch runner, report, MCP server)
-- `tests/` - 555-test regression
+- `tests/` - 571-test regression
 - `docs/` - PRD, TDD, ADR, UI, tasks, v1.2.0 backlog
 - `prompts/system_prompt.txt` - editable system prompt template
 - `config.yaml` - annotated default config
@@ -77,7 +77,7 @@ For substantive design changes, read [docs/INDEX.md](docs/INDEX.md) first. It ca
 
 Before opening a pull request, run through the list below.
 
-- All 555 regression tests pass (`pytest tests/ -v`)
+- All 571 regression tests pass (`pytest tests/ -v`)
 - Lint and format are not pinned in v1.x (see `Lint` note below). Editor-side `ruff` or `black` is fine, but do not commit lint config files
 - Documentation is updated for any user-visible change
   - User-facing CLI or output change: update README and the relevant `docs/prd/` or `docs/tdd/` section
