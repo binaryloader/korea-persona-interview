@@ -1,27 +1,16 @@
 """계층형 설정 로더.
 
-우선순위는 내장 기본값, ``config.yaml``, ``.env`` 파일, 환경 변수, CLI
-오버라이드 순서로 적용한다. 결과는 frozen ``AppConfig`` dataclass로 반환한다.
+우선순위는 내장 기본값, ``config.yaml``, ``.env`` 파일, 환경 변수, CLI 오버라이드 순서로 적용한다. 결과는 frozen ``AppConfig`` dataclass로 반환한다.
 
-본 모듈은 v1.2.0(ADR-005)부터 yaml을 카테고리별 섹션으로 재구조화했다. 섹션은
-아래 6개다.
+본 모듈은 v1.2.0(ADR-005)부터 yaml을 카테고리별 섹션으로 재구조화했다. 섹션은 아래 5개다.
 
-- ``common``: 모든 진입점에 적용(CLI / MCP server / MCP orchestrator). dataset,
-  persona, report 정책의 정본
-- ``llm``: CLI와 MCP server 진입점에서만 적용. MCP orchestrator는 호스트
-  sub-agent가 자기 LLM을 사용하므로 본 섹션과 무관하다
-- ``batch``: CLI와 MCP server 진입점에서만 적용. MCP orchestrator는 호스트
-  정책을 따른다
-- ``heuristics``: CLI와 MCP server에서 자동 적용. MCP orchestrator는 helper
-  도구를 호스트가 명시 호출했을 때 같은 임계값과 키워드를 사용한다
+- ``common``: 모든 진입점에 적용(CLI / MCP server / MCP orchestrator). dataset, persona, report, output 정책의 정본
+- ``llm``: CLI와 MCP server 진입점에서만 적용. MCP orchestrator는 호스트 sub-agent가 자기 LLM을 사용하므로 본 섹션과 무관하다
+- ``batch``: CLI와 MCP server 진입점에서만 적용. MCP orchestrator는 호스트 정책을 따른다
+- ``heuristics``: CLI와 MCP server에서 자동 적용. MCP orchestrator는 helper 도구를 호스트가 명시 호출했을 때 같은 임계값과 키워드를 사용한다
 - ``mcp``: MCP 서버 진입점에서만 적용. CLI는 본 섹션과 무관하다
-- ``output``: 모든 진입점에 적용
 
-시크릿(``OPENAI_API_KEY``, ``ANTHROPIC_API_KEY``)은 환경 변수나 프로젝트
-루트의 ``.env`` 파일에서 읽는다. ``.env`` 파서는 ``python-dotenv`` 의존성을
-피하기 위해 표준 라이브러리만으로 구현했다. ``KEY=value`` 라인, ``#`` 주석,
-빈 줄, 작은따옴표/큰따옴표 감싼 값, ``export KEY=value`` 쉘 접두어를
-지원한다. 여러 줄 값과 이스케이프는 의도적으로 지원하지 않는다.
+시크릿(``OPENAI_API_KEY``, ``ANTHROPIC_API_KEY``)은 환경 변수나 프로젝트 루트의 ``.env`` 파일에서 읽는다. ``.env`` 파서는 ``python-dotenv`` 의존성을 피하기 위해 표준 라이브러리만으로 구현했다. ``KEY=value`` 라인, ``#`` 주석, 빈 줄, 작은따옴표/큰따옴표 감싼 값, ``export KEY=value`` 쉘 접두어를 지원한다. 여러 줄 값과 이스케이프는 의도적으로 지원하지 않는다.
 """
 
 from __future__ import annotations
@@ -257,16 +246,32 @@ class ReportConfig:
 
 
 @dataclass(frozen=True)
+class OutputConfig:
+    """결과/로그 디렉토리와 콘솔 옵션.
+
+    ``output_dir``은 결과 JSON/마크다운/JSONL 로그가 저장되는 디렉토리다. 생성 시 0700, 결과 파일은 0600 권한으로 저장된다. ``KPI_OUTPUT_DIR`` 환경변수가 set되면 본 값보다 우선한다(테스트/CI 격리용).
+
+    ``log_level``은 루트 로거 레벨이다. ``no_color``는 ANSI 컬러를 끈다(``NO_COLOR`` 환경변수 또는 stdout이 TTY가 아닐 때도 자동으로 꺼진다).
+
+    v1.2.0 후속 정리에서 ``AppConfig``의 최상위 필드(``output_dir`` / ``log_level`` / ``no_color``)에서 ``CommonConfig.output`` 하위 dataclass로 이동했다. 모든 진입점에서 동일하게 적용되는 설정이므로 common 섹션 일관성을 맞췄다.
+    """
+
+    output_dir: Path
+    log_level: str = "INFO"
+    no_color: bool = False
+
+
+@dataclass(frozen=True)
 class CommonConfig:
     """모든 진입점이 공유하는 공통 설정 묶음.
 
-    dataset, persona, report 세 하위 dataclass를 담는다. CLI / MCP server /
-    MCP orchestrator 어떤 진입점이든 본 섹션은 동일하게 적용된다.
+    dataset, persona, report, output 네 하위 dataclass를 담는다. CLI / MCP server / MCP orchestrator 어떤 진입점이든 본 섹션은 동일하게 적용된다.
     """
 
     dataset: DatasetConfig
     persona: PersonaConfig
     report: ReportConfig
+    output: OutputConfig
 
 
 @dataclass(frozen=True)
@@ -302,14 +307,13 @@ class McpConfig:
 class AppConfig:
     """최상위 애플리케이션 설정.
 
-    v1.2.0(ADR-005)부터 카테고리별 섹션 재구조화의 정본이다. 호환성 깨짐은
-    아래와 같다.
+    v1.2.0(ADR-005)부터 카테고리별 섹션 재구조화의 정본이다. 호환성 깨짐은 아래와 같다.
 
     - ``dataset`` 필드는 ``common.dataset``으로 이동
     - ``report`` 필드는 ``common.report``로 이동
-    - ``interview`` 필드는 ``heuristics``로 리네임. ``system_prompt_path``와
-      ``persona_fields``는 ``common.persona``로 이동
+    - ``interview`` 필드는 ``heuristics``로 리네임. ``system_prompt_path``와 ``persona_fields``는 ``common.persona``로 이동
     - ``batch.persona_fields``는 ``common.persona.fields``로 이동
+    - ``output_dir`` / ``log_level`` / ``no_color`` 최상위 필드는 ``common.output``으로 이동(v1.2.0 후속 정리)
     """
 
     common: CommonConfig
@@ -317,9 +321,6 @@ class AppConfig:
     batch: BatchConfig
     heuristics: HeuristicsConfig
     mcp: McpConfig
-    output_dir: Path
-    log_level: str
-    no_color: bool
 
 
 def _default_dict() -> dict:
@@ -369,6 +370,11 @@ def _default_dict() -> dict:
                 "insight_model": None,
                 "estimate_wtp_from_signal": False,
             },
+            "output": {
+                "output_dir": "outputs/",
+                "log_level": "INFO",
+                "no_color": False,
+            },
         },
         "llm": {
             "provider": "openai",
@@ -417,11 +423,6 @@ def _default_dict() -> dict:
         },
         "mcp": {
             "mode": "server",
-        },
-        "output": {
-            "output_dir": "outputs/",
-            "log_level": "INFO",
-            "no_color": False,
         },
     }
 
@@ -521,14 +522,22 @@ def _apply_env(merged: dict) -> dict:
 
     - ``OPENAI_API_KEY``는 ``llm.provider == "openai"``일 때 사용한다
     - ``ANTHROPIC_API_KEY``는 ``llm.provider == "anthropic"``일 때 사용한다
-    - ``KPI_OUTPUT_DIR``는 테스트/CI 편의용 오버라이드다
+    - ``KPI_OUTPUT_DIR``는 테스트/CI 편의용 오버라이드다(``common.output.output_dir``에 박힌다)
     """
 
     out = {k: dict(v) if isinstance(v, dict) else v for k, v in merged.items()}
 
     output_dir_env = os.environ.get("KPI_OUTPUT_DIR")
     if output_dir_env:
-        out.setdefault("output", {})["output_dir"] = output_dir_env
+        common_section = out.setdefault("common", {})
+        if not isinstance(common_section, dict):
+            common_section = {}
+            out["common"] = common_section
+        output_section = common_section.setdefault("output", {})
+        if not isinstance(output_section, dict):
+            output_section = {}
+            common_section["output"] = output_section
+        output_section["output_dir"] = output_dir_env
 
     llm_section = out.setdefault("llm", {})
     provider = str(llm_section.get("provider", "openai")).strip().lower()
@@ -676,10 +685,17 @@ def load_config(
                 report_raw.get("estimate_wtp_from_signal", False)
             ),
         )
+        output_raw = common_raw.get("output") or {}
+        output_cfg = OutputConfig(
+            output_dir=Path(str(output_raw.get("output_dir", "outputs/"))),
+            log_level=str(output_raw.get("log_level", "INFO")),
+            no_color=bool(output_raw.get("no_color", False)),
+        )
         common_cfg = CommonConfig(
             dataset=dataset_cfg,
             persona=persona_cfg,
             report=report_cfg,
+            output=output_cfg,
         )
         heuristics_cfg = HeuristicsConfig(
             short_answer_threshold=int(merged["heuristics"]["short_answer_threshold"]),
@@ -721,7 +737,4 @@ def load_config(
         batch=batch_cfg,
         heuristics=heuristics_cfg,
         mcp=mcp_cfg,
-        output_dir=Path(str(merged["output"]["output_dir"])),
-        log_level=str(merged["output"]["log_level"]),
-        no_color=bool(merged["output"]["no_color"]),
     )

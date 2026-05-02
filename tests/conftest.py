@@ -284,6 +284,7 @@ def make_app_config():
         HeuristicsConfig,
         LlmConfig,
         McpConfig,
+        OutputConfig,
         PersonaConfig,
         ReportConfig,
     )
@@ -406,10 +407,16 @@ def make_app_config():
             fields=persona_fields,
             system_prompt_path=system_prompt_path,
         )
+        output = OutputConfig(
+            output_dir=output_dir,
+            log_level=log_level,
+            no_color=no_color,
+        )
         common = CommonConfig(
             dataset=dataset,
             persona=persona,
             report=report,
+            output=output,
         )
         mcp = McpConfig(mode=mcp_mode)
         return AppConfig(
@@ -418,9 +425,6 @@ def make_app_config():
             batch=batch,
             heuristics=heuristics,
             mcp=mcp,
-            output_dir=output_dir,
-            log_level=log_level,
-            no_color=no_color,
         )
 
     return _build

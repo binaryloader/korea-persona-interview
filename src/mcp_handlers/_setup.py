@@ -19,9 +19,9 @@ logger = logging.getLogger(__name__)
 def setup_logging_for_run(config: AppConfig) -> None:
     """도구 호출마다 새로운 request id로 구조화 로깅을 구성한다."""
 
-    log_dir = config.output_dir / "logs"
+    log_dir = config.common.output.output_dir / "logs"
     log_path = log_dir / f"run_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.jsonl"
-    configure_logging(level=config.log_level, json_path=log_path)
+    configure_logging(level=config.common.output.log_level, json_path=log_path)
     bind_request_id(uuid.uuid4().hex)
 
 

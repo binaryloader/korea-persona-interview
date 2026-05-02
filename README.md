@@ -398,6 +398,9 @@ Notable yaml keys.
 - `common.report.cohort_min_cell` - cohort cell sample-size mask threshold (default 3, raise to 5 for more conservative reporting)
 - `common.report.histogram_bins` - price histogram bin count (default 10)
 - `common.report.bar_width` - text bar chart width (default 30, lower for narrow terminals)
+- `common.output.output_dir` - result/log directory (default `outputs/`, overridden by `KPI_OUTPUT_DIR` env)
+- `common.output.log_level` - root logger level (`DEBUG`/`INFO`/`WARNING`/`ERROR`, default `INFO`)
+- `common.output.no_color` - disable ANSI color (default `false`, also honors `NO_COLOR` env)
 - `heuristics.short_answer_threshold` - 20 character trigger for the auto follow-up
 - `heuristics.english_ratio_threshold` - 0.30 trigger for persona drift detection
 - `heuristics.ambiguous_keywords` - tokens that trigger an auto follow-up when present in a response (default `글쎄요`, `잘 모르겠습니다`, etc.)
@@ -483,12 +486,11 @@ If you run `python -m src.mcp_server` outside an MCP host with `mcp.mode: "orche
 
 The yaml is split into category sections. Each section lists which entry points read it.
 
-- `common` (dataset, persona, report) is read by every entry point
+- `common` (dataset, persona, report, output) is read by every entry point
 - `llm` (provider, base_url, model, max_tokens, temperature, timeout, context_budget, retry_max_attempts, retry_backoff_seconds, anthropic_cache_control, extra_chat_kwargs, streaming) is read only by CLI and MCP server. MCP orchestrator never calls a server-side LLM, so this section is ignored
 - `batch` (concurrency, partial_failure_threshold) is read only by CLI and MCP server. MCP orchestrator follows the host's sub-agent policy
 - `heuristics` (short_answer_threshold, english_ratio_threshold, ambiguous_keywords, refusal_keywords, auto_follow_up_text, auto_follow_up_max, occupation_english_whitelist, llm_drift_review) is auto-applied on CLI and MCP server. MCP orchestrator surfaces the same thresholds via the helper tools (`detect_persona_drift`, `should_auto_follow_up`) and only takes effect when the host explicitly calls them
 - `mcp` (mode) is read only by the MCP entry point. CLI ignores it
-- `output` (output_dir, log_level, no_color) is read by every entry point
 
 ### Tool exposure by mode
 

@@ -383,13 +383,25 @@ class DatasetConfig:
     province_aliases: dict[str, str]
 
 @dataclass(frozen=True)
+class OutputConfig:
+    output_dir: Path
+    log_level: str = "INFO"
+    no_color: bool = False
+
+@dataclass(frozen=True)
+class CommonConfig:
+    dataset: DatasetConfig
+    persona: PersonaConfig
+    report: ReportConfig
+    output: OutputConfig
+
+@dataclass(frozen=True)
 class AppConfig:
+    common: CommonConfig
     llm: LlmConfig
     batch: BatchConfig
-    dataset: DatasetConfig
-    output_dir: Path
-    log_level: str
-    no_color: bool
+    heuristics: HeuristicsConfig
+    mcp: McpConfig
 
 def load_config(
     yaml_path: Path = Path("config.yaml"),
@@ -685,7 +697,7 @@ v1.x 정책은 "비밀=env, 기본=yaml, 일회성=CLI" 한 가지로 단순화�
 환경변수에서 받는 키는 비밀과 출력 디렉토리뿐이다.
 
 - provider가 openai이면 `OPENAI_API_KEY`, provider가 anthropic이면 `ANTHROPIC_API_KEY`가 `llm.api_key`로 들어간다
-- `KPI_OUTPUT_DIR`은 `output_dir`로 들어간다(테스트/CI 격리 편의)
+- `KPI_OUTPUT_DIR`은 `common.output.output_dir`로 들어간다(테스트/CI 격리 편의)
 
 모델 변경 같은 일회성 override는 CLI(`--model gpt-4o`)로 처리하고, 동시성 같은 운영 기본값은 `config.yaml`을 갱신해 수정한다. config.yaml은 일부 섹션만 정의해도 default와 머지된다. `dataset.field_map`은 default 코드값(§1.6)과 yaml 값을 깊은 병합한다.
 

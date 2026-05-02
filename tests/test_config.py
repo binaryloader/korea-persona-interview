@@ -124,7 +124,7 @@ def test_load_config_v1_x_KPI_NO_COLOR_env_무시(
 
     monkeypatch.setenv("KPI_NO_COLOR", "true")
     cfg = load_config(yaml_path=tmp_path / "no.yaml")
-    assert cfg.no_color is False
+    assert cfg.common.output.no_color is False
 
 
 def test_load_config_v1_x_KPI_BATCH_PERSONA_FIELDS_env_무시(
@@ -144,7 +144,7 @@ def test_load_config_v1_x_KPI_OUTPUT_DIR_env_유지(
 
     monkeypatch.setenv("KPI_OUTPUT_DIR", str(tmp_path / "outdir"))
     cfg = load_config(yaml_path=tmp_path / "no.yaml")
-    assert cfg.output_dir == tmp_path / "outdir"
+    assert cfg.common.output.output_dir == tmp_path / "outdir"
 
 
 # ---------------------------------------------------------------------------

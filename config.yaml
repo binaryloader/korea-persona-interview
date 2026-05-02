@@ -108,6 +108,16 @@ common:
     # willingness_to_pay 추정치를 보조 표기할지 여부. 기본 false. true로 두면
     # 정성 신호와 product 단가만으로 추정한 값이 리포트 헤더에 별도 표시된다.
     estimate_wtp_from_signal: false
+  # output: 결과 JSON/마크다운/JSONL 로그가 저장되는 디렉토리와 콘솔/로그 옵션. 모든 진입점에서 적용된다(CLI 콘솔, MCP server stderr/jsonl, MCP orchestrator stderr/jsonl 모두 본 섹션을 따른다).
+  output:
+    # 결과 디렉토리. 생성 시 0700, 결과 파일은 0600 권한으로 저장된다.
+    # 환경변수 `KPI_OUTPUT_DIR`이 설정되면 이쪽이 우선한다(테스트/CI 격리용).
+    output_dir: "outputs/"
+    # 루트 로거 레벨. `DEBUG`/`INFO`/`WARNING`/`ERROR`.
+    log_level: "INFO"
+    # true면 ANSI 컬러를 끈다. 환경변수 `NO_COLOR` 또는 stdout이 TTY가 아닐
+    # 때도 자동으로 꺼진다(no-color.org 표준).
+    no_color: false
 
 # llm: LLM 호출의 HTTP transport와 요청 본문 모양을 정의한다. 본 섹션은 CLI와
 # MCP server 진입점에서만 적용된다. MCP orchestrator는 자체 LLM을 호출하지
@@ -219,16 +229,3 @@ heuristics:
 mcp:
   # "server" 또는 "orchestrator". 기본은 "server"다.
   mode: "server"
-
-# output: 결과 JSON/마크다운/JSONL 로그가 저장되는 디렉토리와 콘솔/로그 옵션.
-# 모든 진입점에서 적용된다(CLI 콘솔, MCP server stderr/jsonl, MCP orchestrator
-# stderr/jsonl 모두 본 섹션을 따른다).
-output:
-  # 결과 디렉토리. 생성 시 0700, 결과 파일은 0600 권한으로 저장된다.
-  # 환경변수 `KPI_OUTPUT_DIR`이 설정되면 이쪽이 우선한다(테스트/CI 격리용).
-  output_dir: "outputs/"
-  # 루트 로거 레벨. `DEBUG`/`INFO`/`WARNING`/`ERROR`.
-  log_level: "INFO"
-  # true면 ANSI 컬러를 끈다. 환경변수 `NO_COLOR` 또는 stdout이 TTY가 아닐
-  # 때도 자동으로 꺼진다(no-color.org 표준).
-  no_color: false

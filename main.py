@@ -72,26 +72,26 @@ def _common_setup(
 
     overrides: dict = dict(cli_overrides) if cli_overrides else {}
     if log_level:
-        overrides.setdefault("output", {})["log_level"] = log_level
+        overrides.setdefault("common", {}).setdefault("output", {})["log_level"] = log_level
     if no_color:
-        overrides.setdefault("output", {})["no_color"] = True
+        overrides.setdefault("common", {}).setdefault("output", {})["no_color"] = True
 
     config = load_config(yaml_path=config_path, cli_overrides=overrides)
 
-    color_enabled = _resolve_color(config.no_color)
+    color_enabled = _resolve_color(config.common.output.no_color)
     console = Console(color=color_enabled)
 
     # 로그 파일은 outputs/logs/run_{ts}.jsonl. 콘솔(stderr) + 파일 동시 출력.
-    log_dir = config.output_dir / "logs"
+    log_dir = config.common.output.output_dir / "logs"
     log_path = log_dir / f"run_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.jsonl"
-    configure_logging(level=config.log_level, json_path=log_path)
+    configure_logging(level=config.common.output.log_level, json_path=log_path)
     bind_request_id(uuid.uuid4().hex)
 
     logging.getLogger(__name__).debug(
         "CLI 초기화 완료",
         extra={
-            "log_level": config.log_level,
-            "no_color": config.no_color,
+            "log_level": config.common.output.log_level,
+            "no_color": config.common.output.no_color,
             "log_path": str(log_path),
         },
     )
@@ -229,7 +229,7 @@ def _exit_with_error(
     "--log-level",
     type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR"], case_sensitive=False),
     default=None,
-    help="로그 레벨(기본: config.yaml의 output.log_level).",
+    help="로그 레벨(기본: config.yaml의 common.output.log_level).",
 )
 @click.option(
     "--json",
@@ -741,8 +741,10 @@ def interview(
             "concurrency": concurrency,
             "single_turn": bool(single_turn),
         },
-        "common": {"persona": {"fields": list(fields_tuple)}},
-        "output": {"output_dir": str(output_dir)},
+        "common": {
+            "persona": {"fields": list(fields_tuple)},
+            "output": {"output_dir": str(output_dir)},
+        },
     }
     if provider or base_url or model_override:
         llm_overrides: dict = {}

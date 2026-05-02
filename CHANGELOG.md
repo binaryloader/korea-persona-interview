@@ -19,8 +19,8 @@ Minor release that introduces the MCP orchestrator mode and removes the MCP samp
 
 ### Changed (BREAKING)
 
-- `config.yaml` is restructured into six category-aligned sections (`common`, `llm`, `batch`, `heuristics`, `mcp`, `output`). Each section header lists the entry points it applies to (CLI / MCP server / MCP orchestrator). The previous flat layout (`dataset`, `interview`, `report`, `batch`, `mcp`, `output`) is removed; existing yaml files must be migrated. See the migration guide below
-- `AppConfig` exposes `common.dataset`, `common.persona`, `common.report` instead of the previous `dataset` and `report` fields. `interview` is renamed to `heuristics`. `batch.persona_fields` moves to `common.persona.fields`, `interview.system_prompt_path` moves to `common.persona.system_prompt_path`. The `InterviewConfig` dataclass is renamed to `HeuristicsConfig`
+- `config.yaml` is restructured into five category-aligned sections (`common`, `llm`, `batch`, `heuristics`, `mcp`). Each section header lists the entry points it applies to (CLI / MCP server / MCP orchestrator). The previous flat layout (`dataset`, `interview`, `report`, `batch`, `mcp`, `output`) is removed; existing yaml files must be migrated. See the migration guide below
+- `AppConfig` exposes `common.dataset`, `common.persona`, `common.report`, `common.output` instead of the previous `dataset`, `report`, top-level `output_dir` / `log_level` / `no_color` fields. `interview` is renamed to `heuristics`. `batch.persona_fields` moves to `common.persona.fields`, `interview.system_prompt_path` moves to `common.persona.system_prompt_path`. The previous top-level `output` yaml block moves to `common.output` for consistency with the other entries that apply on every entry point. The `InterviewConfig` dataclass is renamed to `HeuristicsConfig`; a new `OutputConfig` dataclass holds `output_dir` / `log_level` / `no_color`
 - `mcp_server.py` is now a thin entry point. The handler logic lives in `src/mcp_handlers/`. External imports of `_TOOL_HANDLERS` still work but the canonical dispatch path is `src.mcp_handlers.HANDLERS` keyed by `(mode, name)`
 
 ### Removed (BREAKING)
@@ -59,6 +59,9 @@ Minor release that introduces the MCP orchestrator mode and removes the MCP samp
 | `interview.auto_follow_up_max` | `heuristics.auto_follow_up_max` |
 | `interview.occupation_english_whitelist` | `heuristics.occupation_english_whitelist` |
 | `interview.llm_drift_review` | `heuristics.llm_drift_review` |
+| `output.output_dir` | `common.output.output_dir` |
+| `output.log_level` | `common.output.log_level` |
+| `output.no_color` | `common.output.no_color` |
 | `mcp.mode: "sampling"` | choose `"server"` or `"orchestrator"` |
 
 A one-shot Python script for the rename is below. Save the script as `migrate_v1_2_0.py` and run it once against your `config.yaml`.
@@ -81,6 +84,7 @@ old_interview = data.pop("interview", {})
 if "system_prompt_path" in old_interview:
     persona["system_prompt_path"] = old_interview.pop("system_prompt_path")
 common.setdefault("report", {}).update(data.pop("report", {}))
+common.setdefault("output", {}).update(data.pop("output", {}))
 
 heuristics = data.setdefault("heuristics", {})
 heuristics.update(old_interview)
