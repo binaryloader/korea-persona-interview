@@ -1103,8 +1103,13 @@ def render_markdown(
     json_path: Path,
     include_drift: bool,
     top_n: int,
+    usage_summary: Optional[dict] = None,
 ) -> str:
-    """마크다운 문자열을 만든다(UI §4.6 트리)."""
+    """마크다운 문자열을 만든다(UI §4.6 트리).
+
+    ``usage_summary``가 있으면 헤더 표에 토큰 사용량과 비용 추정을 추가한다
+    (배치 결과 JSON의 ``meta_extra.usage``/``meta_extra.estimated_cost_usd``).
+    """
 
     product = str(meta.get("product", ""))
     model = str(meta.get("model", "(unknown)"))
@@ -1120,18 +1125,29 @@ def render_markdown(
 
     title = f"# 가상 인터뷰 리포트: {product}".rstrip()
 
-    header_table = (
-        "| 항목 | 값 |\n"
-        "| --- | --- |\n"
-        f"| 생성 시각 | {generated_at} |\n"
-        f"| 입력 JSON | {json_path} |\n"
-        f"| 모델 | {model} |\n"
-        f"| 시드 | {seed} |\n"
-        f"| 인터뷰 시작 시각 | {started_at} |\n"
+    header_rows = [
+        f"| 생성 시각 | {generated_at} |",
+        f"| 입력 JSON | {json_path} |",
+        f"| 모델 | {model} |",
+        f"| 시드 | {seed} |",
+        f"| 인터뷰 시작 시각 | {started_at} |",
         f"| 페르소나 | 요청 {requested}명, 완료 {completed}명, 거부 {refused}명, "
-        f"실패 {failed}명, 드리프트 {drift}명 |\n"
-        "| 데이터셋 | nvidia/Nemotron-Personas-Korea(CC BY 4.0) |\n"
-    )
+        f"실패 {failed}명, 드리프트 {drift}명 |",
+        "| 데이터셋 | nvidia/Nemotron-Personas-Korea(CC BY 4.0) |",
+    ]
+    if usage_summary:
+        prompt_t = int(usage_summary.get("prompt_tokens", 0) or 0)
+        completion_t = int(usage_summary.get("completion_tokens", 0) or 0)
+        cached_t = int(usage_summary.get("cached_tokens", 0) or 0)
+        cost_usd = float(usage_summary.get("estimated_cost_usd", 0.0) or 0.0)
+        header_rows.append(
+            f"| 토큰 사용량 | prompt {prompt_t:,} / completion {completion_t:,} / "
+            f"cached {cached_t:,}(추정) |"
+        )
+        header_rows.append(
+            f"| 비용 추정 | ${cost_usd:.4f}({model} 단가 기준, 실제 청구와 다를 수 있음) |"
+        )
+    header_table = "| 항목 | 값 |\n| --- | --- |\n" + "\n".join(header_rows) + "\n"
 
     intent_md = _render_intent_section(quant.intent)
     price_md = _render_price_section(quant.price)
@@ -1301,6 +1317,20 @@ async def generate_report(
         )
 
     summary = _records_summary(payload, records)
+
+    # 토큰 사용량/비용 추정은 인터뷰 단계의 ``meta_extra``에서 가져온다.
+    usage_summary: Optional[dict] = None
+    extra = payload.get("meta_extra") or {}
+    if isinstance(extra, dict):
+        usage_raw = extra.get("usage")
+        if isinstance(usage_raw, dict):
+            usage_summary = {
+                "prompt_tokens": usage_raw.get("prompt_tokens", 0),
+                "completion_tokens": usage_raw.get("completion_tokens", 0),
+                "cached_tokens": usage_raw.get("cached_tokens", 0),
+                "estimated_cost_usd": extra.get("estimated_cost_usd", 0.0),
+            }
+
     markdown_text = render_markdown(
         quant=quant,
         insights=insights,
@@ -1309,6 +1339,7 @@ async def generate_report(
         json_path=json_path,
         include_drift=options.include_drift,
         top_n=options.top_n,
+        usage_summary=usage_summary,
     )
 
     output_path = _resolve_output_path(json_path, options.output_dir)

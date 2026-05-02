@@ -42,6 +42,7 @@ from .models import (
     ServerNotReachableError,
     StructuredSummary,
     StructuredSummaryParseError,
+    TokenUsage,
 )
 
 
@@ -939,6 +940,7 @@ class InterviewSession:
                     response_text,
                     latency_ms,
                     retry_count,
+                    usage,
                 ) = await self._call_llm(messages)
                 messages.append(
                     MessageEntry(role="assistant", content=response_text)
@@ -949,6 +951,7 @@ class InterviewSession:
                         response=response_text,
                         latency_ms=latency_ms,
                         retry_count=retry_count,
+                        usage=usage,
                     )
                 )
 
@@ -1008,6 +1011,7 @@ class InterviewSession:
                         fu_text,
                         fu_latency_ms,
                         fu_retry,
+                        fu_usage,
                     ) = await self._call_llm(messages)
                     messages.append(MessageEntry(role="assistant", content=fu_text))
                     # 같은 question_index, retry_count는 1 증가로 표기한다.
@@ -1017,6 +1021,7 @@ class InterviewSession:
                             response=fu_text,
                             latency_ms=fu_latency_ms,
                             retry_count=fu_retry + 1,
+                            usage=fu_usage,
                         )
                     )
 
@@ -1124,7 +1129,7 @@ class InterviewSession:
         OpenAI 호환 dict 형식으로 변환하여 보낸다.
 
         Returns:
-            ``(text, latency_ms, retry_count)``.
+            ``(text, latency_ms, retry_count, usage)``.
         """
 
         api_messages = [
@@ -1138,6 +1143,7 @@ class InterviewSession:
             chat_response.content,
             chat_response.latency_ms,
             chat_response.retry_count,
+            chat_response.usage,
         )
 
 

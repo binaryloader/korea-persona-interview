@@ -18,6 +18,7 @@ import pytest
 
 from src.batch import (
     BatchSummary,
+    _aggregate_usage,
     _build_failed_record,
     _count_failure_reasons,
     _summarize_records,
@@ -32,11 +33,13 @@ from src.models import (
     Flags,
     InterviewRecord,
     PersonaMeta,
+    RawResponse,
     RetryExhaustedError,
     RunMeta,
     SCHEMA_VERSION,
     ServerNotReachableError,
     StructuredSummaryParseError,
+    TokenUsage,
 )
 
 
@@ -111,6 +114,90 @@ def test_summarize_records_상태별_집계() -> None:
     assert summary.success_count == 1
     assert summary.failure_count == 1
     assert summary.total_done == 2
+
+
+def test_aggregate_usage_빈_records_제로_사용량() -> None:
+    """빈 record 리스트는 0으로 채운 ``TokenUsage``를 반환한다."""
+
+    total = _aggregate_usage([])
+    assert isinstance(total, TokenUsage)
+    assert total.prompt_tokens == 0
+    assert total.cached_tokens == 0
+
+
+def test_aggregate_usage_record당_RawResponse_합산() -> None:
+    """record가 여러 RawResponse를 가지면 모든 usage를 합산한다.
+
+    멀티턴 + 자동 follow-up은 같은 record 안에 여러 RawResponse를 만든다.
+    """
+
+    rec_a = InterviewRecord(
+        persona_id="p1",
+        persona_meta=_persona("p1"),
+        started_at="t1",
+        finished_at="t2",
+        status="completed",
+        messages=[],
+        raw_responses=[
+            RawResponse(
+                question_index=0,
+                response="ok1",
+                latency_ms=10,
+                retry_count=0,
+                usage=TokenUsage(
+                    prompt_tokens=100,
+                    completion_tokens=20,
+                    total_tokens=120,
+                    cached_tokens=80,
+                ),
+            ),
+            RawResponse(
+                question_index=1,
+                response="ok2",
+                latency_ms=10,
+                retry_count=0,
+                usage=TokenUsage(
+                    prompt_tokens=200,
+                    completion_tokens=30,
+                    total_tokens=230,
+                    cached_tokens=160,
+                ),
+            ),
+        ],
+        structured_summary=None,
+        flags=Flags(),
+        error=None,
+    )
+    rec_b = InterviewRecord(
+        persona_id="p2",
+        persona_meta=_persona("p2"),
+        started_at="t1",
+        finished_at="t2",
+        status="completed",
+        messages=[],
+        raw_responses=[
+            RawResponse(
+                question_index=0,
+                response="ok",
+                latency_ms=10,
+                retry_count=0,
+                usage=TokenUsage(
+                    prompt_tokens=50,
+                    completion_tokens=5,
+                    total_tokens=55,
+                    cached_tokens=40,
+                ),
+            ),
+        ],
+        structured_summary=None,
+        flags=Flags(),
+        error=None,
+    )
+    total = _aggregate_usage([rec_a, rec_b])
+    assert total.prompt_tokens == 350
+    assert total.completion_tokens == 55
+    assert total.total_tokens == 405
+    assert total.cached_tokens == 280
 
 
 def test_count_failure_reasons_타입별_빈도() -> None:
@@ -357,6 +444,69 @@ async def test_run_batch_정상_3명_completed(
     assert len(payload["records"]) == 3
     for r in payload["records"]:
         assert r["status"] == "completed"
+
+    # envelope.usage / estimated_cost_usd가 채워진다(모킹 응답에 usage 없으면 0).
+    assert isinstance(envelope.usage, TokenUsage)
+    assert envelope.estimated_cost_usd >= 0.0
+    # meta_extra에도 usage/cost가 직렬화된다.
+    extra = payload.get("meta_extra") or {}
+    assert "usage" in extra
+    assert "estimated_cost_usd" in extra
+
+
+@pytest.mark.asyncio
+async def test_run_batch_usage_누적_및_비용_추정_envelope(
+    httpx_mock,
+    make_app_config,
+    tmp_path: Path,
+) -> None:
+    """실제 OpenAI 응답처럼 usage가 채워진 응답을 받으면 envelope.usage가
+    합산되고 estimated_cost_usd가 0보다 크다."""
+
+    _add_models_response(httpx_mock)
+
+    # 1명 × (질문 1 + 요약 1) = 2번 호출. 각 호출에 usage 동봉.
+    for _ in range(2):
+        httpx_mock.add_response(
+            method="POST",
+            url="https://api.openai.com/v1/chat/completions",
+            json={
+                "choices": [
+                    {"message": {"role": "assistant", "content": "한 번 시도해 보고 싶네요. 가격도 합리적입니다."}}
+                ],
+                "usage": {
+                    "prompt_tokens": 1500,
+                    "completion_tokens": 50,
+                    "total_tokens": 1550,
+                    "prompt_tokens_details": {"cached_tokens": 1200},
+                },
+            },
+            status_code=200,
+        )
+
+    config = make_app_config(concurrency=1)
+    personas = [_persona("p-0")]
+
+    async with MlxLLMClient(config.llm) as client:
+        envelope = await run_batch(
+            personas=personas,
+            product="반찬",
+            questions=["Q1"],
+            follow_ups=[],
+            llm=client,
+            config=config,
+            output_dir=tmp_path,
+            slug="usage-test",
+            seed=1,
+            progress_disable=True,
+        )
+
+    # 인터뷰 본체 1회만 raw_responses에 들어간다(요약은 별도 단계라 합산 제외).
+    assert envelope.usage.prompt_tokens == 1500
+    assert envelope.usage.completion_tokens == 50
+    assert envelope.usage.cached_tokens == 1200
+    # gpt-4o-mini가 아닌 test-model이라 fallback 단가 사용. 비용은 0보다 크다.
+    assert envelope.estimated_cost_usd > 0.0
 
 
 @pytest.mark.asyncio

@@ -30,13 +30,14 @@ import os
 import signal
 import uuid
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 from tqdm import tqdm
 
+from ._pricing import estimate_cost_usd
 from .config import AppConfig
 from .interview import run_interview
 from .llm_client import MlxLLMClient
@@ -52,6 +53,7 @@ from .models import (
     SCHEMA_VERSION,
     ServerNotReachableError,
     StructuredSummaryParseError,
+    TokenUsage,
 )
 
 
@@ -113,8 +115,13 @@ class BatchResultEnvelope:
     """``run_batch`` 반환 컨테이너.
 
     ``BatchResult``는 직렬화 단위지만 CLI는 종료 코드 판정과 사용자 안내에
-    추가 메타가 필요하다. 본 envelope에 partial/cancelled/저장 경로를 담아
-    main.py가 sys.exit 처리를 수행한다.
+    추가 메타가 필요하다. 본 envelope에 partial/cancelled/저장 경로/누적 토큰
+    사용량/추정 비용을 담아 main.py가 sys.exit 처리와 비용 표시를 수행한다.
+
+    ``usage``는 본 배치의 모든 chat 호출(인터뷰 멀티턴 + 자동 follow-up + 구조화
+    요약 + 정성 인사이트는 별도 단계라 미포함) 합산이다. ``estimated_cost_usd``는
+    해당 사용량과 모델 단가로 추정한 비용으로, 정확한 청구 단가와 다를 수 있다
+    (호출자에서 "추정" 표기 명시).
     """
 
     result: BatchResult
@@ -123,6 +130,8 @@ class BatchResultEnvelope:
     partial_failure: bool
     cancelled: bool
     failure_reason_counts: dict
+    usage: TokenUsage = field(default_factory=lambda: TokenUsage())
+    estimated_cost_usd: float = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -231,6 +240,24 @@ def _summarize_records(
         drift=int(statuses.get("drift", 0)),
         cancelled=cancelled,
     )
+
+
+def _aggregate_usage(records: list) -> TokenUsage:
+    """모든 record의 ``raw_responses[*].usage`` 합산.
+
+    멀티턴 한 호출이 한 ``RawResponse``를 만든다. 자동 follow-up도 별도
+    ``RawResponse``로 누적되므로 사실상 모든 chat 호출의 usage가 합산된다.
+    구조화 요약과 정성 인사이트 단계는 별도 호출이라 본 합산에 포함되지 않는다
+    (해당 단계의 usage는 v1.1 후속 작업에서 record/envelope에 추가 검토).
+    """
+
+    total = TokenUsage()
+    for r in records:
+        for raw in getattr(r, "raw_responses", []) or []:
+            usage = getattr(raw, "usage", None)
+            if isinstance(usage, TokenUsage):
+                total = total.add(usage)
+    return total
 
 
 def _count_failure_reasons(records: list) -> dict:
@@ -622,6 +649,9 @@ async def run_batch(
         success_ratio = summary.success_count / summary.requested
         partial_failure = success_ratio < _PARTIAL_SUCCESS_RATIO or cancelled
 
+    aggregated_usage = _aggregate_usage(list(records))
+    estimated_cost = estimate_cost_usd(aggregated_usage, config.llm.model)
+
     config_snapshot = {
         "concurrency": concurrency,
         "temperature": config.llm.temperature,
@@ -655,6 +685,8 @@ async def run_batch(
             "summary": dataclasses.asdict(summary),
             "failure_reason_counts": failure_reasons,
             "product_masked": mask_product(product),
+            "usage": dataclasses.asdict(aggregated_usage),
+            "estimated_cost_usd": round(estimated_cost, 6),
         }
         output_path = save_batch_result(
             result,
@@ -675,6 +707,10 @@ async def run_batch(
             "drift": summary.drift,
             "cancelled": summary.cancelled,
             "partial_failure": partial_failure,
+            "prompt_tokens": aggregated_usage.prompt_tokens,
+            "completion_tokens": aggregated_usage.completion_tokens,
+            "cached_tokens": aggregated_usage.cached_tokens,
+            "estimated_cost_usd": round(estimated_cost, 6),
         },
     )
 
@@ -690,4 +726,6 @@ async def run_batch(
         partial_failure=partial_failure,
         cancelled=cancelled,
         failure_reason_counts=failure_reasons,
+        usage=aggregated_usage,
+        estimated_cost_usd=round(estimated_cost, 6),
     )

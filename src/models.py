@@ -76,17 +76,6 @@ class MessageEntry:
 
 
 @dataclass(frozen=True)
-class RawResponse:
-    """질문 단위 응답 메타. 지연/재시도 분석 용도."""
-
-    question_index: int
-    response: str
-    latency_ms: int
-    retry_count: int
-    reasoning_trace: Optional[str] = None
-
-
-@dataclass(frozen=True)
 class TokenUsage:
     """단일 호출의 토큰 사용량.
 
@@ -114,6 +103,22 @@ class TokenUsage:
 
 
 @dataclass(frozen=True)
+class RawResponse:
+    """질문 단위 응답 메타. 지연/재시도/토큰 사용량 분석 용도.
+
+    ``usage``는 본 응답을 생성한 단일 chat 호출의 토큰 사용량이다. 인터뷰 종료
+    후 record/배치 단위로 합산해 비용 추정에 사용한다(``src._pricing``).
+    """
+
+    question_index: int
+    response: str
+    latency_ms: int
+    retry_count: int
+    reasoning_trace: Optional[str] = None
+    usage: TokenUsage = field(default_factory=lambda: TokenUsage())
+
+
+@dataclass(frozen=True)
 class ChatResponse:
     """LLM chat 호출 결과 컨테이너.
 
@@ -130,7 +135,7 @@ class ChatResponse:
     latency_ms: int
     retry_count: int
     reasoning_trace: Optional[str] = None
-    usage: "TokenUsage" = field(default_factory=lambda: TokenUsage())
+    usage: TokenUsage = field(default_factory=lambda: TokenUsage())
 
 
 @dataclass(frozen=True)

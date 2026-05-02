@@ -713,6 +713,14 @@ def interview(
         f"완료: {summary.completed}명, 거부: {summary.refused}명, "
         f"실패: {summary.failed}명, 드리프트: {summary.drift}명"
     )
+    usage = envelope.usage
+    if usage.total_tokens > 0 or usage.prompt_tokens > 0:
+        console.info(
+            f"토큰 사용량: prompt {usage.prompt_tokens:,} / "
+            f"completion {usage.completion_tokens:,} / "
+            f"cached {usage.cached_tokens:,} / "
+            f"비용 추정: ${envelope.estimated_cost_usd:.4f}"
+        )
     if output_path:
         console.info(f"결과 저장: {output_path}")
 
