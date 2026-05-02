@@ -62,13 +62,43 @@ def test_tool_handlers_네_개_도구_등록() -> None:
     }
 
 
-def test_list_tools_metadata_네_개_Tool_생성() -> None:
-    tools = _list_tools_metadata()
+def test_list_tools_metadata_server_mode_도구_8개() -> None:
+    """v1.2.0(ADR-005): MCP server 모드는 healthcheck/list_personas/interview/
+    report에 더해 helper 4개(detect_persona_drift, should_auto_follow_up,
+    parse_structured_summary, interview_record_schema)도 노출한다."""
+
+    from src.mcp_server import _list_tools_metadata_for_mode
+
+    tools = _list_tools_metadata_for_mode("server")
     names = [t.name for t in tools]
-    assert names == ["healthcheck", "list_personas", "interview", "report"]
+    assert "healthcheck" in names
+    assert "list_personas" in names
+    assert "interview" in names
+    assert "report" in names
+    assert "detect_persona_drift" in names
+    assert "should_auto_follow_up" in names
+    assert "parse_structured_summary" in names
+    assert "interview_record_schema" in names
     for tool in tools:
         assert tool.description
         assert tool.inputSchema
+
+
+def test_list_tools_metadata_orchestrator_mode_도구() -> None:
+    """v1.2.0(ADR-005): MCP orchestrator 모드는 interview 도구는 빠지고
+    build_persona_prompt/build_batch_prompts/aggregate_results가 추가된다."""
+
+    from src.mcp_server import _list_tools_metadata_for_mode
+
+    tools = _list_tools_metadata_for_mode("orchestrator")
+    names = [t.name for t in tools]
+    assert "interview" not in names
+    assert "build_persona_prompt" in names
+    assert "build_batch_prompts" in names
+    assert "aggregate_results" in names
+    assert "healthcheck" in names
+    assert "list_personas" in names
+    assert "report" in names
 
 
 def test_input_schema_타입과_required_필드() -> None:
@@ -97,11 +127,20 @@ async def test_dispatch_arguments_dict가_아니면_에러() -> None:
 
 
 @pytest.mark.asyncio
-async def test_dispatch_핸들러_예외_안전망(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_dispatch_핸들러_예외_안전망(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """핸들러가 예외를 던지면 dispatch가 ``unhandled_exception`` 봉투로 감싼다."""
+
+    monkeypatch.setenv("KPI_OUTPUT_DIR", str(tmp_path))
+    _pin_mode(tmp_path, monkeypatch, "server")
+
     async def _broken_handler(arguments: dict) -> dict:
         raise RuntimeError("boom")
 
-    monkeypatch.setitem(_TOOL_HANDLERS, "healthcheck", _broken_handler)
+    from src.mcp_handlers import HANDLERS
+
+    monkeypatch.setitem(HANDLERS, ("server", "healthcheck"), _broken_handler)
     result = await dispatch_tool("healthcheck", {})
     assert "error" in result
     assert result["ok"] is False
