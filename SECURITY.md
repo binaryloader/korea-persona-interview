@@ -49,8 +49,8 @@ The points below are the load-bearing security properties of this project. Any d
 
 - API keys are read from the environment (`OPENAI_API_KEY`, `KPI_OPENAI_API_KEY`) or a project-root `.env` file only. The tool never writes the key to logs, result JSON, or the markdown report. The structured logger masks anything matching the key shape before emitting
 - The `.env` parser uses `setdefault` semantics so a key already set in the shell is never overridden. `.env` is gitignored
-- The `--product` text and persona metadata used for each interview are sent to OpenAI servers as part of the Chat Completions request. This is documented in the README `Limitations and Disclaimer` section and ADR-002. Do not put unreleased intellectual property, trade secrets, or personally identifiable information into `--product`
-- No external telemetry. The only outbound calls are to the OpenAI Chat Completions endpoint and (on first run) the Hugging Face Hub for the dataset download
+- The `--product` text and persona metadata used for each interview are sent to whichever LLM backend you configure (OpenAI Chat Completions API, Anthropic Messages API, an OpenAI-compatible local server, or the MCP host agent's LLM). The exact destination is determined by `provider`, `base_url`, and `mcp.mode`. This is documented in the README `Limitations and Disclaimer` section and ADR-002 / ADR-003 / ADR-004. Do not put unreleased intellectual property, trade secrets, or personally identifiable information into `--product`
+- No external telemetry. The only outbound calls are to the configured LLM backend and (on first run) the Hugging Face Hub for the dataset download. The MCP `sampling` mode performs no direct outbound LLM call from this process; the host agent issues the call instead
 - All result JSON files and markdown reports are written to the local `outputs/` directory, which is gitignored. The MCP server returns paths to these local files, not their contents over the network
 
 ## Dependency hygiene
