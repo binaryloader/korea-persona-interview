@@ -415,6 +415,23 @@ def _persona(
     )
 
 
+def _persona_with_occupation(occupation: str) -> PersonaMeta:
+    """직업명만 다른 PersonaMeta. G11 영문 화이트리스트 회귀용."""
+
+    return PersonaMeta(
+        persona_id="p",
+        name=None,
+        gender="여자",
+        age=30,
+        region="서울",
+        subregion="서울-X",
+        occupation=occupation,
+        marital="x",
+        education="x",
+        raw={},
+    )
+
+
 def test_detect_persona_drift_빈_답변_False() -> None:
     assert detect_persona_drift("", _persona()) is False
 
@@ -636,6 +653,33 @@ def test_detect_persona_drift_지역_3인칭_관광_언급_False() -> None:
     text = "저는 부산에 한 번 다녀왔어요. 거기 음식이 좋았어요."
     persona = _persona(region="서울")
     assert detect_persona_drift(text, persona) is False
+
+
+def test_detect_persona_drift_직업명_영문_화이트리스트_False() -> None:
+    """``IT 컨설턴트`` 페르소나가 응답에 ``IT``를 포함해도 영어 비율 false positive가 없다.
+
+    G11 occupation_english_whitelist 회귀 방지. 직업명 토큰은 분모에서 제외해
+    drift 트리거를 일으키지 않는다.
+    """
+
+    persona = _persona_with_occupation("IT 컨설턴트")
+    text = "IT 업계 동향을 보면 이 서비스도 좋아 보입니다. 그 외 인지도가 어느 정도 있을지 궁금하네요."
+    assert detect_persona_drift(text, persona) is False
+
+
+def test_detect_persona_drift_직업명_영문_화이트리스트_OFF_다시_True() -> None:
+    """occupation_english_whitelist=False면 직업명 토큰도 영어 비율 분자/분모에 포함된다."""
+
+    persona = _persona_with_occupation("UX 디자이너")
+    text = "UX UI design feel 한 부분이 어색해서 with 좀 어렵게 느껴졌어요."
+    # 영어 단어 비율이 임계값을 넘기는 케이스. 화이트리스트 OFF면 직업명 토큰을
+    # 분모에서 제외하지 않으므로 그대로 trigger된다.
+    assert (
+        detect_persona_drift(
+            text, persona, occupation_english_whitelist=False
+        )
+        is True
+    )
 
 
 def test_detect_persona_drift_연령_정확한_단언_True() -> None:

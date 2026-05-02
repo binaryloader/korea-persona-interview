@@ -613,22 +613,43 @@ _ENGLISH_WORD_RE = re.compile(r"[A-Za-z]+")
 _LETTER_WORD_RE = re.compile(r"[가-힣A-Za-z]+")
 
 
-def _english_ratio(text: str) -> float:
+def _english_ratio(text: str, occupation_whitelist: frozenset = frozenset()) -> float:
     """전체 단어(한글+영문) 대비 영문 단어 비율(TDD §8.2 명세).
 
     글자 단위 비율은 ``solo`` 같은 4글자 영단어가 한국어 1문장 안에 섞여도
     임계값을 넘기 어려워 false negative가 잦았다. 단어 단위 비율은 영어 단어
     개수를 직접 세므로 ``I think this is solo``처럼 영어 위주 응답을 더 잘
     잡아낸다. 한자/숫자/구두점은 분모에서 제외한다.
+
+    ``occupation_whitelist``로 페르소나 직업명에 등장하는 영문 토큰을 분모에서
+    제외할 수 있다(``IT 컨설턴트``, ``UX 디자이너``류 페르소나가 본인 직업명을
+    자연스럽게 사용해도 false positive로 drift 처리되지 않게 한다). 화이트리스트
+    토큰은 본인 단언 여부와 무관하게 분모에서 제외한다.
     """
 
     if not text:
         return 0.0
     words_total = _LETTER_WORD_RE.findall(text)
+    english_words = _ENGLISH_WORD_RE.findall(text)
+    if occupation_whitelist:
+        # 화이트리스트 매칭은 case-insensitive로 본다.
+        words_total = [w for w in words_total if w.lower() not in occupation_whitelist]
+        english_words = [w for w in english_words if w.lower() not in occupation_whitelist]
     if not words_total:
         return 0.0
-    english_words = _ENGLISH_WORD_RE.findall(text)
     return len(english_words) / len(words_total)
+
+
+def _occupation_english_tokens(persona: PersonaMeta) -> frozenset:
+    """페르소나 직업명에 들어 있는 영문 토큰을 lower-case set으로 반환한다.
+
+    ``IT 컨설턴트`` → ``{'it'}``, ``UX/UI 디자이너`` → ``{'ux', 'ui'}``. 직업명
+    필드가 비면 빈 set을 돌려준다.
+    """
+
+    if not persona or not persona.occupation:
+        return frozenset()
+    return frozenset(t.lower() for t in _ENGLISH_WORD_RE.findall(persona.occupation))
 
 
 def _age_bucket_for_drift(age: int) -> str:
@@ -811,6 +832,7 @@ def detect_persona_drift(
     response: str,
     persona: PersonaMeta,
     english_ratio_threshold: float = 0.30,
+    occupation_english_whitelist: bool = True,
 ) -> bool:
     """페르소나 정면 모순 또는 영어 비율 임계값 초과 여부를 판정한다(TDD §8.2).
 
@@ -845,7 +867,12 @@ def detect_persona_drift(
     if not response:
         return False
 
-    if _english_ratio(response) > english_ratio_threshold:
+    whitelist = (
+        _occupation_english_tokens(persona)
+        if occupation_english_whitelist
+        else frozenset()
+    )
+    if _english_ratio(response, whitelist) > english_ratio_threshold:
         return True
 
     own_bucket = _age_bucket_for_drift(persona.age)
@@ -1227,6 +1254,7 @@ class InterviewSession:
                     response_text,
                     self._persona,
                     self._interview_cfg.english_ratio_threshold,
+                    self._interview_cfg.occupation_english_whitelist,
                 ):
                     flags = dataclasses.replace(flags, persona_drift=True)
                     status = "drift"
@@ -1298,6 +1326,7 @@ class InterviewSession:
                         fu_text,
                         self._persona,
                         self._interview_cfg.english_ratio_threshold,
+                        self._interview_cfg.occupation_english_whitelist,
                     ):
                         flags = dataclasses.replace(flags, persona_drift=True)
                         status = "drift"
@@ -1514,6 +1543,7 @@ class InterviewSession:
                     response_text,
                     self._persona,
                     self._interview_cfg.english_ratio_threshold,
+                    self._interview_cfg.occupation_english_whitelist,
                 ):
                     flags = dataclasses.replace(flags, persona_drift=True)
                     status = "drift"

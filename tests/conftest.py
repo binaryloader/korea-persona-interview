@@ -317,6 +317,7 @@ def make_app_config():
         auto_follow_up_text: str = "조금만 더 자세히 말씀해 주실 수 있을까요?",
         auto_follow_up_max: int = 1,
         system_prompt_path: str = "prompts/system_prompt.txt",
+        occupation_english_whitelist: bool = True,
         partial_failure_threshold: float = 0.5,
         cohort_min_cell: int = 3,
         top_n_default: int = 10,
@@ -383,6 +384,7 @@ def make_app_config():
             auto_follow_up_text=auto_follow_up_text,
             auto_follow_up_max=auto_follow_up_max,
             system_prompt_path=system_prompt_path,
+            occupation_english_whitelist=occupation_english_whitelist,
         )
         report = ReportConfig(
             cohort_min_cell=cohort_min_cell,

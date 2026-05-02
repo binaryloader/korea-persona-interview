@@ -111,6 +111,10 @@ interview:
   auto_follow_up_text: "조금만 더 자세히 말씀해 주실 수 있을까요?"
   auto_follow_up_max: 1
   system_prompt_path: "prompts/system_prompt.txt"
+  # 페르소나 직업명에 등장하는 영문 토큰을 _english_ratio 분모에서 제외한다.
+  # IT 컨설턴트/UX 디자이너 같은 페르소나가 본인 직업명을 자연스럽게 언급해도
+  # false positive로 drift 처리되지 않게 한다.
+  occupation_english_whitelist: true
 
 report:
   cohort_min_cell: 3

@@ -153,6 +153,7 @@ class InterviewConfig:
     auto_follow_up_text: str = "조금만 더 자세히 말씀해 주실 수 있을까요?"
     auto_follow_up_max: int = 1
     system_prompt_path: str = "prompts/system_prompt.txt"
+    occupation_english_whitelist: bool = True
 
     def __post_init__(self) -> None:
         if self.short_answer_threshold < 0:
@@ -303,6 +304,7 @@ def _default_dict() -> dict:
             "auto_follow_up_text": "조금만 더 자세히 말씀해 주실 수 있을까요?",
             "auto_follow_up_max": 1,
             "system_prompt_path": "prompts/system_prompt.txt",
+            "occupation_english_whitelist": True,
         },
         "report": {
             "cohort_min_cell": 3,
@@ -567,6 +569,9 @@ def load_config(
                 merged["interview"].get(
                     "system_prompt_path", "prompts/system_prompt.txt"
                 )
+            ),
+            occupation_english_whitelist=bool(
+                merged["interview"].get("occupation_english_whitelist", True)
             ),
         )
         report_raw = merged.get("report") or {}
