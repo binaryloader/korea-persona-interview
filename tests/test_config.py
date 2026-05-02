@@ -328,6 +328,79 @@ def test_load_config_interview_default_keywords(tmp_path: Path) -> None:
     assert "I cannot" in cfg.interview.refusal_keywords
     assert cfg.interview.short_answer_threshold == 20
     assert cfg.interview.english_ratio_threshold == 0.30
+    # 라운드 B2: auto_follow_up_text/max도 default에서 노출된다.
+    assert cfg.interview.auto_follow_up_text == "조금만 더 자세히 말씀해 주실 수 있을까요?"
+    assert cfg.interview.auto_follow_up_max == 1
+
+
+def test_load_config_interview_yaml_override(tmp_path: Path) -> None:
+    """yaml에서 인터뷰 임계값을 변경하면 그대로 반영된다(라운드 B2)."""
+
+    yaml_path = tmp_path / "config.yaml"
+    yaml_path.write_text(
+        "interview:\n"
+        "  short_answer_threshold: 30\n"
+        "  english_ratio_threshold: 0.5\n"
+        "  ambiguous_keywords:\n"
+        "    - \"별 생각 없어\"\n"
+        "  refusal_keywords:\n"
+        "    - \"못하겠습니다\"\n"
+        "  auto_follow_up_text: \"한 번만 더 부탁드릴게요\"\n"
+        "  auto_follow_up_max: 0\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(yaml_path=yaml_path)
+    assert cfg.interview.short_answer_threshold == 30
+    assert cfg.interview.english_ratio_threshold == 0.5
+    assert cfg.interview.ambiguous_keywords == ("별 생각 없어",)
+    assert cfg.interview.refusal_keywords == ("못하겠습니다",)
+    assert cfg.interview.auto_follow_up_text == "한 번만 더 부탁드릴게요"
+    assert cfg.interview.auto_follow_up_max == 0
+
+
+@pytest.mark.parametrize("threshold", [-1, -100])
+def test_InterviewConfig_short_answer_threshold_음수_ConfigError(threshold: int) -> None:
+    """short_answer_threshold 음수는 ConfigError(라운드 B2)."""
+
+    with pytest.raises(ConfigError):
+        from src.config import InterviewConfig
+
+        InterviewConfig(
+            short_answer_threshold=threshold,
+            english_ratio_threshold=0.3,
+            ambiguous_keywords=(),
+            refusal_keywords=(),
+        )
+
+
+@pytest.mark.parametrize("ratio", [-0.1, 1.1, 2.0])
+def test_InterviewConfig_english_ratio_범위외_ConfigError(ratio: float) -> None:
+    """english_ratio_threshold가 0-1 범위 밖이면 ConfigError(라운드 B2)."""
+
+    with pytest.raises(ConfigError):
+        from src.config import InterviewConfig
+
+        InterviewConfig(
+            short_answer_threshold=20,
+            english_ratio_threshold=ratio,
+            ambiguous_keywords=(),
+            refusal_keywords=(),
+        )
+
+
+def test_InterviewConfig_auto_follow_up_text_빈_문자열_ConfigError() -> None:
+    """auto_follow_up_text가 비면 ConfigError(라운드 B2)."""
+
+    with pytest.raises(ConfigError):
+        from src.config import InterviewConfig
+
+        InterviewConfig(
+            short_answer_threshold=20,
+            english_ratio_threshold=0.3,
+            ambiguous_keywords=(),
+            refusal_keywords=(),
+            auto_follow_up_text="   ",
+        )
 
 
 # ---------------------------------------------------------------------------

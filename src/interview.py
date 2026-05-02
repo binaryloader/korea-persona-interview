@@ -49,7 +49,11 @@ from .models import (
 logger = logging.getLogger(__name__)
 
 
-# 자동 follow-up 시 추가하는 사용자 발화. PRD §5.1, §5.8 표준 문구다.
+# 자동 follow-up 시 추가하는 사용자 발화의 기본값. PRD §5.1, §5.8 표준 문구다.
+# 라운드 B2부터 본 문구는 ``InterviewConfig.auto_follow_up_text``로 외부화되어
+# yaml/CLI에서 변경 가능하다. 본 모듈 상수는 외부 import 호환성을 위해 보존하지만
+# 실제 인터뷰 흐름은 ``InterviewSession``이 ``self._interview_cfg.auto_follow_up_text``
+# 를 사용한다.
 AUTO_FOLLOW_UP_PROMPT = "조금만 더 자세히 말씀해 주실 수 있을까요?"
 
 
@@ -638,12 +642,16 @@ def _has_cohabit_assertion(text: str) -> bool:
     return False
 
 
-def detect_persona_drift(response: str, persona: PersonaMeta) -> bool:
-    """페르소나 정면 모순 또는 영어 비율 30% 초과 여부를 판정한다(TDD §8.2).
+def detect_persona_drift(
+    response: str,
+    persona: PersonaMeta,
+    english_ratio_threshold: float = 0.30,
+) -> bool:
+    """페르소나 정면 모순 또는 영어 비율 임계값 초과 여부를 판정한다(TDD §8.2).
 
     감지 축은 아래와 같다.
 
-    - 영어 비율: ``_english_ratio`` > 0.30이면 True
+    - 영어 비율: ``_english_ratio`` > ``english_ratio_threshold``이면 True
     - 연령대 모순: ``저는 20대``처럼 자기 연령 버킷이 아닌 버킷을 단언
     - 성별 모순: 여자 페르소나가 ``저는 남자``를 단언, 또는 그 반대
     - 지역 모순: 자기 시도가 아닌 다른 시도를 거주지로 단언
@@ -660,12 +668,19 @@ def detect_persona_drift(response: str, persona: PersonaMeta) -> bool:
       거주 동사가 함께 등장하는 정밀 정규식만 매칭한다. ``혼자 사시는 분들``
       같은 3인칭 표현, ``혼자서 끼니를 해결`` 같은 행동 표현, 응답에 우연히
       등장한 product 키워드(``1인 가구용``)는 trigger에서 제외된다
+
+    Args:
+        response: 모델 응답 본문.
+        persona: 페르소나 메타.
+        english_ratio_threshold: 영어 비율 임계값(0.0-1.0). 기본 0.30은
+            ``InterviewConfig.english_ratio_threshold``의 기본값과 일치한다.
+            yaml 또는 사용자 설정에서 조정 가능(라운드 B2 외부화).
     """
 
     if not response:
         return False
 
-    if _english_ratio(response) > 0.30:
+    if _english_ratio(response) > english_ratio_threshold:
         return True
 
     own_bucket = _age_bucket(persona.age)
@@ -1036,7 +1051,11 @@ class InterviewSession:
                     break
 
                 # 페르소나 깨짐 감지(중단하지 않고 플래그만 기록, PRD §5.8).
-                if detect_persona_drift(response_text, self._persona):
+                if detect_persona_drift(
+                    response_text,
+                    self._persona,
+                    self._interview_cfg.english_ratio_threshold,
+                ):
                     flags = dataclasses.replace(flags, persona_drift=True)
                     status = "drift"
                     logger.warning(
@@ -1048,10 +1067,11 @@ class InterviewSession:
                     )
 
                 # 자동 follow-up은 메인 질문 구간(q_index < len(self._questions))
-                # 에서만, flag 미사용 시 1회 적용한다.
+                # 에서만, ``auto_follow_up_max`` 만큼 적용한다(기본 1회).
                 if (
                     q_index < len(self._questions)
                     and not flags.auto_follow_up_used
+                    and self._interview_cfg.auto_follow_up_max > 0
                     and should_auto_follow_up(
                         response_text,
                         threshold=self._interview_cfg.short_answer_threshold,
@@ -1072,7 +1092,10 @@ class InterviewSession:
                         flags = dataclasses.replace(flags, truncated=True)
 
                     messages.append(
-                        MessageEntry(role="user", content=AUTO_FOLLOW_UP_PROMPT)
+                        MessageEntry(
+                            role="user",
+                            content=self._interview_cfg.auto_follow_up_text,
+                        )
                     )
                     (
                         fu_text,
@@ -1099,7 +1122,11 @@ class InterviewSession:
                         flags = dataclasses.replace(flags, refusal_detected=True)
                         status = "refused"
                         break
-                    if detect_persona_drift(fu_text, self._persona):
+                    if detect_persona_drift(
+                        fu_text,
+                        self._persona,
+                        self._interview_cfg.english_ratio_threshold,
+                    ):
                         flags = dataclasses.replace(flags, persona_drift=True)
                         status = "drift"
 
@@ -1305,7 +1332,11 @@ class InterviewSession:
                 )
             else:
                 # 페르소나 깨짐 감지(중단 없이 플래그만).
-                if detect_persona_drift(response_text, self._persona):
+                if detect_persona_drift(
+                    response_text,
+                    self._persona,
+                    self._interview_cfg.english_ratio_threshold,
+                ):
                     flags = dataclasses.replace(flags, persona_drift=True)
                     status = "drift"
                     logger.warning(

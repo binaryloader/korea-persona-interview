@@ -129,12 +129,44 @@ class DatasetConfig:
 
 @dataclass(frozen=True)
 class InterviewConfig:
-    """인터뷰 임계값/키워드(TDD §8)."""
+    """인터뷰 임계값/키워드(TDD §8).
+
+    임계값/키워드를 외부화한 결과 사용자가 yaml에서 인터뷰 휴리스틱을 직접
+    조정할 수 있다(라운드 B2). 영어 비율 임계값을 0.5로 올리면 영어 단어가 더
+    많이 섞여도 drift로 보지 않고, 짧은 답변 임계값을 30자로 올리면 자동
+    follow-up이 더 자주 발동된다.
+
+    상하한 검증은 ``__post_init__``에서 한다. 음수 임계값이나 1.0 초과 영어
+    비율 같은 비현실 값은 ConfigError로 차단한다(error-handling.md §1).
+    """
 
     short_answer_threshold: int
     english_ratio_threshold: float
     ambiguous_keywords: tuple
     refusal_keywords: tuple
+    auto_follow_up_text: str = "조금만 더 자세히 말씀해 주실 수 있을까요?"
+    auto_follow_up_max: int = 1
+
+    def __post_init__(self) -> None:
+        if self.short_answer_threshold < 0:
+            raise ConfigError(
+                "interview.short_answer_threshold는 0 이상이어야 한다. "
+                f"입력값: {self.short_answer_threshold}"
+            )
+        if not (0.0 <= self.english_ratio_threshold <= 1.0):
+            raise ConfigError(
+                "interview.english_ratio_threshold는 0.0-1.0 범위만 허용한다. "
+                f"입력값: {self.english_ratio_threshold}"
+            )
+        if self.auto_follow_up_max < 0:
+            raise ConfigError(
+                "interview.auto_follow_up_max는 0 이상이어야 한다. "
+                f"입력값: {self.auto_follow_up_max}"
+            )
+        if not isinstance(self.auto_follow_up_text, str) or not self.auto_follow_up_text.strip():
+            raise ConfigError(
+                "interview.auto_follow_up_text는 빈 문자열이 아닌 str이어야 한다"
+            )
 
 
 @dataclass(frozen=True)
@@ -237,6 +269,8 @@ def _default_dict() -> dict:
                 "저는 인공지능",
                 "AI 모델",
             ],
+            "auto_follow_up_text": "조금만 더 자세히 말씀해 주실 수 있을까요?",
+            "auto_follow_up_max": 1,
         },
         "output": {
             "output_dir": "outputs/",
@@ -497,6 +531,15 @@ def load_config(
             ),
             refusal_keywords=tuple(
                 str(x) for x in merged["interview"]["refusal_keywords"]
+            ),
+            auto_follow_up_text=str(
+                merged["interview"].get(
+                    "auto_follow_up_text",
+                    "조금만 더 자세히 말씀해 주실 수 있을까요?",
+                )
+            ),
+            auto_follow_up_max=int(
+                merged["interview"].get("auto_follow_up_max", 1)
             ),
         )
     except (KeyError, TypeError, ValueError) as exc:

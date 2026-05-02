@@ -1404,3 +1404,134 @@ async def test_run_interview_single_turn_자동_follow_up_비활성화(
     chat_calls = [r for r in requests if "chat/completions" in str(r.url)]
     # 인터뷰 1회 + 요약 1회 = 2. follow-up 호출 없음.
     assert len(chat_calls) == 2
+
+
+# ---------------------------------------------------------------------------
+# 라운드 B2: 외부화된 휴리스틱 임계값/키워드 적용 검증
+# ---------------------------------------------------------------------------
+
+
+def test_detect_persona_drift_영어_비율_임계값_상향_관대(
+    fake_persona_meta,
+) -> None:
+    """english_ratio_threshold를 0.5로 올리면 영어 비율 0.4 응답이 drift False."""
+
+    text = "This is okay 그러나 가격이 좀 비싸요"
+    # 기본 0.30 → True
+    assert detect_persona_drift(text, fake_persona_meta, 0.30) is True
+    # 임계값 0.5 → False(관대해짐)
+    assert detect_persona_drift(text, fake_persona_meta, 0.5) is False
+
+
+def test_detect_persona_drift_영어_비율_임계값_하향_엄격(
+    fake_persona_meta,
+) -> None:
+    """english_ratio_threshold를 0.10으로 내리면 영어 단어 한 개에도 trigger."""
+
+    text = "이 product는 적당히 좋아 보입니다 그렇지만 가격이 좀 부담입니다"
+    # 기본 0.30 → False(영어 1개라 비율 낮음)
+    assert detect_persona_drift(text, fake_persona_meta, 0.30) is False
+    # 임계값 0.10 → True(엄격해짐)
+    assert detect_persona_drift(text, fake_persona_meta, 0.10) is True
+
+
+def test_should_auto_follow_up_threshold_상향_더_자주_발동() -> None:
+    """short_answer_threshold를 30으로 올리면 22자 답변도 짧음으로 본다."""
+
+    # 공백 제거 시 22자가 되도록 구성한다(20자 기본 임계 위, 30자 임계 아래).
+    text = "가격이 적당해서 한번 써볼 만합니다 아주 좋아 보여요"
+    no_ws = "".join(text.split())
+    assert len(no_ws) == 22, f"테스트 가정 위반: {len(no_ws)}자"
+    # 기본 20 → 통과(False, 22자 >= 20)
+    assert should_auto_follow_up(text, threshold=20) is False
+    # 임계값 30 → True(더 자주 발동, 22자 < 30)
+    assert should_auto_follow_up(text, threshold=30) is True
+
+
+@pytest.mark.asyncio
+async def test_run_interview_auto_follow_up_max_0이면_비활성(
+    httpx_mock,
+    fake_persona_meta,
+    make_app_config,
+) -> None:
+    """auto_follow_up_max=0이면 짧은 답변에도 follow-up이 발동되지 않는다."""
+
+    _add_chat_response(httpx_mock, "그래요")  # 짧은 답변
+    _add_chat_response(
+        httpx_mock,
+        json.dumps(
+            {
+                "intent": "neutral",
+                "willingness_to_pay": None,
+                "willingness_to_pay_currency": "KRW",
+                "rejection_reasons": [],
+                "one_line": "짧음",
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    config = make_app_config(auto_follow_up_max=0)
+    async with MlxLLMClient(config.llm) as client:
+        record = await run_interview(
+            persona=fake_persona_meta,
+            product="반찬",
+            questions=["쓰실래요?"],
+            follow_ups=[],
+            llm=client,
+            config=config,
+        )
+
+    assert record.flags.auto_follow_up_used is False
+    # 호출은 본 인터뷰 1 + 요약 1 = 2회만
+    requests = httpx_mock.get_requests()
+    chat_calls = [r for r in requests if "chat/completions" in str(r.url)]
+    assert len(chat_calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_run_interview_auto_follow_up_text_커스텀_적용(
+    httpx_mock,
+    fake_persona_meta,
+    make_app_config,
+) -> None:
+    """auto_follow_up_text yaml/CLI 설정이 messages에 그대로 들어간다."""
+
+    custom_text = "한 줄만 더 부탁드릴게요!"
+    _add_chat_response(httpx_mock, "그래요")  # 짧은 답변(공백 제거 3자)
+    _add_chat_response(
+        httpx_mock,
+        "조금 더 자세히 말씀드리면 가격이 좀 부담스럽습니다.",
+    )  # follow-up 응답
+    _add_chat_response(
+        httpx_mock,
+        json.dumps(
+            {
+                "intent": "negative",
+                "willingness_to_pay": None,
+                "willingness_to_pay_currency": "KRW",
+                "rejection_reasons": ["가격"],
+                "one_line": "부담",
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    config = make_app_config(auto_follow_up_text=custom_text)
+    async with MlxLLMClient(config.llm) as client:
+        record = await run_interview(
+            persona=fake_persona_meta,
+            product="반찬",
+            questions=["쓰실래요?"],
+            follow_ups=[],
+            llm=client,
+            config=config,
+        )
+
+    assert record.flags.auto_follow_up_used is True
+    # messages에서 follow-up user 발화 확인
+    follow_up_user_msgs = [
+        m for m in record.messages
+        if m.role == "user" and m.content == custom_text
+    ]
+    assert len(follow_up_user_msgs) == 1

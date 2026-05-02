@@ -299,6 +299,8 @@ def make_app_config():
             "I'm sorry, but",
             "저는 인공지능",
         ),
+        auto_follow_up_text: str = "조금만 더 자세히 말씀해 주실 수 있을까요?",
+        auto_follow_up_max: int = 1,
     ) -> AppConfig:
         llm = LlmConfig(
             base_url=base_url,
@@ -353,6 +355,8 @@ def make_app_config():
             english_ratio_threshold=english_ratio_threshold,
             ambiguous_keywords=ambiguous_keywords,
             refusal_keywords=refusal_keywords,
+            auto_follow_up_text=auto_follow_up_text,
+            auto_follow_up_max=auto_follow_up_max,
         )
         return AppConfig(
             llm=llm,

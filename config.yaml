@@ -75,8 +75,16 @@ dataset:
     제주특별자치도: "제주"
 
 interview:
-  short_answer_threshold: 20  # 자동 follow-up 트리거 길이(글자)
+  # 자동 follow-up 트리거 길이(글자, 공백 제거 기준). 답변이 본 길이 미만이면
+  # follow-up이 1회 발동된다. 30으로 올리면 더 긴 답변에도 follow-up이 발동되어
+  # 인터뷰 평균 토큰이 늘어난다. 0이면 길이 기준은 사실상 비활성(키워드만).
+  short_answer_threshold: 20
+  # 영어 비율 임계값(0.0-1.0). 응답의 영어 단어 비율이 본 값을 초과하면
+  # persona_drift로 판정한다. 0.5로 올리면 더 관대해지고, 0.2로 내리면 영어
+  # 단어 한두 개에도 drift가 발동된다.
   english_ratio_threshold: 0.30
+  # 모호 키워드. 답변에 본 토큰 중 하나라도 부분 문자열로 포함되면 자동
+  # follow-up이 발동된다. 빈 리스트로 두면 키워드 트리거가 비활성화된다.
   ambiguous_keywords:
     - "글쎄요"
     - "잘 모르겠습니다"
@@ -84,6 +92,8 @@ interview:
     - "딱히"
     - "별로 생각 안 해봤"
     - "모르겠"
+  # 거부 키워드. 응답에 본 토큰 중 하나라도 포함되면 status=refused로
+  # 변환되고 인터뷰가 즉시 중단된다(retry 불가).
   refusal_keywords:
     - "답변할 수 없습니다"
     - "답변하기 어렵"
@@ -92,6 +102,12 @@ interview:
     - "As an AI"
     - "저는 인공지능"
     - "AI 모델"
+  # 자동 follow-up 발동 시 모델에 추가로 보내는 user 발화. PRD §5.1, §5.8
+  # 표준 문구다. 사용자가 도메인에 맞게 바꾸면 그대로 적용된다.
+  auto_follow_up_text: "조금만 더 자세히 말씀해 주실 수 있을까요?"
+  # 페르소나 1명당 자동 follow-up 발동 상한. 0이면 자동 follow-up 비활성.
+  # 1이 PRD §5.1 권장값이다(과도한 추가 호출로 비용 증가 방지).
+  auto_follow_up_max: 1
 
 output:
   output_dir: "outputs/"
