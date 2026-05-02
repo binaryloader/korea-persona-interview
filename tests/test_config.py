@@ -159,8 +159,20 @@ def test_load_config_cli_override가_env보다_우선(
         ("http://localhost:8080/v1", True),
         ("http://127.0.0.1:8080/v1", True),
         ("http://localhost", True),
+        # IPv6 loopback. ``[::1]`` 표기로 url에 포함되며 ``urlparse``가 ``::1``로
+        # 추출한다.
+        ("http://[::1]:8080/v1", True),
+        ("http://127.255.255.254:8080/v1", True),  # 127.0.0.0/8 전 범위 인정
         ("https://api.example.com/v1", False),
         ("https://localhost:8080/v1", False),  # https는 명시적으로 가드 대상
+        # prefix 우회 시도(``http://localhost.evil.com``). 새 구현은 hostname
+        # 분리 후 정확 매칭이라 차단된다.
+        ("http://localhost.evil.com/v1", False),
+        ("http://127.0.0.1.evil.com/v1", False),
+        # 외부 호스트
+        ("http://example.com:8080/v1", False),
+        ("http://10.0.0.1:8080/v1", False),
+        ("http://192.168.1.1:8080/v1", False),
         ("", False),
         (None, False),
     ],
@@ -212,3 +224,68 @@ def test_load_config_interview_default_keywords(tmp_path: Path) -> None:
     assert "I cannot" in cfg.interview.refusal_keywords
     assert cfg.interview.short_answer_threshold == 20
     assert cfg.interview.english_ratio_threshold == 0.30
+
+
+# ---------------------------------------------------------------------------
+# LlmConfig 상한 검증(__post_init__)
+# ---------------------------------------------------------------------------
+
+
+def _llm_config_kwargs(**override) -> dict:
+    base = {
+        "base_url": "http://localhost:8080/v1",
+        "model": "test-model",
+        "max_tokens": 500,
+        "temperature": 0.5,
+        "timeout": 60.0,
+        "context_budget": 8000,
+        "retry_max_attempts": 3,
+        "retry_backoff_seconds": (1.0, 2.0, 4.0),
+    }
+    base.update(override)
+    return base
+
+
+@pytest.mark.parametrize("max_tokens", [0, -1, 8001, 100000])
+def test_LlmConfig_max_tokens_범위외_ConfigError(max_tokens: int) -> None:
+    with pytest.raises(ConfigError):
+        LlmConfig(**_llm_config_kwargs(max_tokens=max_tokens))
+
+
+@pytest.mark.parametrize("attempts", [0, -1, 6, 100])
+def test_LlmConfig_retry_max_attempts_범위외_ConfigError(attempts: int) -> None:
+    with pytest.raises(ConfigError):
+        LlmConfig(**_llm_config_kwargs(retry_max_attempts=attempts))
+
+
+@pytest.mark.parametrize("timeout", [0, -1, 0.5, 601, 3600])
+def test_LlmConfig_timeout_범위외_ConfigError(timeout) -> None:
+    with pytest.raises(ConfigError):
+        LlmConfig(**_llm_config_kwargs(timeout=timeout))
+
+
+@pytest.mark.parametrize("budget", [0, 999, 32001, 100000])
+def test_LlmConfig_context_budget_범위외_ConfigError(budget: int) -> None:
+    with pytest.raises(ConfigError):
+        LlmConfig(**_llm_config_kwargs(context_budget=budget))
+
+
+def test_LlmConfig_허용_범위_생성_성공() -> None:
+    """경계값(1, 8000, 5, 600, 1000, 32000)이 모두 통과한다."""
+
+    LlmConfig(
+        **_llm_config_kwargs(
+            max_tokens=1,
+            retry_max_attempts=1,
+            timeout=1,
+            context_budget=1000,
+        )
+    )
+    LlmConfig(
+        **_llm_config_kwargs(
+            max_tokens=8000,
+            retry_max_attempts=5,
+            timeout=600,
+            context_budget=32000,
+        )
+    )

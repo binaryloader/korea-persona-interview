@@ -26,6 +26,7 @@ import asyncio
 import dataclasses
 import json
 import logging
+import os
 import signal
 import uuid
 from collections import Counter
@@ -176,7 +177,13 @@ def save_batch_result(
     target = output_dir / file_name
 
     serialized = _serialize_batch(result, partial=partial, extra_meta=extra_meta)
-    target.write_text(serialized, encoding="utf-8")
+
+    # 직접 ``target.write_text``로 쓰면 SIGINT/kill -9 도중 절단된 JSON이 남는
+    # 사례가 생긴다. 같은 디렉토리에 임시 파일을 만든 뒤 ``os.replace``로
+    # 원자 교체해 부분 쓰기 흔적을 남기지 않는다(error-handling.md §1).
+    tmp_target = target.with_suffix(target.suffix + ".tmp")
+    tmp_target.write_text(serialized, encoding="utf-8")
+    os.replace(tmp_target, target)
 
     logger.info(
         "배치 결과 저장",

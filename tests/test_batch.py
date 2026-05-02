@@ -242,6 +242,28 @@ def test_save_batch_result_한국어_본문_보존(tmp_path: Path) -> None:
     assert "서울" in text
 
 
+def test_save_batch_result_atomic_write_tmp_파일_미존재(tmp_path: Path) -> None:
+    """atomic write 회귀: 저장 후 ``.tmp`` 파일이 남아 있지 않다.
+
+    SIGINT/kill 도중 절단된 JSON이 출력 디렉토리에 남는 사고를 방지하기 위해
+    같은 디렉토리에 임시 파일을 만들고 ``os.replace``로 교체한다. 정상 흐름에서
+    임시 파일은 교체로 사라져야 한다.
+    """
+
+    result = _make_batch_result()
+    path = save_batch_result(
+        result,
+        output_dir=tmp_path,
+        slug="x",
+        timestamp="t",
+    )
+    tmp_candidate = path.with_suffix(path.suffix + ".tmp")
+    assert path.exists()
+    assert not tmp_candidate.exists()
+    # 원본도 정상 JSON이어야 한다.
+    json.loads(path.read_text(encoding="utf-8"))
+
+
 # ---------------------------------------------------------------------------
 # run_batch 동시성과 JSON 저장 E2E
 # ---------------------------------------------------------------------------

@@ -7,10 +7,12 @@
 
 from __future__ import annotations
 
+import ipaddress
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 import yaml
 
@@ -20,7 +22,13 @@ from .models import ConfigError
 # 기본 yaml 경로. 호출자가 명시적으로 다른 경로를 줄 수 있다.
 DEFAULT_YAML_PATH = Path("config.yaml")
 
-# localhost 가드용 prefix(security.md §1, TDD §13). chat() 차단 판정에 쓴다.
+# 루프백으로 인정하는 호스트명 화이트리스트. 호스트명은 IP가 아니라
+# DNS 이름이므로 ``ipaddress.is_loopback`` 검사 대상이 아니다(security.md §1,
+# TDD §13). DNS rebinding 위험은 v1 범위 밖이며, 본 도구는 매 호출마다 호스트를
+# 재해석하지 않는다.
+_LOOPBACK_HOSTNAMES = frozenset({"localhost"})
+
+# 과거 prefix 매칭 호환을 위해 보존. 새 코드는 ``is_local_base_url``을 사용한다.
 LOCAL_BASE_URL_PREFIXES = ("http://localhost", "http://127.0.0.1")
 
 
@@ -38,6 +46,10 @@ class LlmConfig:
     토큰 예산을 영문 reasoning이 모두 소진해 ``message.content``가 비어 오는
     사례가 확인됐다(검증된 정본 모델: ``unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit``).
     chat 요청 본문에는 항상 ``chat_template_kwargs``로 명시 전달한다.
+
+    각 수치 필드의 상하한은 운영 안전망이다. 잘못된 yaml 또는 환경변수가 비현실
+    수치를 박을 때 ``ConfigError``로 막아 추론 무한 대기, OOM, 무한 재시도를
+    예방한다(security.md §4, error-handling.md §1).
     """
 
     base_url: str
@@ -49,6 +61,33 @@ class LlmConfig:
     retry_max_attempts: int
     retry_backoff_seconds: tuple
     enable_thinking: bool = False
+
+    def __post_init__(self) -> None:
+        # 상한값은 본 도구의 v1 운영 가정에 맞춘 보수적 상한이다.
+        # max_tokens 1-8000: 단일 응답이 8000 토큰을 넘는 경우는 reasoning 토큰
+        # 폭증의 신호라 차단한다. retry_max_attempts 1-5: 5회 초과 재시도는
+        # 사용자 대기를 길게 만든다(120s timeout x 5 = 10분).
+        # timeout 1-600초: 600초(10분)를 넘는 단일 호출은 v1 SLO 밖이다.
+        # context_budget 1000-32000: 1000 미만은 system 프롬프트 수용 불가,
+        # 32000은 Qwen3 계열 컨텍스트 한계.
+        if not (1 <= self.max_tokens <= 8000):
+            raise ConfigError(
+                f"llm.max_tokens는 1-8000 범위만 허용한다. 입력값: {self.max_tokens}"
+            )
+        if not (1 <= self.retry_max_attempts <= 5):
+            raise ConfigError(
+                "llm.retry_max_attempts는 1-5 범위만 허용한다. "
+                f"입력값: {self.retry_max_attempts}"
+            )
+        if not (1 <= self.timeout <= 600):
+            raise ConfigError(
+                f"llm.timeout(초)은 1-600 범위만 허용한다. 입력값: {self.timeout}"
+            )
+        if not (1000 <= self.context_budget <= 32000):
+            raise ConfigError(
+                "llm.context_budget는 1000-32000 범위만 허용한다. "
+                f"입력값: {self.context_budget}"
+            )
 
 
 @dataclass(frozen=True)
@@ -297,11 +336,37 @@ def is_local_base_url(base_url: str) -> bool:
 
     chat() 차단 가드용 헬퍼다(security.md §1, TDD §13). healthcheck()에는
     경고만 남기고 실제 차단은 chat() 진입 시점에서 확인한다.
+
+    판정은 ``urllib.parse.urlparse``로 scheme/host를 추출한 뒤 아래 조건을 모두
+    만족하면 True다.
+
+    - scheme이 ``http``(MLX 서버는 ``https``를 노출하지 않으므로 https는 외부
+      관문으로 본다)
+    - host가 ``localhost`` 화이트리스트 안에 있거나
+      ``ipaddress.ip_address(host).is_loopback``이 True(127.0.0.0/8 또는 ``::1``)
+
+    prefix 매칭(``http://localhost``)을 피하는 이유는 ``http://localhost.evil.com``
+    같은 우회를 막기 위함이다. DNS rebinding 위험은 v1 범위 밖으로 둔다.
     """
 
-    if not isinstance(base_url, str):
+    if not isinstance(base_url, str) or not base_url:
         return False
-    return base_url.startswith(LOCAL_BASE_URL_PREFIXES)
+    try:
+        parsed = urlparse(base_url)
+    except ValueError:
+        return False
+    if parsed.scheme.lower() != "http":
+        return False
+    host = parsed.hostname
+    if not host:
+        return False
+    if host.lower() in _LOOPBACK_HOSTNAMES:
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return ip.is_loopback
 
 
 def load_config(
