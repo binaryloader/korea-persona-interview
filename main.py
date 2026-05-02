@@ -20,7 +20,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import sys
 import uuid
 from datetime import datetime, timezone
@@ -30,7 +29,10 @@ from typing import Optional
 import click
 
 from src.batch import BatchResultEnvelope, run_batch
+from src.cli_views import persona_to_json_dict as _persona_to_json_dict
+from src.cli_views import render_persona_table as _render_persona_table
 from src.config import AppConfig, load_config
+from src.console import MESSAGES, Console, resolve_color as _resolve_color
 from src.interview import InterviewSession
 from src.llm_client import MlxLLMClient
 from src.load_personas import load_and_sample, parse_filter
@@ -47,111 +49,6 @@ from src.report import (
     ReportOptions,
     generate_report,
 )
-
-
-# 한국어 단일 출처 메시지 사전(UI §3.1). 동일 예외가 명령마다 다른 문구로
-# 출력되지 않도록 본 사전만 사용한다.
-#
-# v1.x부터 백엔드는 OpenAI Chat Completions API다. ``server_not_reachable``과
-# ``api_key_missing``은 분리해 사용자가 어떤 문제인지 즉시 식별할 수 있게 한다.
-MESSAGES = {
-    "server_not_reachable": (
-        "OpenAI 서버에 연결할 수 없습니다. 인터넷 연결과 base_url, "
-        "OPENAI_API_KEY 환경변수를 확인해 주세요(현재 모델: {model})"
-    ),
-    "api_key_missing": (
-        "OpenAI API 키가 설정되지 않았습니다. "
-        "https://platform.openai.com/api-keys 에서 발급 후 환경변수 "
-        "OPENAI_API_KEY로 셸에 적용하거나(`export OPENAI_API_KEY=sk-...`) "
-        "프로젝트 루트의 .env 파일에 `OPENAI_API_KEY=...` 형식으로 저장해 주세요"
-    ),
-    "api_key_invalid": (
-        "OpenAI API 키가 유효하지 않거나 권한이 없습니다. "
-        "환경변수 OPENAI_API_KEY를 다시 확인해 주세요"
-    ),
-    "config_error": "설정 파일을 읽을 수 없습니다: {reason}",
-    "dataset_unavailable": (
-        "데이터셋을 로드하지 못했습니다. 인터넷 연결과 ~/.cache/huggingface "
-        "권한을 확인해 주세요. 원인: {reason}"
-    ),
-    "filter_zero": (
-        "필터 조건에 맞는 페르소나가 없습니다. 필터를 완화해 주세요"
-    ),
-    "filter_too_few": (
-        "필터 결과가 요청 수보다 적습니다. --n을 줄이거나 필터를 완화해 주세요. {reason}"
-    ),
-    "input_file_not_found": (
-        "입력 파일을 읽지 못했습니다. 경로를 확인해 주세요. ls outputs/로 결과 JSON을 확인할 수 있습니다"
-    ),
-    "input_file_schema": (
-        "입력 파일이 올바른 인터뷰 JSON 형식이 아닙니다. 본 도구의 interview 명령으로 생성된 JSON인지 확인해 주세요"
-    ),
-    "empty_valid_records": (
-        "리포트를 생성할 수 있는 정상 record가 없습니다. 모델 동작과 필터를 점검한 뒤 다시 실행해 주세요"
-    ),
-    "user_interrupted": (
-        "사용자 중단 신호를 받았습니다. 부분 결과를 outputs/에 저장합니다"
-    ),
-    "partial_failure": (
-        "부분 실패로 종료합니다(완료 {x}명 / 요청 {n}명, {ratio}). 부분 결과는 저장되었습니다"
-    ),
-}
-
-
-# ---------------------------------------------------------------------------
-# 컬러/라벨 헬퍼
-# ---------------------------------------------------------------------------
-
-
-def _resolve_color(no_color_flag: bool) -> bool:
-    """ANSI 컬러 활성화 여부.
-
-    - ``--no-color``가 True면 끈다
-    - 환경변수 ``NO_COLOR``가 set되어 있으면 끈다(no-color.org 표준)
-    - stdout이 TTY가 아니면 끈다
-    """
-
-    if no_color_flag:
-        return False
-    if os.environ.get("NO_COLOR"):
-        return False
-    if not sys.stdout.isatty():
-        return False
-    return True
-
-
-class Console:
-    """[OK]/[WARN]/[ERR] 라벨과 ANSI 컬러를 일원화한 stdout/stderr 출력기."""
-
-    def __init__(self, *, color: bool) -> None:
-        self._color = color
-
-    def _wrap(self, text: str, code: str) -> str:
-        if not self._color:
-            return text
-        return f"\x1b[{code}m{text}\x1b[0m"
-
-    def ok(self, message: str) -> None:
-        label = self._wrap("[OK]", "32")
-        click.echo(f"{label} {message}")
-
-    def info(self, message: str) -> None:
-        label = self._wrap("[INFO]", "36")
-        click.echo(f"{label} {message}")
-
-    def warn(self, message: str) -> None:
-        label = self._wrap("[WARN]", "33")
-        click.echo(f"{label} {message}", err=True)
-
-    def err(self, message: str) -> None:
-        label = self._wrap("[ERR]", "31")
-        click.echo(f"{label} {message}", err=True)
-
-    def hint(self, message: str) -> None:
-        click.echo(f"  {message}")
-
-    def echo(self, message: str = "") -> None:
-        click.echo(message)
 
 
 # ---------------------------------------------------------------------------
@@ -609,77 +506,6 @@ def list_personas(
     _render_persona_table(personas, console)
     click.echo("종료 코드: 0")
     sys.exit(0)
-
-
-def _persona_to_json_dict(persona: PersonaMeta) -> dict:
-    """``PersonaMeta``를 ``--json`` 모드에서 stdout에 실어 보낼 dict로 변환한다.
-
-    ``raw`` dict는 데이터셋 원본 컬럼 전체이므로 stdout 페이로드 크기가 커진다.
-    외부 통합에서 stream 파싱 부담을 줄이기 위해 본 함수에서는 ``raw``를 빼고
-    분석에 충분한 인구 통계 핵심 키만 노출한다(파일에 저장되는 JSON에는 raw가
-    그대로 보존된다).
-    """
-
-    return {
-        "persona_id": persona.persona_id,
-        "name": persona.name,
-        "gender": persona.gender,
-        "age": persona.age,
-        "region": persona.region,
-        "subregion": persona.subregion,
-        "occupation": persona.occupation,
-        "marital": persona.marital,
-        "education": persona.education,
-        "family_type": persona.family_type,
-        "housing_type": persona.housing_type,
-    }
-
-
-def _render_persona_table(personas: list, console: Console) -> None:
-    """간단 표 출력. 한글 폭 2 가정으로 단순 정렬한다(UI §5.4의 v1 방침)."""
-
-    headers = ("persona_id", "이름", "성별", "연령", "지역", "직업")
-    rows = []
-    for p in personas:
-        rows.append(
-            (
-                p.persona_id[:16],
-                (p.name or "-")[:10],
-                p.gender,
-                str(p.age),
-                f"{p.region} {p.subregion}".strip(),
-                (p.occupation or "-")[:24],
-            )
-        )
-
-    # 컬럼 폭은 헤더 + 본문의 max로. 한글은 2 셀 폭 가정.
-    def _width(s: str) -> int:
-        w = 0
-        for ch in s:
-            cp = ord(ch)
-            if cp >= 0x1100:
-                w += 2
-            else:
-                w += 1
-        return w
-
-    widths = [_width(h) for h in headers]
-    for row in rows:
-        for i, cell in enumerate(row):
-            widths[i] = max(widths[i], _width(cell))
-
-    def _pad(cell: str, width: int) -> str:
-        return cell + " " * max(0, width - _width(cell))
-
-    header_line = "  ".join(_pad(h, widths[i]) for i, h in enumerate(headers))
-    sep_line = "  ".join("-" * widths[i] for i in range(len(headers)))
-    console.echo("")
-    console.echo("  " + header_line)
-    console.echo("  " + sep_line)
-    for row in rows:
-        line = "  ".join(_pad(cell, widths[i]) for i, cell in enumerate(row))
-        console.echo("  " + line)
-    console.echo("")
 
 
 # ---------------------------------------------------------------------------
