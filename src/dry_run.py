@@ -98,12 +98,16 @@ async def run_dry_run(
     console.echo("--- 구조화 요약 ---")
     if record.structured_summary is not None:
         s = record.structured_summary
+        # ``acceptable_price_signal``은 schema v2에서 도입된 정성 신호 필드라
+        # 본 dump에 함께 포함한다(인터뷰 본문에 명시 숫자가 없어도 정성 가격
+        # 신호로 채워진다).
         console.echo(
             json.dumps(
                 {
                     "intent": s.intent,
                     "willingness_to_pay": s.willingness_to_pay,
                     "willingness_to_pay_currency": s.willingness_to_pay_currency,
+                    "acceptable_price_signal": s.acceptable_price_signal,
                     "rejection_reasons": s.rejection_reasons,
                     "one_line": s.one_line,
                 },

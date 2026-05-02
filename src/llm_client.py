@@ -35,12 +35,14 @@ logger = logging.getLogger(__name__)
 _JITTER_MAX_SECONDS = 0.5
 
 def _parse_streaming_body(body_text: str) -> tuple:
-    """OpenAI SSE 스트림 본문(``data: {...}\\n\\n`` 반복)을 (content, usage)로 합산한다.
+    """Aggregate an OpenAI Server-Sent Events stream body into ``(content, usage)``.
 
-    스트리밍 응답은 여러 ``data: ...`` 라인이 이어지고 마지막에 ``data: [DONE]``
-    이 들어온다. 각 chunk의 ``choices[0].delta.content``를 합치고, 마지막
-    chunk의 ``usage`` 블록(``stream_options.include_usage`` 활성 시)을 그대로
-    사용한다.
+    The streaming response is a sequence of ``data: {...}`` lines terminated
+    by ``data: [DONE]``. Each chunk's ``choices[0].delta.content`` is
+    appended; the final chunk's ``usage`` block (when the request opts into
+    ``stream_options.include_usage``) becomes the response usage. Lines that
+    do not parse as JSON, or that lack the expected fields, are skipped so a
+    partial chunk cannot poison the aggregate.
     """
 
     import json as _json
@@ -242,15 +244,14 @@ class LLMClient:
         if self._config.streaming:
             body["stream"] = True
             # Ask OpenAI for an aggregated usage block on the final stream
-            # chunk so the response usage stays comparable to non-streaming
-            # mode. OpenAI gates this behind ``stream_options.include_usage``.
+            # chunk so streaming and non-streaming responses surface the same
+            # token counts. Gated behind ``stream_options.include_usage``.
             body["stream_options"] = {"include_usage": True}
-        # ``extra_chat_kwargs`` lets users forward backend-specific request
-        # fields that fall outside the OpenAI Chat Completions spec, such as
-        # ``chat_template_kwargs`` for mlx_lm.server / vLLM thinking toggles
-        # on Qwen3 models. Reserved keys (``model``/``messages``/
-        # ``max_tokens``/``temperature``) are skipped to keep the canonical
-        # request body shape intact.
+        # ``extra_chat_kwargs`` forwards backend-specific request fields that
+        # fall outside the OpenAI Chat Completions spec - the canonical use
+        # case is ``chat_template_kwargs`` for mlx_lm.server / vLLM thinking
+        # toggles on Qwen3 models. Reserved keys are intentionally skipped so
+        # users cannot accidentally override the canonical body shape.
         extras = self._config.extra_chat_kwargs_dict()
         for key, value in extras.items():
             if key in body:
@@ -258,7 +259,7 @@ class LLMClient:
             body[key] = value
 
         # Message bodies stay out of the structured log per security policy.
-        # Only counts and char totals are recorded.
+        # Only counts and character totals are recorded.
         logger.debug(
             "chat 요청 시작",
             extra={

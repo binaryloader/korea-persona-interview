@@ -51,16 +51,19 @@ from .models import (
 logger = logging.getLogger(__name__)
 
 
-# 자동 follow-up 시 추가하는 사용자 발화의 기본값. PRD §5.1, §5.8 표준 문구다.
-# 정본은 ``InterviewConfig.auto_follow_up_text``이며 ``InterviewSession``은 항상
-# config에서 받은 값을 사용한다. 본 모듈 상수는 외부 import 호환성을 위해 보존된다.
+# Default user utterance appended when the auto follow-up trigger fires.
+# The single source of truth is ``InterviewConfig.auto_follow_up_text``;
+# ``InterviewSession`` always reads from config. This module-level constant is
+# kept for backward import compatibility only.
 AUTO_FOLLOW_UP_PROMPT = "조금만 더 자세히 말씀해 주실 수 있을까요?"
 
 
-# 단일턴 모드 응답 분리 정규식. ``1. ``, ``2) ``, ``3.`` 같은 줄 시작 번호
-# 마커를 분리자로 본다. 멀티라인 + DOTALL을 함께 사용해 다음 번호 마커가
-# 등장할 때까지를 한 응답으로 본다. 본 정규식은 줄 시작에만 매칭하므로 본문
-# 안의 ``1. 첫 번째``류 인용은 분리자로 잡지 않는다.
+# Splitter regex for the single-turn response format. Matches a line that
+# starts with a number followed by ``.`` or ``)`` (e.g. ``1.``, ``2)``,
+# ``3.``) and grabs the body until the next numbered marker or end of input.
+# MULTILINE plus DOTALL together let us span newlines while anchoring on
+# line starts only - a numbered citation that appears mid-sentence will not
+# be misread as a delimiter.
 _NUMBERED_SEGMENT_RE = re.compile(
     r"^\s*(\d+)[.)]\s*(.+?)(?=^\s*\d+[.)]|\Z)",
     re.MULTILINE | re.DOTALL,
@@ -68,17 +71,20 @@ _NUMBERED_SEGMENT_RE = re.compile(
 
 
 def _parse_single_turn_response(text: str, expected_count: int) -> tuple:
-    """단일턴 응답 텍스트를 question_index별 응답 리스트로 분리한다.
+    """Split a single-turn response text into per-question answer chunks.
 
     Args:
-        text: LLM 응답 본문(시스템 프롬프트 지침에 따라 ``1. ... 2. ...`` 형식).
-        expected_count: 기대하는 응답 개수(질문 + 사용자 정의 follow-up 합).
+        text: LLM response body. The system prompt instructs the model to emit
+            ``1. ... 2. ... 3. ...`` numbered segments.
+        expected_count: How many segments the caller expects (main questions
+            plus shared follow-ups).
 
     Returns:
-        ``(answers, parse_failed)``. ``answers``는 길이 ``expected_count``의
-        리스트. 파싱 성공 시 각 항목은 1번부터 N번 응답 본문이며 trailing
-        whitespace는 제거된다. 파싱 실패 시 마지막 인덱스에 통째 텍스트를
-        담고 그 외는 빈 문자열, ``parse_failed=True``를 반환한다.
+        ``(answers, parse_failed)``. On success ``answers`` is a list of
+        length ``expected_count`` with trimmed segment bodies indexed 0..N-1.
+        On failure the last slot carries the entire response text, the rest
+        are empty strings, and ``parse_failed`` is True - this preserves the
+        raw output for post-mortem instead of dropping it.
     """
 
     if expected_count <= 0:
@@ -126,9 +132,11 @@ _SUMMARY_SCHEMA_HINT = (
 )
 
 
-# 17개 시도 짧은 표기. 페르소나 깨짐 감지 시 자기 시도가 아닌 시도를 거주지로
-# 단언하는 응답을 잡기 위한 화이트리스트다(TDD §8.2). 데이터셋 표기는 짧은
-# 표기지만 사용자가 영어/한국어 변형을 섞을 수 있어 별칭 일부도 포함한다.
+# Short-form names for the 17 Korean provinces. Used by drift detection to
+# spot a response that asserts living in a province other than the persona's
+# own (TDD section 8.2). The dataset only stores the short form, but a
+# response may use either the short or full form, so callers compare against
+# this list with substring semantics.
 _KOREAN_PROVINCES: tuple = (
     "서울",
     "부산",
@@ -150,14 +158,15 @@ _KOREAN_PROVINCES: tuple = (
 )
 
 
-# 자기 단언 주어 토큰. 연령대/성별/지역 모순 휴리스틱(거주 형태가 아닌 축)에서
-# ``저는 OO``류 짧은 단언을 잡을 때 사용한다. 거주 형태 축은 별도의 정밀
-# 정규식(_SOLO_ASSERTION_RE / _COHABIT_ASSERTION_RE)을 사용하므로 본 패턴을
-# 거주 모순에 그대로 재사용하지 않는다(false positive 방지).
+# First-person subject tokens used by the gender / age / region drift axes.
+# The cohabitation axis uses dedicated precision regexes (_SOLO_ASSERTION_RE
+# / _COHABIT_ASSERTION_RE) instead of this pattern; reusing the broad pattern
+# for cohabitation would re-introduce the false positives we removed in
+# round G (a response that mentions ``1인 가구용`` as a product keyword would
+# trip the solo-living check).
 #
-# 윈도우는 같은 문장(``.``/``!``/``?`` boundary) 안에서만 본다. 이전 구현은
-# 30자 윈도우가 너무 넓어 ``저는 부모님과 같이 살고 있어서 1인 가구용 반찬``
-# 류 응답에서 product 키워드 ``1인 가구``를 단독 거주 긍정 단언으로 오인했다.
+# The match window is bounded by sentence punctuation (``.``/``!``/``?``).
+# Earlier 30-character windows were too wide and bled across sentences.
 _SELF_INTRO_PATTERN = re.compile(
     r"(?:저는|나는|제가|내가)\s*([^\.\?!\n,]{0,30})"
 )
