@@ -1,17 +1,8 @@
-# 직접 의존성 정확 버전 핀(dependency.md §2). 트랜지티브 포함 전체 트리는
-# requirements.lock에 고정되어 있다. 프로덕션 배포는 lock으로 설치한다.
-httpx==0.27.2
-datasets==3.6.0
-pyyaml==6.0.3
-tqdm==4.66.6
-click==8.1.8
-# MCP(Model Context Protocol) 공식 Python SDK. 외부 에이전트(Claude Code,
-# Cursor, Codex 등)가 본 도구를 stdio 기반 도구로 등록해 자연어로 호출할 수
-# 있도록 한다(라운드 C1). 직접 JSON-RPC 구현보다 표준 호환성과 유지보수
-# 관점에서 공식 SDK를 선택한다(dependency.md §1, leftpad 회피).
-mcp==1.27.0
-# datasets가 트랜지티브로 끌어오는 aiohttp의 명시적 상한 핀(security.md §1,
-# dependency.md §4). GHSA-9548-qrrj-x5pj는 upstream 3.14+에서 패치 예정이지만
-# 작성 시점 PyPI 가용 정식 릴리즈는 3.13.5가 최신이라 그 버전을 강제한다.
-# 3.14 정식 릴리즈 발표 시 본 핀을 갱신해 lock도 다시 compile한다(ADR 후보).
-aiohttp>=3.13.5,<3.14
+# 직접 의존성 진입점.
+#
+# v1.1.0부터 정본 dependencies는 ``pyproject.toml``의 ``[project.dependencies]``
+# 섹션이다(dependency.md §2). 본 파일은 ``pip install -r requirements.txt``
+# 흐름에 친숙한 사용자를 위한 호환성 진입점이며 PEP 508 ``-e`` 셀프 설치로
+# pyproject 의존성을 그대로 끌어오게 한다. 트랜지티브 포함 전체 트리 핀은
+# ``requirements.lock``에 동결되어 있고, 프로덕션 배포는 lock으로 설치한다.
+-e .

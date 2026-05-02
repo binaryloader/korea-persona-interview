@@ -39,7 +39,7 @@ The tool ships four CLI subcommands (`healthcheck`, `list-personas`, `interview`
 
 ## Dependencies
 
-Direct runtime dependencies are pinned in `requirements.txt` and mirrored in `pyproject.toml`.
+Direct runtime dependencies live in `pyproject.toml` (`[project.dependencies]`). The `requirements.txt` shim simply forwards to it via `-e .` for compatibility with `pip install -r` workflows.
 
 - `httpx` - async HTTP client for the OpenAI API
 - `datasets` - Hugging Face loader for `nvidia/Nemotron-Personas-Korea`
@@ -82,7 +82,7 @@ To run the CLI as `kpi` and the MCP server as `kpi-mcp-server` from anywhere ins
 uv pip install -e .
 ```
 
-After this you can call `kpi healthcheck`, `kpi interview ...`, `kpi-mcp-server`, and so on. The editable install does not duplicate the dependency tree because `pyproject.toml` and `requirements.txt` are kept in sync. Skip this step if you only need to run via `python main.py`.
+After this you can call `kpi healthcheck`, `kpi interview ...`, `kpi-mcp-server`, and so on. The editable install reuses the same `[project.dependencies]` graph that `requirements.txt` forwards to, so no duplicate dependency tree is created. Skip this step if you only need to run via `python main.py`.
 
 Plain pip works too if you cannot use uv.
 
