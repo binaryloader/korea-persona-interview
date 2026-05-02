@@ -349,21 +349,14 @@ def test_messages_사전_핵심_키_존재() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_interview_정상_3명_completed_exit_0(
-    httpx_mock,
-    fake_load_dataset,
-    tmp_path: Path,
-) -> None:
-    """3명 인터뷰가 모두 정상 완료되어 exit 0과 결과 파일을 만든다."""
+def _add_interview_chat_responses(httpx_mock, *, n: int) -> None:
+    """``n``명에 대한 인터뷰 멀티턴 + 구조화 요약 응답을 mock에 등록한다.
 
-    httpx_mock.add_response(
-        method="GET",
-        url="https://api.openai.com/v1/models",
-        json={"data": [{"id": "test-model"}]},
-        status_code=200,
-    )
-    # 3명 × (질문 1 + 요약 1) = 6번
-    for _ in range(3):
+    한 페르소나당 메인 질문 응답 1회 + 구조화 요약 응답 1회로 총 2회 호출이 발생한다.
+    구조화 요약은 ``StructuredSummary`` JSON 스키마로 정상 응답한다.
+    """
+
+    for _ in range(n):
         httpx_mock.add_response(
             method="POST",
             url="https://api.openai.com/v1/chat/completions",
@@ -404,6 +397,88 @@ def test_interview_정상_3명_completed_exit_0(
             status_code=200,
         )
 
+
+def _add_qualitative_insight_response(httpx_mock) -> None:
+    """리포트 정성 인사이트 LLM 호출 mock 응답."""
+
+    insight_text = json.dumps(
+        {
+            "common_reactions": ["반응 1"],
+            "insights": [f"i{i}" for i in range(6)],
+            "cohort_differences": "차이",
+        },
+        ensure_ascii=False,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.openai.com/v1/chat/completions",
+        json={"choices": [{"message": {"role": "assistant", "content": insight_text}}]},
+        status_code=200,
+    )
+
+
+def test_interview_정상_3명_completed_exit_0_no_report(
+    httpx_mock,
+    fake_load_dataset,
+    tmp_path: Path,
+) -> None:
+    """``--no-report``: 3명 인터뷰가 정상 완료되고 JSON만 저장된다(MD 미생성)."""
+
+    httpx_mock.add_response(
+        method="GET",
+        url="https://api.openai.com/v1/models",
+        json={"data": [{"id": "test-model"}]},
+        status_code=200,
+    )
+    _add_interview_chat_responses(httpx_mock, n=3)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "--no-color",
+            "interview",
+            "--product",
+            "반찬 정기배송",
+            "--questions",
+            "Q1",
+            "--n",
+            "3",
+            "--output",
+            str(tmp_path),
+            "--no-report",
+        ],
+        env={
+            "KPI_OUTPUT_DIR": str(tmp_path),
+            "OPENAI_API_KEY": "test-key",
+        },
+    )
+    assert result.exit_code == 0, result.output
+    assert "다음 단계" in result.output
+    # JSON은 생성, MD는 미생성
+    json_files = list(tmp_path.glob("interview_*.json"))
+    md_files = list(tmp_path.glob("report_*.md"))
+    assert json_files
+    assert not md_files
+
+
+def test_interview_정상_3명_completed_exit_0_auto_report(
+    httpx_mock,
+    fake_load_dataset,
+    tmp_path: Path,
+) -> None:
+    """기본 동작(``--report``): 인터뷰 종료 후 리포트 마크다운까지 자동 생성한다."""
+
+    httpx_mock.add_response(
+        method="GET",
+        url="https://api.openai.com/v1/models",
+        json={"data": [{"id": "test-model"}]},
+        status_code=200,
+    )
+    _add_interview_chat_responses(httpx_mock, n=3)
+    # 자동 리포트 정성 인사이트 호출 1회.
+    _add_qualitative_insight_response(httpx_mock)
+
     runner = CliRunner()
     result = runner.invoke(
         cli,
@@ -425,10 +500,57 @@ def test_interview_정상_3명_completed_exit_0(
         },
     )
     assert result.exit_code == 0, result.output
-    assert "다음 단계" in result.output
-    # 결과 파일 생성 확인
-    files = list(tmp_path.glob("interview_*.json"))
-    assert files
+    # JSON과 MD 모두 생성
+    json_files = list(tmp_path.glob("interview_*.json"))
+    md_files = list(tmp_path.glob("report_*.md"))
+    assert json_files
+    assert md_files
+    # INFO 안내 한 줄 노출
+    assert "리포트 자동 생성 시작" in result.output
+
+
+def test_interview_dry_run은_자동_리포트도_안만든다(
+    httpx_mock,
+    fake_load_dataset,
+    tmp_path: Path,
+) -> None:
+    """dry-run은 JSON 저장과 리포트 생성을 모두 건너뛴다(콘솔 출력만)."""
+
+    httpx_mock.add_response(
+        method="GET",
+        url="https://api.openai.com/v1/models",
+        json={"data": [{"id": "test-model"}]},
+        status_code=200,
+    )
+    # dry-run은 1명 + 구조화 요약. 자동 report 호출은 없어야 한다.
+    _add_interview_chat_responses(httpx_mock, n=1)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "--no-color",
+            "interview",
+            "--product",
+            "반찬",
+            "--questions",
+            "Q1",
+            "--n",
+            "1",
+            "--dry-run",
+            "--output",
+            str(tmp_path),
+        ],
+        env={
+            "KPI_OUTPUT_DIR": str(tmp_path),
+            "OPENAI_API_KEY": "test-key",
+        },
+    )
+    assert result.exit_code == 0, result.output
+    json_files = list(tmp_path.glob("interview_*.json"))
+    md_files = list(tmp_path.glob("report_*.md"))
+    assert not json_files
+    assert not md_files
 
 
 def test_report_정상_E2E_exit_0(httpx_mock, tmp_path: Path) -> None:

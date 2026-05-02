@@ -133,7 +133,7 @@ Expected outcome: two reports per cohort. The cohort intent table inside each re
 | --- | --- | --- | --- |
 | `healthcheck` | Verify OpenAI API reachability and model availability | `--base-url` (default `https://api.openai.com/v1`) | 0 ok, 1 missing key / 401 / 429 / unreachable |
 | `list-personas` | Preview personas matching a filter | `--filter`, `--limit` (default 20), `--seed` | 0 ok, 2 no match |
-| `interview` | Run a batch interview | `--product` (required), `--questions` (required, multiple), `--filter`, `--n` (default 10), `--seed`, `--concurrency` (default 2, max 3), `--persona-fields`, `--follow-up`, `--single-turn`, `--dry-run`, `--output` | 0 ok, 1 server error, 2 sample shortfall, 3 partial failure |
+| `interview` | Run a batch interview | `--product` (required), `--questions` (required, multiple), `--filter`, `--n` (default 10), `--seed`, `--concurrency` (default 4, 1-10), `--persona-fields`, `--follow-up`, `--single-turn`, `--dry-run`, `--output`, `--report/--no-report` (default `--report`, auto-generates the markdown report after the interview; `--dry-run` writes neither JSON nor report) | 0 ok, 1 server error, 2 sample shortfall, 3 partial failure |
 | `report` | Generate a markdown report from an interview JSON | positional path to JSON, `--top-n` (default 10), `--include-drift`, `--output-dir` | 0 ok, 1 input error, 2 no valid records |
 
 Exit code 130 is reserved for `SIGINT` (Ctrl-C). The first interrupt saves a partial JSON to `outputs/`. The second interrupt terminates immediately.

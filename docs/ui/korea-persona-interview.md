@@ -217,10 +217,14 @@ ANSI 컬러 적용 시 출력은 아래와 같다. `[OK]`는 녹색, 모델 ID�
   완료: 28명, 거부: 1명, 실패: 1명, 드리프트: 0명
   평균 지연: 1.9s/persona, 총 소요 시간: 1분 4초
   결과 저장: outputs/interview_korea-persona-interview_20260502_143000.json
+[INFO] 리포트 자동 생성 시작(--no-report로 끌 수 있음, 정성 인사이트 LLM 호출 1회 추가)
+[OK] 리포트 저장: outputs/report_korea-persona-interview_20260502_143000.md
 
 다음 단계: python main.py report outputs/interview_korea-persona-interview_20260502_143000.json
 종료 코드: 0
 ```
+
+기본 동작은 `--report`(인터뷰 종료 직후 같은 JSON으로 마크다운 리포트까지 자동 생성)다. `--no-report`로 끄면 JSON만 저장하며 외부 분석 파이프라인(Claude Code, Cursor, Codex 등)이 마크다운 없이 record 배열만 받아 후처리할 때 사용한다. `--dry-run`은 본 옵션과 무관하게 JSON/리포트 모두 만들지 않는다.
 
 #### 2.3.2. 정상 출력(dry-run, 단일 페르소나)
 

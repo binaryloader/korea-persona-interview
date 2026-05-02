@@ -241,7 +241,7 @@ CLI는 4개 서브커맨드를 제공한다. 매크로 명령(예: `run-all`)은
 | --- | --- | --- | --- |
 | `healthcheck` | OpenAI API 응답과 모델 가용성 확인 | `--base-url`(기본 `https://api.openai.com/v1`) | 0 정상, 1 키 미설정/401/서버 도달 불가 |
 | `list-personas` | 필터 결과 미리 보기 | `--filter`, `--limit`(기본 20), `--seed` | 0 정상, 2 결과 0건 |
-| `interview` | 배치 인터뷰 실행 | `--product`(필수), `--questions`(다중, 필수), `--filter`, `--n`(기본 10), `--seed`, `--concurrency`(기본 2), `--persona-fields`, `--follow-up`(다중), `--single-turn`, `--dry-run`, `--output`(기본 `outputs/`) | 0 정상, 1 서버 오류, 2 표본 부족, 3 부분 실패(완료된 record 50% 미만) |
+| `interview` | 배치 인터뷰 실행 | `--product`(필수), `--questions`(다중, 필수), `--filter`, `--n`(기본 10), `--seed`, `--concurrency`(기본 4, 1-10), `--persona-fields`, `--follow-up`(다중), `--single-turn`, `--dry-run`, `--output`(기본 `outputs/`), `--report/--no-report`(기본 `--report`. 인터뷰 종료 후 마크다운 리포트 자동 생성. `--no-report`는 외부 분석 도구로 JSON만 받을 때 사용. `--dry-run`은 본 옵션과 무관하게 JSON/리포트 모두 미생성) | 0 정상, 1 서버 오류, 2 표본 부족, 3 부분 실패(완료된 record 50% 미만) |
 | `report` | 결과 JSON에서 리포트 생성 | 인자 1개(JSON 파일 경로), `--top-n`(기본 10), `--include-drift`(드리프트 record 포함), `--output-dir`(기본 입력 JSON과 같은 디렉토리) | 0 정상, 1 입력 파일 오류, 2 정상 record 0건 |
 
 ### 5.10. 사용자 상호작용 게이트(개발 단계)

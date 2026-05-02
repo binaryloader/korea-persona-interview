@@ -543,6 +543,17 @@ def _render_persona_table(personas: list, console: Console) -> None:
     show_default=True,
     help="결과 JSON 저장 디렉토리.",
 )
+@click.option(
+    "--report/--no-report",
+    "auto_report",
+    default=True,
+    show_default=True,
+    help=(
+        "인터뷰 종료 후 마크다운 리포트를 자동 생성합니다. "
+        "기본은 자동 생성이며, --no-report로 끄면 JSON만 저장합니다(외부 도구로 분석할 때). "
+        "--dry-run에서는 본 옵션과 무관하게 리포트와 JSON을 모두 만들지 않습니다."
+    ),
+)
 @click.pass_context
 def interview(
     ctx: click.Context,
@@ -557,6 +568,7 @@ def interview(
     single_turn: bool,
     dry_run: bool,
     output_dir: Path,
+    auto_report: bool,
 ) -> None:
     """배치 인터뷰 진입점(PRD §5.9, UI §2.3)."""
 
@@ -579,6 +591,7 @@ def interview(
         "batch": {
             "concurrency": concurrency,
             "persona_fields": list(fields_tuple),
+            "single_turn": bool(single_turn),
         },
         "output": {"output_dir": str(output_dir)},
     }
@@ -596,11 +609,10 @@ def interview(
         sys.exit(1)
 
     if single_turn:
-        # v1에서 single-turn은 멀티턴과 동일 흐름이지만 자동 follow-up을 막는
-        # 경량 모드로 처리한다. 본 CLI는 옵션 자체만 받고 InterviewSession은
-        # follow-up 트리거를 short_answer_threshold 0으로 무력화한다.
-        # ConfigError로 차단하지 않고 안내만 남긴다.
-        console.warn("--single-turn은 v1에서 멀티턴과 동일 흐름이며 자동 follow-up이 비활성화됩니다.")
+        console.info(
+            "--single-turn 모드: 모든 질문을 한 번의 chat 호출에 묶어 처리합니다. "
+            "자동 follow-up은 비활성화됩니다."
+        )
 
     questions_list = list(questions)
     follow_ups_list = list(follow_ups)
@@ -742,6 +754,35 @@ def interview(
             console.echo(f"  python main.py report {output_path}")
         click.echo("종료 코드: 3")
         sys.exit(3)
+
+    # 인터뷰 정상 종료(부분 실패 아님)는 기본적으로 리포트를 자동 생성한다.
+    # ``--no-report``는 외부 분석 파이프라인이 JSON만 받아 처리할 때 사용한다.
+    # ``--dry-run``은 위쪽 분기에서 이미 sys.exit(0)으로 빠져나갔으므로 본 분기에
+    # 도달하지 않는다.
+    if auto_report and output_path is not None:
+        console.info(
+            "리포트 자동 생성 시작(--no-report로 끌 수 있음, 정성 인사이트 LLM 호출 1회 추가)"
+        )
+        report_options = ReportOptions(
+            top_n=10,
+            include_drift=False,
+            output_dir=None,
+        )
+        try:
+            report_path = asyncio.run(
+                _run_report_async(output_path, report_options, config)
+            )
+        except (ServerNotReachableError, ConfigError, EmptyValidRecordsError) as exc:
+            console.warn(
+                f"리포트 자동 생성 실패: {exc}. JSON은 저장되었으니 "
+                f"`python main.py report {output_path}`로 다시 시도할 수 있습니다"
+            )
+        except FileNotFoundError as exc:
+            console.warn(
+                f"리포트 자동 생성 실패(입력 파일 누락): {exc}"
+            )
+        else:
+            console.ok(f"리포트 저장: {report_path}")
 
     if output_path:
         console.echo(f"다음 단계: python main.py report {output_path}")
