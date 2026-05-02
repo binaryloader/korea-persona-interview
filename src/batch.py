@@ -82,13 +82,6 @@ _DOMAIN_EXC_TYPE_MAP: dict = {
 logger = logging.getLogger(__name__)
 
 
-# 부분 실패 판정용 fallback 임계값. completed/drift/refused 비율이 본 값
-# 미만이면 CLI가 exit code 3으로 종료하고, 결과 JSON의 meta에
-# ``partial: true``가 박힌다. 단일 정본은 ``BatchConfig.partial_failure_threshold``
-# 이며, 본 상수는 yaml/CLI override를 거치지 않는 호출 경로에만 적용된다.
-_PARTIAL_SUCCESS_RATIO = 0.5
-
-
 @dataclass(frozen=True)
 class BatchSummary:
     """tqdm postfix와 종료 라인이 사용하는 경량 집계 dataclass.

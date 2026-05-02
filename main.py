@@ -1,16 +1,16 @@
-"""click-based CLI entry point.
+"""click 기반 CLI 엔트리 포인트.
 
-Exposes four subcommands (``healthcheck``, ``list-personas``, ``interview``,
-``report``) and maps them to exit codes:
+네 개의 서브커맨드(``healthcheck``, ``list-personas``, ``interview``,
+``report``)를 노출하고 종료 코드와 매핑한다.
 
-- 0: success
-- 1: server, input, or config error
-- 2: filter matched zero records, or no valid records to summarize
-- 3: partial failure (completed ratio below the configured threshold)
-- 130: user interrupt (SIGINT)
+- 0: 성공
+- 1: 서버, 입력, 설정 오류
+- 2: 필터 결과 0건이거나 요약할 유효 레코드가 없음
+- 3: 부분 실패(완료 비율이 설정된 임계값 이하)
+- 130: 사용자 인터럽트(SIGINT)
 
-Each command builds its own asyncio event loop with ``asyncio.run`` so the
-process exits cleanly when ``click`` returns.
+각 커맨드는 ``asyncio.run``으로 자체 asyncio 이벤트 루프를 만든다. ``click``
+이 반환되면 프로세스도 깔끔하게 종료된다.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ from src.cli_views import render_persona_table as _render_persona_table
 from src.config import AppConfig, load_config
 from src.console import MESSAGES, Console, resolve_color as _resolve_color
 from src.dry_run import run_dry_run as _run_dry_run
-from src.llm_backend import LLMBackend, build_cli_backend
+from src.llm_backend import build_cli_backend
 from src.load_personas import load_and_sample, parse_filter
 from src.logging_setup import bind_request_id, configure_logging
 from src.models import (

@@ -51,13 +51,6 @@ from .models import (
 logger = logging.getLogger(__name__)
 
 
-# 자동 follow-up trigger가 발동했을 때 모델에 추가로 보내는 기본 user 발화.
-# 단일 정본은 ``InterviewConfig.auto_follow_up_text``이며, ``InterviewSession``은
-# 항상 config에서 읽는다. 본 모듈 레벨 상수는 backward import 호환을 위해
-# 그대로 둔다.
-AUTO_FOLLOW_UP_PROMPT = "조금만 더 자세히 말씀해 주실 수 있을까요?"
-
-
 # 단일턴 응답 포맷 분리용 정규식. 라인 시작에 숫자와 ``.`` 또는 ``)``가 오는
 # 패턴(예: ``1.``, ``2)``, ``3.``)을 잡고 다음 번호 마커 또는 입력 끝까지를
 # 본문으로 읽는다. MULTILINE + DOTALL 플래그를 함께 사용해 라인 시작 기준으로만

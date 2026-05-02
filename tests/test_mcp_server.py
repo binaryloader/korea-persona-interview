@@ -475,7 +475,7 @@ def test_build_backend_세션있음은_McpSamplingBackend(
     monkeypatch.setattr(
         _mcp_server, "_current_sampling_session", lambda: fake_session
     )
-    backend = _build_backend(_make_app_config())
+    backend = _build_backend()
     assert isinstance(backend, McpSamplingBackend)
 
 
@@ -484,48 +484,5 @@ def test_build_backend_세션없음은_ConfigError(monkeypatch: pytest.MonkeyPat
 
     monkeypatch.setattr(_mcp_server, "_current_sampling_session", lambda: None)
     with pytest.raises(ConfigError) as exc_info:
-        _build_backend(_make_app_config())
+        _build_backend()
     assert "CLI" in str(exc_info.value) or "main.py" in str(exc_info.value)
-
-
-def _make_app_config():
-    from src.config import (
-        AppConfig,
-        BatchConfig,
-        DatasetConfig,
-        InterviewConfig,
-        LlmConfig,
-        ReportConfig,
-    )
-
-    return AppConfig(
-        llm=LlmConfig(
-            base_url="https://api.openai.com/v1",
-            model="test-model",
-            max_tokens=100,
-            temperature=0.5,
-            timeout=5.0,
-            context_budget=32000,
-            retry_max_attempts=3,
-            retry_backoff_seconds=(0.0,),
-            api_key="test-key",
-        ),
-        batch=BatchConfig(concurrency=1, persona_fields=("summary",)),
-        dataset=DatasetConfig(
-            name="x",
-            split="train",
-            field_map={},
-            gender_aliases={},
-            province_aliases={},
-        ),
-        interview=InterviewConfig(
-            short_answer_threshold=20,
-            english_ratio_threshold=0.30,
-            ambiguous_keywords=(),
-            refusal_keywords=(),
-        ),
-        report=ReportConfig(),
-        output_dir=Path("/tmp"),
-        log_level="INFO",
-        no_color=True,
-    )

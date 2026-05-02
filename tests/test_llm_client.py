@@ -21,7 +21,6 @@ from src.llm_client import LLMClient
 from src.models import (
     ChatResponse,
     ConfigError,
-    EmptyResponseError,
     RetryExhaustedError,
     ServerNotReachableError,
     TokenUsage,

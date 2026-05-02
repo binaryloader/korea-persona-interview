@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import statistics
 from collections import Counter
 from dataclasses import dataclass, field
@@ -43,7 +42,7 @@ from .models import (
     StructuredSummary,
 )
 
-if TYPE_CHECKING:  # pragma: no cover - type-only import
+if TYPE_CHECKING:  # pragma: no cover - 타입 체크 전용 import
     from .llm_backend import LLMBackend
 
 

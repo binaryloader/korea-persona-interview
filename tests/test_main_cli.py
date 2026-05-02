@@ -14,7 +14,6 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-import main as main_module
 from main import MESSAGES, cli
 from src.models import SCHEMA_VERSION
 

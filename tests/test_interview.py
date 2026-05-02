@@ -20,7 +20,6 @@ import json
 import pytest
 
 from src.interview import (
-    AUTO_FOLLOW_UP_PROMPT,
     InterviewSession,
     _build_summary_messages,
     _parse_single_turn_response,
@@ -38,7 +37,6 @@ from src.interview import (
 )
 from src.llm_client import LLMClient
 from src.models import (
-    Flags,
     InterviewRecord,
     MessageEntry,
     PersonaMeta,

@@ -243,10 +243,6 @@ def _setup_logging_for_run(config: AppConfig) -> None:
     bind_request_id(uuid.uuid4().hex)
 
 
-def _load_config_with_overrides(overrides: Optional[dict]) -> AppConfig:
-    return load_config(yaml_path=None, cli_overrides=overrides)
-
-
 def _current_sampling_session() -> Optional[Any]:
     """현재 처리 중인 도구 호출의 활성 MCP ``ServerSession``을 돌려준다.
 
@@ -265,7 +261,7 @@ def _current_sampling_session() -> Optional[Any]:
     return getattr(ctx, "session", None)
 
 
-def _build_backend(config: AppConfig) -> McpSamplingBackend:
+def _build_backend() -> McpSamplingBackend:
     """현재 처리 중인 도구 호출을 위한 sampling 백엔드를 구성한다.
 
     MCP 세션이 없을 때(예: 사용자가 MCP 호스트 밖에서 모듈을 직접 실행)는
@@ -293,14 +289,14 @@ async def _handle_healthcheck(arguments: dict) -> dict:
     """sampling capability로 호스트 LLM 가용성을 확인한다."""
 
     try:
-        config = _load_config_with_overrides(None)
+        config = load_config(yaml_path=None, cli_overrides=None)
     except ConfigError as exc:
         return _error_payload("config_error", str(exc), exit_code=1)
 
     _setup_logging_for_run(config)
 
     try:
-        backend = _build_backend(config)
+        backend = _build_backend()
     except ConfigError as exc:
         return _error_payload("config_error", str(exc), exit_code=1)
 
@@ -337,7 +333,7 @@ async def _handle_list_personas(arguments: dict) -> dict:
         )
 
     try:
-        config = _load_config_with_overrides(None)
+        config = load_config(yaml_path=None, cli_overrides=None)
     except ConfigError as exc:
         return _error_payload("config_error", str(exc), exit_code=1)
 
@@ -439,7 +435,7 @@ async def _handle_interview(arguments: dict) -> dict:
     }
 
     try:
-        config = _load_config_with_overrides(overrides)
+        config = load_config(yaml_path=None, cli_overrides=overrides)
     except ConfigError as exc:
         return _error_payload("config_error", str(exc), exit_code=1)
 
@@ -477,7 +473,7 @@ async def _handle_interview(arguments: dict) -> dict:
         return _error_payload("config_error", str(exc), exit_code=1)
 
     try:
-        backend = _build_backend(config)
+        backend = _build_backend()
     except ConfigError as exc:
         return _error_payload("config_error", str(exc), exit_code=1)
 
@@ -562,7 +558,7 @@ async def _handle_report(arguments: dict) -> dict:
         )
 
     try:
-        config = _load_config_with_overrides(None)
+        config = load_config(yaml_path=None, cli_overrides=None)
     except ConfigError as exc:
         return _error_payload("config_error", str(exc), exit_code=1)
 
@@ -575,7 +571,7 @@ async def _handle_report(arguments: dict) -> dict:
     )
 
     try:
-        backend = _build_backend(config)
+        backend = _build_backend()
     except ConfigError as exc:
         return _error_payload("config_error", str(exc), exit_code=1)
 

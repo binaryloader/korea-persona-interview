@@ -13,16 +13,12 @@ click 진입점이 라우팅 책임에 집중하고 dry-run 렌더 로직은 격
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
 
 from .config import AppConfig
 from .console import Console
 from .interview import InterviewSession
 from .llm_backend import build_cli_backend
 from .models import PersonaMeta
-
-if TYPE_CHECKING:  # pragma: no cover - 타입 체크 전용 import
-    pass
 
 
 async def run_dry_run(

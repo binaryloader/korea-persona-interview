@@ -17,7 +17,6 @@ from pathlib import Path
 import pytest
 
 from src.batch import (
-    BatchSummary,
     _aggregate_usage,
     _build_failed_record,
     _count_failure_reasons,
