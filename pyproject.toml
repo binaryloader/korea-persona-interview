@@ -5,7 +5,7 @@
 # `dependencies`만 정본으로 둘지 결정)로 미룬다.
 [project]
 name = "korea-persona-interview"
-version = "0.1.0"
+version = "1.0.0"
 description = "Synthetic Korean persona interview CLI on top of OpenAI Chat Completions API and the NVIDIA Nemotron-Personas-Korea dataset (CC BY 4.0)."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"

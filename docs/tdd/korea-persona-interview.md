@@ -646,33 +646,23 @@ PRD §7.2에서 v1 Should로 상향된 두 가드레일이다.
 - BatchRunner는 `asyncio.Semaphore(N)`을 만들어 페르소나 1명당 task 1개를 만든다. `asyncio.gather(*tasks, return_exceptions=True)`로 한 task 예외가 다른 task를 죽이지 않게 한다
 - 진행률은 tqdm.asyncio의 `tqdm.gather` 또는 `as_completed`와 수동 tqdm 업데이트 패턴 중 후자를 채택한다. 후자는 완료 순서대로 진행률을 업데이트할 수 있어 사용자 체감 응답성이 좋다
 - SIGINT 처리는 메인 루프에서 `loop.add_signal_handler(SIGINT, ...)`를 등록하는 방식이다. 핸들러는 `cancel_event: asyncio.Event`를 set한다. 각 task는 인터뷰 1회가 끝날 때마다 `cancel_event.is_set()`을 확인 후 종료한다. 진행 분량은 `outputs/interview_{slug}_{ts}_partial.json`으로 저장한다
-- 동시성 한계는 1-10 범위만 허용하며 그 외는 `ConfigError`로 차단한다. PRD §6.1에 따른 비용/rate limit 보호 목적이다(v1.x OpenAI 백엔드 기준. v1.0의 1-3 상한은 로컬 MLX 메모리 가드라 무관)
+- 동시성 한계는 1-10 범위만 허용하며 그 외는 `ConfigError`로 차단한다. PRD §6.1에 따른 rate limit 보호 목적이다(v1.x OpenAI 백엔드 기준. v1.0의 1-3 상한은 로컬 MLX 메모리 가드라 무관)
 
 #### 9.1. OpenAI prompt caching 적합 구조
 
-OpenAI는 chat completions 입력 prefix가 1024 토큰 이상이고 동일 prefix가 반복 호출되면 자동으로 prompt cache를 적용해 입력 토큰 단가의 50%를 환급 청구한다. 본 도구는 batch 인터뷰에서 한 페르소나당 멀티턴 호출이 N+1회(질문 N + 구조화 요약 1) 발생하므로 시스템 프롬프트 prefix가 캐시 적합 구조여야 비용 절감 효과를 본다.
+OpenAI는 chat completions 입력 prefix가 1024 토큰 이상이고 동일 prefix가 반복 호출되면 자동으로 prompt cache를 적용한다. 본 도구는 batch 인터뷰에서 한 페르소나당 멀티턴 호출이 N+1회(질문 N + 구조화 요약 1) 발생하므로 시스템 프롬프트 prefix가 캐시 적합 구조여야 토큰 단가 환급 효과를 본다.
 
 `build_system_prompt`는 정적 prefix(인트로 + `[말투와 1인칭 일관성 지침]` + `[답변 내용 지침]` + `[출력 형식]`)를 앞쪽에, 가변 부분(`[페르소나 정보]` JSON + `[인터뷰 주제]` product 본문)을 뒤쪽에 배치한다. prefix 길이가 1024 토큰을 넘는지는 `tests/test_interview.py`의 회귀 테스트에서 검증한다.
 
 응답의 `usage.prompt_tokens_details.cached_tokens`는 `MlxLLMClient._extract_usage`가 `TokenUsage.cached_tokens`로 매핑한다. 배치 종료 시 `_aggregate_usage`가 모든 호출의 `cached_tokens`를 합산해 `BatchResultEnvelope.usage.cached_tokens`로 노출한다. 본 값이 prompt_tokens의 큰 비율을 차지할수록 prompt caching이 정상 동작 중이라는 신호다.
 
-#### 9.1.1. 토큰 사용량과 비용 추정
+#### 9.1.1. 토큰 사용량 추적
 
 OpenAI 응답의 `usage` 필드는 `MlxLLMClient._extract_usage`가 `TokenUsage(prompt_tokens, completion_tokens, total_tokens, cached_tokens)`로 매핑한다. `cached_tokens`는 `usage.prompt_tokens_details.cached_tokens`에서 추출한다.
 
 `run_batch`는 모든 record의 `raw_responses[*].usage`를 `_aggregate_usage`로 합산해 `BatchResultEnvelope.usage`로 노출한다. 구조화 요약과 정성 인사이트 단계의 호출은 별도 흐름이라 본 합산에 포함되지 않는다. v1.x 한도이며 v1.1에서 record 단위로 추가 누적을 검토한다.
 
-비용 추정은 `src/_pricing.py`의 `PRICING_TABLE`에 박힌 모델별 단가로 계산한다. 단가 단위는 1M 토큰당 USD이며 2026-05 기준 OpenAI 공식 가격을 출처로 한다. 변경 시점에 따라 실제 청구와 미세 차이가 날 수 있어 호출자에서 "추정" 표기를 명시한다. 알려지지 않은 모델 ID는 `_FALLBACK_PRICING`으로 보수적으로 표시한다. fallback 단가는 gpt-4o-mini와 동일하게 둔다. 단가 테이블 갱신은 모델 추가/변경 시 본 파일 한 곳만 손보면 된다.
-
-비용 산식은 아래와 같다.
-
-```
-cost_usd = (prompt_tokens - cached_tokens) * input_price / 1M
-         + cached_tokens * cached_input_price / 1M
-         + completion_tokens * output_price / 1M
-```
-
-`cached_input_price`는 OpenAI prompt caching 정책에 따라 `input_price`의 50%다. CLI는 인터뷰 종료 시 콘솔에 `토큰 사용량: prompt N / completion N / cached N / 비용 추정: $X.XXXX(추정)` 한 줄을 출력하고, 결과 JSON의 `meta_extra.usage`/`meta_extra.estimated_cost_usd`에 같은 값을 박는다. 리포트 마크다운 헤더 표에도 토큰/비용 두 행이 노출된다.
+CLI는 인터뷰 종료 시 콘솔에 `토큰 사용량: prompt N / completion N / cached N` 한 줄을 출력하고 결과 JSON의 `meta_extra.usage`에 같은 값을 박는다. 리포트 마크다운 헤더 표에도 토큰 사용량 한 행이 노출된다. v1.0.0 시점에 USD 비용 추정은 제거됐다(단가 표 갱신 부담과 추정-실제 청구 차이가 도구 신뢰성을 해친다는 판단). 사용자가 토큰 카운트와 자신의 provider 청구서를 직접 대조하는 흐름으로 이관한다.
 
 #### 9.2. 페르소나 풀 in-memory 캐시
 
@@ -1046,8 +1036,8 @@ T1 스캐폴드
 
 ### 3. 컨텍스트 윈도우와 토큰 누적
 
-- 위험은 멀티턴과 긴 페르소나 토글 시 누적 토큰이 늘어 비용과 지연이 증가하는 것이다. OpenAI gpt-4o-mini의 컨텍스트는 128K로 사실상 여유가 크지만 토큰 누적은 곧 비용이라 보수적으로 관리해야 한다
-- 완화는 TDD §7의 truncation 정책과 `llm.context_budget` 설정값으로 8000 기본값을 두는 것이다. 본 정책은 백엔드 무관하게 적용한다(ADR-002로 백엔드를 OpenAI로 전환했어도 토큰 누적 통제는 그대로 유지)
+- 위험은 멀티턴과 긴 페르소나 토글 시 누적 토큰이 늘어 사용자 provider 청구서가 의도와 달리 커지고 응답 지연도 증가한다는 것이다. OpenAI gpt-4o-mini의 컨텍스트는 128K로 사실상 여유가 크지만 토큰 누적은 곧 청구이므로 보수적으로 관리해야 한다
+- 완화는 TDD §7의 truncation 정책과 `llm.context_budget` 설정값으로 32000 기본값을 두는 것이다. 본 정책은 백엔드 무관하게 적용한다(ADR-003 multi-provider로 확장한 뒤에도 토큰 누적 통제는 그대로 유지)
 
 ### 4. 페르소나 깨짐 휴리스틱의 false positive
 

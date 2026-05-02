@@ -36,7 +36,7 @@ Edit `.env` and set `OPENAI_API_KEY=sk-...`. The project root `.env` file is aut
 pytest tests/ -v
 ```
 
-The current regression covers 470 tests across rounds A, B, and C (config, filter DSL, persona loader, LLM client, interview session, persona drift, batch runner, report quant, MCP dispatch, error messages, logging, and CLI integration). All 470 tests must pass before opening a pull request.
+The current regression covers 509 tests across rounds A, B, and C (config, filter DSL, persona loader, LLM client, interview session, persona drift, batch runner, report quant, MCP dispatch, error messages, logging, and CLI integration). All 509 tests must pass before opening a pull request.
 
 Manual smoke tests that exercise a real OpenAI API call live under `tests/manual/` and are excluded from the default run.
 
@@ -46,7 +46,7 @@ The full directory tree is documented in the README under `Project Structure`. Q
 
 - `main.py` - click CLI entry point
 - `src/` - application code (config loader, LLM client, persona loader, interview engine, batch runner, report, MCP server)
-- `tests/` - 470-test regression
+- `tests/` - 509-test regression
 - `docs/` - PRD, TDD, ADR, UI, tasks, v1.1 backlog
 - `prompts/system_prompt.txt` - editable system prompt template
 - `config.yaml` - annotated default config
@@ -68,7 +68,7 @@ For substantive design changes, read [docs/INDEX.md](docs/INDEX.md) first. It ca
 
 ## Branch strategy
 
-- `main` is the release branch. Tagged releases (`v0.1.0`, ...) live here
+- `main` is the release branch. Tagged releases (`v1.0.0`, ...) live here
 - Feature branches use Conventional Commits prefixes (`feat/`, `fix/`, `chore/`, `docs/`, `refactor/`, `test/`)
 - Open pull requests against `main`. The repository does not currently use a `develop` branch, so feature work targets `main` directly until that changes
 - Delete the feature branch after the pull request is merged
@@ -77,7 +77,7 @@ For substantive design changes, read [docs/INDEX.md](docs/INDEX.md) first. It ca
 
 Before opening a pull request, run through the list below.
 
-- All 470 regression tests pass (`pytest tests/ -v`)
+- All 509 regression tests pass (`pytest tests/ -v`)
 - Lint and format are not pinned in v1.x (see `Lint` note below). Editor-side `ruff` or `black` is fine, but do not commit lint config files
 - Documentation is updated for any user-visible change
   - User-facing CLI or output change: update README and the relevant `docs/prd/` or `docs/tdd/` section

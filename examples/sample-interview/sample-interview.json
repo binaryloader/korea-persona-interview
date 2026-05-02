@@ -1672,7 +1672,6 @@
       "completion_tokens": 3780,
       "total_tokens": 52545,
       "cached_tokens": 26240
-    },
-    "estimated_cost_usd": 0.007615
+    }
   }
 }

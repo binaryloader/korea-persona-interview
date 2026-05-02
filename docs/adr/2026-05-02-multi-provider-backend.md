@@ -27,7 +27,7 @@ CLI와 MCP의 진입점을 분리하고 각각의 추론 경로를 단일 정책
 
 - 코드 단순화: CLI는 `build_cli_backend(config.llm)`만 부르고 MCP는 `McpSamplingBackend(session)`만 생성한다. `select_backend` / `normalize_backend_choice` 정책 함수는 제거되었다
 - 진입점별 의미가 1:1로 고정되어 사용자/AI 에이전트가 어떤 추론 경로가 활성화될지 추적하기 쉬워진다
-- 비용 추정: OpenAI는 cached_tokens 50% 할인을 반영한다. Anthropic은 cache_read_input_tokens(약 0.1x input) 할인을 반영한다. MCP sampling은 0이다(usage 미반환). `src/_pricing.py`에 Claude 단가가 추가되었다
+- 토큰 사용량 추적: OpenAI는 `cached_tokens`, Anthropic은 `cache_read_input_tokens`를 모두 `TokenUsage.cached_tokens`로 정규화해 도구 전반이 같은 인터페이스로 합산한다. MCP sampling은 usage 미반환이라 0으로 들어간다. v1.0.0 시점에 USD 비용 추정은 제거됐다(별도 문서 §3.5 참고)
 - breaking change: `llm.backend` 옵션이 제거되었다. 기존 yaml 파일은 그대로 유효하지만 필드는 무시되며 새 사용자는 `llm.provider`로 갈아탄다
 
 ## 4. 대안

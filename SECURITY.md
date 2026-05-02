@@ -6,10 +6,10 @@ Only the latest minor release line receives security fixes. The current supporte
 
 | Version | Supported |
 | --- | --- |
-| 0.1.x | Yes |
-| < 0.1.0 | No (no prior public release) |
+| 1.0.x | Yes |
+| < 1.0.0 | No (no prior public release) |
 
-When v1.x ships, only v1.x will be supported and v0.1.x will move to end-of-life.
+When v1.1 ships, the supported line will move to v1.1.x and v1.0.x will go into a 30-day EOL grace window for security-only fixes.
 
 ## Reporting a vulnerability
 

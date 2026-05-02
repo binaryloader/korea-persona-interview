@@ -16,8 +16,8 @@ The tool ships four CLI subcommands (`healthcheck`, `list-personas`, `interview`
 - `--json` root mode that emits a single JSON document on stdout for shell scripts and external agents
 - Single-turn mode (`--single-turn`) that bundles every question into one chat call to cut tokens at scale
 - Async batch runner with concurrency 1-10 (default 4), tqdm progress, SIGINT partial save, and exit-code 3 partial-failure detection
-- Token usage and USD cost estimate printed at the end of every run, also written into the result JSON and report header. Pricing covers OpenAI gpt-4o-mini/gpt-4o and Anthropic claude-haiku/sonnet/opus
-- Prompt-caching-friendly system prompt structure. OpenAI cached input tokens and Anthropic `cache_read_input_tokens` are tracked separately and discounted in the cost estimate
+- Token usage (prompt / completion / cached) printed at the end of every run, also written into the result JSON and report header
+- Prompt-caching-friendly system prompt structure. OpenAI cached input tokens and Anthropic `cache_read_input_tokens` are tracked separately
 - Per-process persona-pool cache so `list-personas` -> `interview` -> `interview --dry-run` on the same filter/seed reuses the sampled list
 - External system-prompt template (`prompts/system_prompt.txt`) for domain tone customization without code changes
 - Externalized heuristic thresholds (English ratio, ambiguous keywords, refusal keywords, follow-up text, cohort masking, partial failure ratio) in `config.yaml`
@@ -126,7 +126,7 @@ The `interview` command auto-generates the markdown report after the JSON is sav
 
 ## Usage Examples
 
-The five scenarios below cover the most common research goals. Each scenario lists the commands, the expected outcome, and a rough cost so you can plan the run.
+The five scenarios below cover the most common research goals. Each scenario lists the commands and the expected outcome.
 
 ### Scenario A: validate a product idea
 
@@ -140,8 +140,6 @@ python main.py interview --product "1인 가구용 반찬 정기배송, 월 39,9
 
 Expected outcome: a markdown report with intent share (positive/neutral/negative), willingness-to-pay median plus IQR, top rejection reasons, and 5-10 actionable insights for the next round.
 
-Cost: about $0.05 - $0.20 on `gpt-4o-mini` (10 personas, 3 questions, structured summary, qualitative insight).
-
 ### Scenario B: A/B test product copy
 
 You want to compare two product descriptions on the same persona sample. Reuse the same `--seed` and `--filter` so only the `--product` text changes.
@@ -152,8 +150,6 @@ python main.py interview --product "주말에 받는 1주일치 한식 반찬 �
 ```
 
 Expected outcome: two reports with the same persona sample but different copy. Compare the intent share and the rejection reasons to see which message lands better. The seed pin removes persona-sampling noise so the delta you see is mostly about copy.
-
-Cost: about $0.10 - $0.40 total on `gpt-4o-mini` (two 10-persona batches).
 
 ### Scenario C: cohort comparison
 
@@ -166,8 +162,6 @@ python main.py interview --product "직장인 1인 가구를 위한 건강 반�
 
 Expected outcome: two reports per cohort. The cohort intent table inside each report further splits by region and gender, so you can see whether the 20s/30s gap holds across all regions or comes from one segment.
 
-Cost: about $0.15 - $0.60 total on `gpt-4o-mini` (two 15-persona batches).
-
 ### Scenario D: drive the tool from an external agent (Claude Code MCP)
 
 You want Claude Code to run an interview from a chat prompt instead of a shell. Register the MCP server as shown in [Integration with External Agents](#integration-with-external-agents) and ask the agent in plain Korean.
@@ -176,21 +170,17 @@ You want Claude Code to run an interview from a chat prompt instead of a shell. 
 1인 가구 대상 반찬 정기배송 (월 39,900원)을 25-39세 서울 30명에게 인터뷰 돌리고 리포트까지 만들어 줘. seed는 42로 고정.
 ```
 
-Expected outcome: the agent calls the `interview` tool, then `report`, and returns the path to the generated markdown plus a summary that includes intent share, token usage, and the USD cost estimate.
+Expected outcome: the agent calls the `interview` tool, then `report`, and returns the path to the generated markdown plus a summary that includes intent share and token usage.
 
-Cost: about $0.15 - $0.60 on `gpt-4o-mini` (30 personas, 3 questions).
+### Scenario E: large-scale screen with single-turn mode
 
-### Scenario E: large-scale, low-cost screen with single-turn mode
-
-You want to screen 100 personas as cheaply as possible before drilling deeper. Single-turn mode bundles every question into one chat call, which roughly halves the prompt tokens versus multi-turn.
+You want to screen 100 personas in a single sweep before drilling deeper. Single-turn mode bundles every question into one chat call, which roughly halves the prompt tokens versus multi-turn.
 
 ```bash
 python main.py interview --product "1인 가구용 반찬 정기배송, 월 39,900원" --filter "age:20-49" --n 100 --seed 42 --concurrency 8 --single-turn --questions "이 서비스 쓸 의향?" "월 얼마면 적당?" "거절 사유?"
 ```
 
 Expected outcome: a single 100-persona JSON plus markdown report. The auto follow-up is disabled in single-turn mode, so plan your questions to be self-contained.
-
-Cost: about $0.30 - $1.00 on `gpt-4o-mini` (100 personas, 3 questions, single-turn). Multi-turn at the same size would land closer to $1.00 - $2.00.
 
 ## CLI Reference
 
@@ -295,7 +285,6 @@ Interview results are written to `outputs/interview_{slug}_{YYYYMMDD_HHMMSS}.jso
 | `model` | string | Resolved model id (e.g. `gpt-4o-mini`) |
 | `seed` | int | Sampling seed |
 | `meta_extra.usage` | object | Aggregated `prompt_tokens`, `completion_tokens`, `total_tokens`, `cached_tokens` |
-| `meta_extra.estimated_cost_usd` | number | USD cost estimate (see Cost note below) |
 | `records[].status` | enum | `completed` / `refused` / `failed` / `drift` |
 | `records[].structured_summary` | object or null | `intent`, `willingness_to_pay`, `willingness_to_pay_currency`, `rejection_reasons`, `one_line` |
 | `records[].flags` | object | `persona_drift`, `auto_follow_up_used`, `refusal_detected`, `truncated`, `parse_failed` |
@@ -308,7 +297,7 @@ The report subcommand emits `outputs/report_{slug}_{YYYYMMDD_HHMMSS}.md` next to
 
 ```text
 # 가상 인터뷰 리포트: {product}
-| meta table | model, seed, persona counts, dataset, usage, cost |
+| meta table | model, seed, persona counts, dataset, usage |
 
 ## 1. 정량 지표
 ### 1.1. 의향률          # intent share table + bar chart
@@ -351,7 +340,7 @@ Notable yaml keys.
 - `llm.base_url` - LLM endpoint. Default flips to `https://api.anthropic.com/v1` when `provider=anthropic`. Override to `http://localhost:PORT/v1` for local OpenAI-compatible servers
 - `llm.model` - model id sent to the API. Default flips to `claude-haiku-4-5` when `provider=anthropic`, otherwise `gpt-4o-mini`. See "Choosing a model" below for trade-offs
 - `llm.context_budget` - 32000 token budget for multi-turn history (oldest user/assistant pairs are dropped first, system prompt is preserved)
-- `batch.concurrency` - 1-10 allowed (default 4). Anything outside this range is rejected to keep OpenAI rate-limit pressure and cost predictable. The v1.0 cap of 1-3 was a local-MLX memory guard and is lifted now that the backend is OpenAI
+- `batch.concurrency` - 1-10 allowed (default 4). Anything outside this range is rejected to keep OpenAI rate-limit pressure predictable
 - `batch.partial_failure_threshold` - completion ratio under which the batch is flagged partial-failure (default 0.5, higher is stricter)
 - `dataset.field_map`, `dataset.gender_aliases`, `dataset.province_aliases` - column and value aliases. Update the YAML if NVIDIA changes the dataset schema, no code change needed
 - `interview.short_answer_threshold` - 20 character trigger for the auto follow-up
@@ -370,12 +359,12 @@ The full annotated yaml lives in [config.yaml](config.yaml).
 
 ### Choosing a model
 
-`gpt-4o-mini` is the default because it gives the best cost-to-quality ratio for this workload. If you measure persona-drift rates above 5% on your own runs, try the alternatives below by changing `llm.model` in `config.yaml` or by passing `--model` on the command line for a one-off run.
+`gpt-4o-mini` is the default because it gives a strong quality baseline for this workload. If you measure persona-drift rates above 5% on your own runs, try the alternatives below by changing `llm.model` in `config.yaml` or by passing `--model` on the command line for a one-off run.
 
-- `gpt-4o-mini` (OpenAI) - default. About $0.50 - $2.00 per 100-persona batch (5 questions). Good Korean fluency and persona adherence
-- `gpt-4o` (OpenAI) - higher quality, roughly 5-10x the cost. Use only if `gpt-4o-mini` does not meet your drift target
-- `claude-haiku-4-5` (Anthropic) - default model when `--provider anthropic`. Pricing similar to `gpt-4o-mini`, fluent Korean output
-- `claude-sonnet-4-5` / `claude-opus-4-5` (Anthropic) - higher quality at higher cost
+- `gpt-4o-mini` (OpenAI) - default. Good Korean fluency and persona adherence
+- `gpt-4o` (OpenAI) - higher quality. Use only if `gpt-4o-mini` does not meet your drift target
+- `claude-haiku-4-5` (Anthropic) - default model when `--provider anthropic`. Fluent Korean output
+- `claude-sonnet-4-5` / `claude-opus-4-5` (Anthropic) - higher quality
 - Local LLMs via `mlx_lm.server`, `vLLM`, or `llama.cpp` work as long as they expose the OpenAI Chat Completions API surface. Korean fluency depends heavily on the underlying weights; validate persona drift on a small sample first
 
 Persona-drift behavior has been validated end-to-end with `gpt-4o-mini`. Other models may need tuned thresholds (`interview.english_ratio_threshold`, `interview.short_answer_threshold`) for similar quality.
@@ -424,7 +413,6 @@ The MCP server is sampling-only: there is no OpenAI/Anthropic fallback inside th
 
 Trade-offs to keep in mind.
 
-- Cost. Direct API providers (OpenAI, Anthropic) bill per token. Local LLMs are free. MCP sampling shifts the cost to whatever plan the host agent uses. The `estimated_cost_usd` field in the result JSON is always 0 for the MCP sampling path because the sampling protocol does not return token usage to the server
 - Quality. Persona drift is calibrated against `gpt-4o-mini`; other targets may need tuned thresholds. Validate on a small batch first
 - Privacy. The `--product` text and persona metadata are sent to whichever endpoint you configure. Do not put unreleased IP or PII into `--product` (see Limitations)
 - Token tracking. OpenAI and Anthropic responses include token usage and the tool tracks both. Local servers that do not return `usage` and the MCP sampling path both report zero usage
@@ -501,7 +489,7 @@ python main.py --json list-personas --filter "age:25-39,region:서울특별시" 
 
 python main.py --json interview --product "..." --questions "..." --n 10
 # {"ok": true, "output_path": "outputs/interview_*.json", "report_path": "outputs/report_*.md",
-#  "summary": {"requested": 10, "completed": 10, ...}, "usage": {...}, "estimated_cost_usd": 0.012, "model": "gpt-4o-mini"}
+#  "summary": {"requested": 10, "completed": 10, ...}, "usage": {...}, "model": "gpt-4o-mini"}
 
 python main.py --json report outputs/interview_*.json
 # {"ok": true, "output_path": "outputs/report_*.md", "input_path": "outputs/interview_*.json", ...}
@@ -539,11 +527,10 @@ korea-persona-interview/
 │   ├── logging_setup.py       # JSON Lines logger, request_id, masking
 │   ├── mcp_server.py          # stdio MCP server exposing the four tools
 │   ├── models.py              # Domain dataclasses and exceptions
-│   ├── report.py              # Quantitative aggregation, qualitative insight via LLM
-│   └── _pricing.py            # Per-model USD cost table (estimate)
+│   └── report.py              # Quantitative aggregation, qualitative insight via LLM
 ├── tests/
 │   ├── conftest.py            # Shared fixtures, env isolation, dataset mock
-│   ├── test_*.py              # 521 tests (round A+B+C regression + sampling backend)
+│   ├── test_*.py              # 509 tests (round A+B+C regression + sampling backend)
 │   └── manual/smoke_e2e.py    # Live OpenAI smoke test (excluded from default run)
 ├── examples/
 │   └── mcp/                   # Drop-in mcp.json snippets for Claude Code and Cursor
@@ -577,7 +564,7 @@ Run the full test suite with pytest. The suite mocks the OpenAI API with `pytest
 pytest tests/ -v
 ```
 
-The current regression covers 521 tests including OpenAI, Anthropic Claude, and MCP sampling backend coverage (config, filter DSL, persona loader, LLM client, LLM backend selection, interview session, persona drift, batch runner, report quant, MCP dispatch, error messages, logging, pricing, and CLI integration).
+The current regression covers 509 tests including OpenAI, Anthropic Claude, and MCP sampling backend coverage (config, filter DSL, persona loader, LLM client, LLM backend selection, interview session, persona drift, batch runner, report quant, MCP dispatch, error messages, logging, and CLI integration).
 
 Manual smoke tests that exercise a real LLM API call live under `tests/manual/` and are excluded from the default run. They expect `OPENAI_API_KEY` (or `ANTHROPIC_API_KEY`) in the environment.
 
@@ -597,9 +584,7 @@ Every report and JSON file produced by this tool also carries the synthetic-data
 
 The `--product` text and the persona metadata used for each interview are sent to whichever LLM endpoint you configure (OpenAI, Anthropic, a local server, or the MCP host agent's LLM). Do not put unreleased IP, trade secrets, or personally identifiable information into `--product`. Abstract or paraphrase sensitive parts before running the tool. The tool itself ships no external telemetry beyond the LLM call and the initial dataset download from Hugging Face.
 
-A 100-persona batch with 5 questions costs roughly $0.50 - $2.00 in OpenAI usage when running on `gpt-4o-mini` at default settings (multi-turn history capped at 32000 tokens, structured summary on, qualitative insight on). Anthropic `claude-haiku-4-5` lands in a similar range. Single-turn mode and prompt caching can bring that down by about half. Heavier toggles (more `--persona-fields`, more questions, larger models) raise the cost in proportion. Local LLMs are free at the API level, but persona quality varies by model.
-
-The cost number printed at the end of each run and the `estimated_cost_usd` field in the result JSON are estimates derived from the in-repo pricing table (`src/_pricing.py`, list prices as of 2026-05). The actual invoice from your provider is the authoritative number. Persona-drift quality is validated against `gpt-4o-mini`; other models may need tuned thresholds.
+API billing is the user's responsibility. Token usage (prompt / completion / cached) is printed at the end of each run, written into the result JSON `meta_extra.usage`, and surfaced in the report header so you can correlate it against your provider's invoice. The actual invoice from your provider is the authoritative number; this tool does not estimate USD cost. Persona-drift quality is validated against `gpt-4o-mini`; other models may need tuned thresholds.
 
 Legal and ethical review of the output is the user's responsibility. The tool does not run any compliance or PII filter beyond the input-secret policy.
 
@@ -635,7 +620,7 @@ The OpenAI Chat Completions API does not require attribution. The default model 
 
 Pull requests are welcome. Before opening one.
 
-- Run `pytest tests/ -v` and confirm all 521 tests pass
+- Run `pytest tests/ -v` and confirm all 509 tests pass
 - Use Conventional Commits
 - For substantive changes, open an issue first to discuss the approach
 

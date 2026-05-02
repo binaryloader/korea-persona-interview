@@ -6,11 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-05-02
+
+First stable release. The previous `0.1.0` line is folded into `1.0.0` because the public surface, multi-provider backend, MCP sampling-only entry point, and 509-test regression are all considered stable for production use.
+
 ### Added
 
-- `AnthropicBackend` calling the Anthropic Messages API directly over httpx (no SDK dependency). Token usage maps `input_tokens`, `output_tokens`, and `cache_read_input_tokens` into the existing `TokenUsage` shape for cost-accounting parity with OpenAI
+- `AnthropicBackend` calling the Anthropic Messages API directly over httpx (no SDK dependency). Token usage maps `input_tokens`, `output_tokens`, and `cache_read_input_tokens` into the existing `TokenUsage` shape
 - `llm.provider` config field (`openai` or `anthropic`) plus matching CLI flags `--provider`, `--base-url`, and `--model` on `healthcheck`, `interview`, and `report`. The provider switch also picks up `ANTHROPIC_API_KEY` from the environment or `.env`
-- Per-model price entries for `claude-haiku-4-5`, `claude-sonnet-4-5`, and `claude-opus-4-5` in `src/_pricing.py`. Numbers are estimates from the Anthropic pricing page; callers continue to surface "estimated" wording
 - `build_cli_backend(LlmConfig)` factory that returns the correct backend (OpenAI or Anthropic) based on `provider`. The CLI uses this for every entry point so swapping provider only changes one call site
 
 ### Changed
@@ -22,11 +25,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Removed
 
+- Cost estimation module and `estimated_cost_usd` field. Token usage display remains. The `src/_pricing.py` per-model price table, the `BatchResultEnvelope.estimated_cost_usd` field, the `meta_extra.estimated_cost_usd` JSON key, the "비용 추정: $X.XXXX" console line, and the report header cost row were removed because per-token list prices change frequently and the tool's estimate diverges from the provider's invoice. The authoritative number is the user's own provider invoice
 - `LlmConfig.backend` field and the `select_backend` / `normalize_backend_choice` policy helpers in `llm_backend.py`. Use `build_cli_backend(config.llm)` from the CLI and the explicit `McpSamplingBackend(session)` constructor in the MCP server instead
-
-## [0.1.0] - 2026-05-02
-
-Initial public release of korea-persona-interview, a CLI for running synthetic Korean persona interviews on top of the OpenAI Chat Completions API and the NVIDIA Nemotron-Personas-Korea dataset (CC BY 4.0, about 1M Korean synthetic personas).
 
 ### Added
 
@@ -39,7 +39,7 @@ Initial public release of korea-persona-interview, a CLI for running synthetic K
 - Automatic markdown report generation after every interview run (toggle off with `--no-report`). Report includes intent share, willingness-to-pay median + IQR, top-N rejection reasons, cohort table (age x region x gender, masked under `report.cohort_min_cell` of 3), shared reactions, 5-10 actionable insights, cohort qualitative differences, excluded record counts, and a synthetic-data disclaimer
 - `--json` root mode that emits a single JSON document on stdout for shell scripts and external agents. Disables tqdm, ANSI color, and Korean labels. Errors emit `{"error": {...}}` with non-zero exit
 - MCP (Model Context Protocol) server (`src/mcp_server.py`) exposing the four CLI commands as tools to Claude Code, Cursor, and Codex over stdio JSON-RPC. Console scripts `kpi` and `kpi-mcp-server` are registered via `pyproject.toml`
-- Token usage and USD cost estimation. `usage.prompt_tokens_details.cached_tokens` is tracked per response and aggregated into `BatchResultEnvelope.usage`. `src/_pricing.py` carries the per-model price table (OpenAI list prices as of 2026-05) with cached_tokens at 50% discount and a fallback estimate for unknown models. Same numbers are surfaced in console output, result JSON `meta_extra.usage`/`meta_extra.estimated_cost_usd`, and the report header
+- Token usage tracking. `usage.prompt_tokens_details.cached_tokens` is tracked per response and aggregated into `BatchResultEnvelope.usage`. The same numbers are surfaced in console output, result JSON `meta_extra.usage`, and the report header
 - Prompt-caching-friendly system prompt structure. Static prefix is held at the front of the system prompt and the variable parts (persona JSON, product) are placed at the back so OpenAI auto-applies prompt cache on prefixes over 1024 tokens
 - Per-process persona-pool cache keyed by (filter, n, seed, field map, gender aliases, province aliases, dataset name, split) so `list-personas` -> `interview` -> `interview --dry-run` on the same parameters reuses the sampled list. Invalidation helper `clear_persona_pool_cache()` is provided for tests
 - External system prompt template at `prompts/system_prompt.txt` with `{persona_json}` and `{product}` placeholders. The path is configurable via `interview.system_prompt_path`. The template is loaded lazily and cached per-process by mtime
@@ -47,7 +47,7 @@ Initial public release of korea-persona-interview, a CLI for running synthetic K
 - Structured JSON Lines logging (`src/logging_setup.py`) with `request_id`, secret masking, and `outputs/logs/run_*.jsonl` output. Logs flow to stderr so they do not pollute the stdio JSON-RPC channel
 - Layered configuration loader (`src/config.py`). Precedence is built-in defaults, then `config.yaml`, then CLI options. Secrets come from the environment (`OPENAI_API_KEY`, `KPI_OPENAI_API_KEY`) and `KPI_OUTPUT_DIR` is honored for test/CI isolation. `.env` files at the project root are auto-loaded with stdlib parsing and `setdefault` semantics so existing environment variables are never overridden
 - OpenAI Chat Completions backend via async httpx (`src/llm_client.py`). Default model `gpt-4o-mini`, configurable via `llm.model` or one-off `--model`. Default base URL `https://api.openai.com/v1`. The official `openai` SDK is intentionally not used, see [docs/adr/2026-05-02-openai-backend-migration.md](docs/adr/2026-05-02-openai-backend-migration.md)
-- 470 regression tests (`tests/`) covering config, filter DSL, persona loader, LLM client, interview session, persona drift, batch runner, report quant, MCP dispatch, error messages, logging, and CLI integration. The OpenAI API is mocked with `pytest-httpx` and the dataset is mocked with monkeypatch fixtures so the suite runs offline
+- 509 regression tests (`tests/`) covering config, filter DSL, persona loader, LLM client, interview session, persona drift, batch runner, report quant, MCP dispatch, error messages, logging, and CLI integration. The OpenAI API is mocked with `pytest-httpx` and the dataset is mocked with monkeypatch fixtures so the suite runs offline
 - Drop-in MCP configuration examples for Claude Code and Cursor under [examples/mcp/](examples/mcp/)
 - Reproducible install via `requirements.lock` and `requirements-dev.lock` generated by `uv pip compile`. `pyproject.toml` carries PEP 621 metadata and console-script registrations and is kept in sync with `requirements.txt`
 - Documentation tree under `docs/` with PRD, TDD, two ADRs (multi-turn strategy and OpenAI backend migration), UI flow, task breakdown, and v1.1 backlog
@@ -65,5 +65,5 @@ Initial public release of korea-persona-interview, a CLI for running synthetic K
 - Default model: `gpt-4o-mini` (configurable)
 - License: MIT (see [LICENSE](LICENSE))
 
-[Unreleased]: https://github.com/binaryloader/korea-persona-interview/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/binaryloader/korea-persona-interview/releases/tag/v0.1.0
+[Unreleased]: https://github.com/binaryloader/korea-persona-interview/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/binaryloader/korea-persona-interview/releases/tag/v1.0.0

@@ -79,14 +79,14 @@
 - `.env` 파일은 stdlib 파서로 비밀만 환경에 승격한다. setdefault 의미라 이미 set된 환경변수는 덮지 않는다
 - 기존 `LlmConfig.backend` 토글은 제거됐다. yaml에 잔존해도 graceful하게 무시된다(ADR-003)
 
-### 3.5. 토큰 사용량과 비용 추정(라운드 A + multi-provider)
+### 3.5. 토큰 사용량(라운드 A + multi-provider)
 
 - OpenAI 응답: `usage.prompt_tokens_details.cached_tokens`를 `TokenUsage.cached_tokens`로 매핑한다
 - Anthropic 응답: `usage.input_tokens`/`output_tokens`/`cache_read_input_tokens`를 `TokenUsage` 같은 모양으로 매핑한다
-- MCP sampling 응답: usage 미반환이라 0으로 채운다(`estimated_cost_usd`도 0)
+- MCP sampling 응답: usage 미반환이라 0으로 채운다
 - 배치 종료 시 모든 record의 `RawResponse.usage`를 `BatchResultEnvelope.usage`로 합산한다
-- `src/_pricing.py`의 `PRICING_TABLE`이 모델별 단가를 박는다. OpenAI 모델은 cached_tokens가 input의 50%, Anthropic 모델은 약 0.1x 수준이다. 알려지지 않은 모델 ID는 `_FALLBACK_PRICING`으로 보수적으로 표시한다
-- 콘솔 출력, 결과 JSON `meta_extra.usage`/`meta_extra.estimated_cost_usd`, 리포트 헤더 표 세 곳에 같은 값을 박는다. "추정" 표기를 명시한다
+- 콘솔 출력, 결과 JSON `meta_extra.usage`, 리포트 헤더 표 세 곳에 prompt/completion/cached 카운트를 동일하게 박는다
+- USD 비용 추정은 본 라운드(v1.0.0) 시점에 제거됐다. 단가 표 갱신 부담과 추정치-실제 청구 차이를 사용자가 직접 감내해야 한다는 점이 도구 신뢰성을 해친다는 판단이다. 토큰 사용량을 보고 사용자가 자신의 provider 청구서와 대조하는 흐름으로 이관한다
 - prompt caching: OpenAI는 prefix 1024 토큰 이상 자동 적용 구조로 설계되어 있다(TDD §9.1). Anthropic의 `cache_control` 마커는 v1.1 백로그
 
 ### 3.6. 시스템 프롬프트와 페르소나 풀(라운드 B4, B5)
@@ -109,7 +109,7 @@
 
 - uv(가상 환경은 .venv, Python 3.12 고정)다
 - `pyproject.toml`(라운드 C4)이 PEP 621 메타와 console script(`kpi`, `kpi-mcp-server`)를 등록한다. requirements 계열을 정본으로 두고 pyproject는 동기화 상태를 유지한다
-- 회귀 테스트는 521개로 multi-provider, MCP sampling 전용, AnthropicBackend, Claude 단가까지 모두 포함한다
+- 회귀 테스트는 509개로 multi-provider, MCP sampling 전용, AnthropicBackend까지 포함한다
 
 ## 4. ADR 인덱스
 
@@ -153,3 +153,4 @@
 - 2026-05-02 라운드 C4 패키징 정비. `pyproject.toml` 신규 작성(PEP 621 메타, MIT 라이선스, Python 3.12 핀, 직접 의존성, dev extra). console script 두 개를 등록한다(`kpi = "main:main"`, `kpi-mcp-server = "src.mcp_server:main"`). README Installation 섹션에 `uv pip install -e .` 옵션을 추가한다. requirements.txt와 pyproject.toml은 본 라운드에서 동시 유지하며 이중 관리 단순화는 v1.1 백로그
 - 2026-05-02 배포 전 README/docs 최종 정비. README를 실제 배포용으로 전면 재작성(Quick Start 5단계, Usage Examples 5종, CLI Reference 옵션 표 4종 + Filter DSL, Output Format 섹션, Customization 섹션, Project Structure 풀 트리, Roadmap, Contributing 추가). docs/INDEX 정합성 결정값을 라운드 A+B+C 결과로 8개 소절 재구성. v1.1 백로그를 별도 문서(`docs/backlog/v1.1.md`)로 분리해 15개 항목 동기/영향 범위와 함께 정리
 - 2026-05-02 multi-provider + MCP sampling 전용 단순화. ADR-003 채택. `LlmConfig.provider`(openai/anthropic) 도입, `AnthropicBackend` 추가(httpx 직접, anthropic SDK 의존 없음), 로컬 LLM은 provider=openai + `--base-url` override 패턴. CLI에 `--provider`/`--base-url` 옵션 추가. MCP 서버는 sampling 전용으로 단순화(host LLM 위임, 키 불필요). `LlmConfig.backend` 토글 제거. `src/_pricing.py`에 Claude 단가 추가(haiku/sonnet/opus). 콘솔 메시지 사전을 provider-agnostic하게 갱신("OpenAI 서버" → "LLM 서버"). 코드 주석을 SDK 공개 수준으로 재작성(internal-only 한국어 주석 정리, 영어 docstring 통일). 회귀 504 → 521개. 본 라운드 ADR-002 supersede
+- 2026-05-02 버전 1.0.0 안정 릴리즈, 비용 추정 제거. `src/_pricing.py` 모듈, `BatchResultEnvelope.estimated_cost_usd` 필드, `meta_extra.estimated_cost_usd` JSON 키, 콘솔 "비용 추정: $X.XXXX" 한 줄, 리포트 헤더 비용 행, `--json` 응답의 `estimated_cost_usd` 필드를 모두 제거. 토큰 사용량(prompt/completion/cached) 노출은 유지. 단가 표가 자주 변하고 추정치와 실제 청구 금액이 일치하지 않아 신뢰성을 해친다는 판단. 회귀 521 → 509개. `pyproject.toml`/`src/__init__.py`/README/CHANGELOG/CONTRIBUTING/SECURITY/PRD/TDD/ADR/v1.1 백로그 동기 갱신
