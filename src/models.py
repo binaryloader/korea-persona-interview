@@ -77,6 +77,23 @@ class RawResponse:
     response: str
     latency_ms: int
     retry_count: int
+    reasoning_trace: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class ChatResponse:
+    """LLM chat 호출 결과 컨테이너.
+
+    Qwen3 계열 모델은 ``enable_thinking=true``일 때 ``message.reasoning``에 추론
+    트레이스를 동봉한다. ``enable_thinking=false``일 때는 ``reasoning_trace``가
+    항상 ``None``이다(GATE-1에서 검증). ``content``가 비면 호출자가 별도 에러
+    처리를 수행한다.
+    """
+
+    content: str
+    latency_ms: int
+    retry_count: int
+    reasoning_trace: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -201,3 +218,12 @@ class RetryExhaustedError(Exception):
 
 class StructuredSummaryParseError(Exception):
     """구조화 요약 JSON 파싱 실패. structured_summary=None으로 변환."""
+
+
+class EmptyResponseError(Exception):
+    """``message.content``가 비어 있는 응답. retry 대상으로 본다.
+
+    Qwen3 계열에서 ``enable_thinking=true``로 호출하고 토큰 예산을 reasoning이
+    소진하면 content가 빈 문자열로 반환되는 사례가 있다. ``enable_thinking=false``
+    + 충분한 ``max_tokens`` 조합이 정상 응답이다(GATE-1 검증).
+    """

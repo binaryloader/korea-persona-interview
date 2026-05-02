@@ -20,7 +20,9 @@ import httpx
 
 from .config import LlmConfig, is_local_base_url
 from .models import (
+    ChatResponse,
     ConfigError,
+    EmptyResponseError,
     RetryExhaustedError,
     ServerNotReachableError,
 )
@@ -143,11 +145,16 @@ class MlxLLMClient:
         messages: list,
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
-    ) -> Tuple[str, int]:
+    ) -> ChatResponse:
         """``POST {base_url}/chat/completions``으로 응답을 받는다.
 
         외부 URL일 때 호출을 차단한다(security.md §1). 재시도/타임아웃 정책은
         ``LlmConfig``의 값을 따른다.
+
+        Qwen3 계열 호환을 위해 요청 body에 ``chat_template_kwargs``로
+        ``enable_thinking`` 값을 항상 명시한다. ``enable_thinking=true``면
+        ``message.reasoning``을 ``ChatResponse.reasoning_trace``로 보존하고,
+        False면 reasoning 필드는 무시한다(GATE-1 검증).
 
         Args:
             messages: OpenAI Chat Completions 형식의 messages 배열.
@@ -155,12 +162,12 @@ class MlxLLMClient:
             temperature: 명시 시 config 기본값을 덮는다.
 
         Returns:
-            ``(response_text, latency_ms)`` 튜플.
+            ``ChatResponse(content, latency_ms, retry_count, reasoning_trace)``.
 
         Raises:
-            ConfigError: 외부 URL 차단, 4xx 응답, 빈 응답.
+            ConfigError: 외부 URL 차단, 4xx 응답.
             ServerNotReachableError: 단일 호출 단계 네트워크 실패.
-            RetryExhaustedError: 5xx/타임아웃이 retry 한도를 넘어선 경우.
+            RetryExhaustedError: 5xx/타임아웃/빈 content가 retry 한도를 넘어선 경우.
         """
 
         if not is_local_base_url(self._config.base_url):
@@ -180,6 +187,12 @@ class MlxLLMClient:
                 if temperature is not None
                 else self._config.temperature
             ),
+            # Qwen3 계열 thinking 토글. GATE-1 검증 결과 default(true)로 두면
+            # reasoning이 토큰 예산을 소진해 content가 비어 온다. 본 도구는
+            # default가 False라 빈 content 사례를 회피한다.
+            "chat_template_kwargs": {
+                "enable_thinking": self._config.enable_thinking,
+            },
         }
 
         # 디버그 레벨에서도 messages 본문은 출력하지 않는다(security.md §1, PRD §6.6).
@@ -193,6 +206,7 @@ class MlxLLMClient:
                     for m in messages
                 ),
                 "model": self._config.model,
+                "enable_thinking": self._config.enable_thinking,
             },
         )
 
@@ -218,23 +232,41 @@ class MlxLLMClient:
                         f"5xx 응답: {response.status_code}"
                     )
                 else:
-                    text = self._extract_choice_text(response)
-                    if not text:
-                        # choices/content 비었음. retry 대상으로 본다.
-                        last_exc = ServerNotReachableError(
-                            "응답 choices 또는 content가 비어 있다"
+                    content, reasoning = self._extract_message_parts(response)
+                    if not content:
+                        # choices/content 비었음. Qwen3 thinking on에서 흔한
+                        # 패턴이라 retry 대상으로 본다(EmptyResponseError로 마킹).
+                        last_exc = EmptyResponseError(
+                            "응답 message.content가 비어 있다"
+                            + (
+                                " (thinking on, reasoning 토큰 폭증 가능성)"
+                                if self._config.enable_thinking
+                                else ""
+                            )
                         )
                     else:
                         logger.info(
                             "chat 응답 정상",
                             extra={
                                 "model": self._config.model,
-                                "response_chars": len(text),
+                                "response_chars": len(content),
+                                "reasoning_chars": (
+                                    len(reasoning) if reasoning else 0
+                                ),
                                 "latency_ms": latency_ms,
                                 "retry_count": attempt,
                             },
                         )
-                        return text, latency_ms
+                        # enable_thinking=False면 reasoning 필드를 보존하지 않는다.
+                        kept_reasoning = (
+                            reasoning if self._config.enable_thinking else None
+                        )
+                        return ChatResponse(
+                            content=content,
+                            latency_ms=latency_ms,
+                            retry_count=attempt,
+                            reasoning_trace=kept_reasoning,
+                        )
 
             # retry 가능한 실패. 마지막 시도면 백오프를 건너뛴다.
             if attempt < self._config.retry_max_attempts - 1:
@@ -281,25 +313,38 @@ class MlxLLMClient:
         return base + random.uniform(0, _JITTER_MAX_SECONDS)
 
     @staticmethod
-    def _extract_choice_text(response: httpx.Response) -> str:
-        """OpenAI 응답에서 첫 choice의 content를 안전하게 꺼낸다."""
+    def _extract_message_parts(
+        response: httpx.Response,
+    ) -> Tuple[str, Optional[str]]:
+        """첫 choice의 ``content``와 ``reasoning``을 안전하게 꺼낸다.
+
+        Qwen3 계열은 ``message.reasoning``에 영문 추론 트레이스를 동봉한다.
+        OpenAI 표준 스키마에 없는 확장 필드라 ``None``일 수도 있다.
+
+        Returns:
+            ``(content, reasoning_trace)``. content는 항상 str(빈 문자열 가능),
+            reasoning_trace는 존재할 때만 str, 그 외는 None.
+        """
 
         try:
             payload = response.json()
         except ValueError:
-            return ""
+            return "", None
         if not isinstance(payload, dict):
-            return ""
+            return "", None
         choices = payload.get("choices")
         if not isinstance(choices, list) or not choices:
-            return ""
+            return "", None
         first = choices[0]
         if not isinstance(first, dict):
-            return ""
+            return "", None
         message = first.get("message")
         if not isinstance(message, dict):
-            return ""
+            return "", None
         content = message.get("content")
-        if not isinstance(content, str):
-            return ""
-        return content
+        content_text = content if isinstance(content, str) else ""
+        reasoning = message.get("reasoning")
+        reasoning_text = (
+            reasoning if isinstance(reasoning, str) and reasoning else None
+        )
+        return content_text, reasoning_text

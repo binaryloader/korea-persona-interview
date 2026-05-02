@@ -31,7 +31,14 @@ LOCAL_BASE_URL_PREFIXES = ("http://localhost", "http://127.0.0.1")
 
 @dataclass(frozen=True)
 class LlmConfig:
-    """LLM 호출 관련 설정."""
+    """LLM 호출 관련 설정.
+
+    ``enable_thinking``은 Qwen3 계열의 reasoning trace 출력을 토글한다. default는
+    False(끄기)이며, GATE-1 검증 결과 ``enable_thinking=true``로 호출하면
+    토큰 예산을 영문 reasoning이 모두 소진해 ``message.content``가 비어 오는
+    사례가 확인됐다(검증된 정본 모델: ``unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit``).
+    chat 요청 본문에는 항상 ``chat_template_kwargs``로 명시 전달한다.
+    """
 
     base_url: str
     model: str
@@ -41,6 +48,7 @@ class LlmConfig:
     context_budget: int
     retry_max_attempts: int
     retry_backoff_seconds: tuple
+    enable_thinking: bool = False
 
 
 @dataclass(frozen=True)
@@ -112,6 +120,9 @@ def _default_dict() -> dict:
             "context_budget": 8000,
             "retry_max_attempts": 3,
             "retry_backoff_seconds": [1, 2, 4],
+            # GATE-1에서 검증: Qwen3.6-35B-A3B는 default가 thinking on이라
+            # reasoning이 토큰 예산을 소진해 content가 비어 온다. False가 정상.
+            "enable_thinking": False,
         },
         "batch": {
             "concurrency": 2,
@@ -254,6 +265,7 @@ def _apply_env(merged: dict) -> dict:
         ("KPI_LLM_MAX_TOKENS", "llm", "max_tokens"),
         ("KPI_LLM_TEMPERATURE", "llm", "temperature"),
         ("KPI_LLM_TIMEOUT", "llm", "timeout"),
+        ("KPI_LLM_ENABLE_THINKING", "llm", "enable_thinking"),
         ("KPI_BATCH_CONCURRENCY", "batch", "concurrency"),
         ("KPI_OUTPUT_DIR", "output", "output_dir"),
         ("KPI_LOG_LEVEL", "output", "log_level"),
@@ -330,6 +342,7 @@ def load_config(
             retry_backoff_seconds=tuple(
                 float(x) for x in merged["llm"]["retry_backoff_seconds"]
             ),
+            enable_thinking=bool(merged["llm"].get("enable_thinking", False)),
         )
         batch_cfg = BatchConfig(
             concurrency=int(merged["batch"]["concurrency"]),
