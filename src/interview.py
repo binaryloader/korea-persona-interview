@@ -192,7 +192,7 @@ _FAMILY_COHABITATION_TOKENS: tuple = (
 # - cohabit_assertion: 가족 동거 긍정 단언("저는 가족과 살아", "남편과 살아").
 #   단독 거주 페르소나가 본 단언을 보이면 drift True
 # - 부정 단언("1인 가구가 아니", "혼자 살지 않")은 두 페르소나 모두에게
-#   정합 또는 무관이라 drift 트리거에서 제외한다
+#   정합 또는 무관이라 drift 트리거에서 제외한다.
 #
 # false positive 방지를 위해 아래 패턴은 trigger에서 제외한다.
 #
@@ -893,7 +893,7 @@ def detect_persona_drift(
     - 거주 형태 모순: family_type이 단독 거주인데 가족 동거 긍정 단언, 또는
       가족 동거인데 단독 거주 긍정 단언. 부정 단언은 정합한 답변이라 trigger
       대상에서 제외한다(예: 가족 동거 페르소나가 ``1인 가구가 아니라서``라고
-      답하는 경우 drift False)
+      답하는 경우 drift False).
 
     가짜 양성을 줄이기 위해 두 단계로 좁힌다.
 
@@ -902,7 +902,7 @@ def detect_persona_drift(
     - 거주 형태 축은 같은 문장(``.``/``!``/``?`` boundary) 안에서 1인칭 주어와
       거주 동사가 함께 등장하는 정밀 정규식만 매칭한다. ``혼자 사시는 분들``
       같은 3인칭 표현, ``혼자서 끼니를 해결`` 같은 행동 표현, 응답에 우연히
-      등장한 product 키워드(``1인 가구용``)는 trigger에서 제외된다
+      등장한 product 키워드(``1인 가구용``)는 trigger에서 제외된다.
 
     Args:
         response: 모델 응답 본문.
@@ -1094,7 +1094,7 @@ def _build_summary_messages(messages: list) -> list:
         role = m.role if isinstance(m, MessageEntry) else m.get("role", "")
         content = m.content if isinstance(m, MessageEntry) else m.get("content", "")
         if role == "system":
-            continue  # 분석가에게 페르소나 자체를 다시 주입할 필요 없음
+            continue  # 분석가에게 페르소나 자체를 다시 주입할 필요 없음.
         label = "질문" if role == "user" else "답변"
         transcript_lines.append(f"[{label}] {content}")
     transcript = "\n".join(transcript_lines)
