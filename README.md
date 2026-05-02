@@ -563,9 +563,17 @@ A short list of v1.1 candidates, full details in [docs/backlog/v1.1.md](docs/bac
 
 ## Dataset and Credits
 
-This project uses the [nvidia/Nemotron-Personas-Korea](https://huggingface.co/datasets/nvidia/Nemotron-Personas-Korea) dataset published by NVIDIA in 2025. About 1M records and 7M synthetic Korean personas covering name, gender, age, marital status, education, occupation, residence (province and district), and seven persona facets (professional, sports, arts, travel, culinary, family, summary).
+This project uses the [nvidia/Nemotron-Personas-Korea](https://huggingface.co/datasets/nvidia/Nemotron-Personas-Korea) dataset.
 
-The dataset is licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), which permits commercial use with attribution. Credit goes to NVIDIA.
+- Title: Nemotron-Personas-Korea
+- Author: NVIDIA Corporation (2025)
+- Source: https://huggingface.co/datasets/nvidia/Nemotron-Personas-Korea
+- License: [Creative Commons Attribution 4.0 International (CC BY 4.0)](https://creativecommons.org/licenses/by/4.0/)
+- Modifications: none. The dataset is downloaded from Hugging Face Hub at runtime and sampled in-memory. No derivative dataset is redistributed by this repository
+
+About 1M records and 7M synthetic Korean personas covering name, gender, age, marital status, education, occupation, residence (province and district), and seven persona facets (professional, sports, arts, travel, culinary, family, summary).
+
+CC BY 4.0 permits commercial use with attribution. Credit goes to NVIDIA Corporation. Every markdown report and JSON record produced by this tool also carries the dataset citation and license in its footer so attribution travels with downstream artifacts.
 
 The OpenAI Chat Completions API does not require attribution. The default model `gpt-4o-mini` and any model id you set in `config.yaml` are recorded inside each interview JSON so reports stay reproducible.
 

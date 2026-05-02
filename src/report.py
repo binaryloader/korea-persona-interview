@@ -1120,8 +1120,11 @@ def _render_footer(model_id: str) -> str:
         "실제 한국인 응답자의 의견을 대체하지 않습니다. 본 도구는 실제 인터뷰 직전 단계의 "
         "가설 검증과 질문지 점검 용도로 사용하시기 바랍니다. 사업 아이템 본문(`--product`)은 "
         "인터뷰 호출 시 OpenAI 서버로 송신됩니다.\n\n"
-        "- 데이터셋 출처: nvidia/Nemotron-Personas-Korea(https://huggingface.co/datasets/nvidia/Nemotron-Personas-Korea)\n"
-        "- 데이터셋 라이선스: CC BY 4.0\n"
+        "- 데이터셋: Nemotron-Personas-Korea\n"
+        "- 저작자: NVIDIA Corporation(2025)\n"
+        "- 출처: https://huggingface.co/datasets/nvidia/Nemotron-Personas-Korea\n"
+        "- 라이선스: CC BY 4.0(https://creativecommons.org/licenses/by/4.0/)\n"
+        "- 변형 여부: 없음. Hugging Face Hub에서 런타임에 다운로드하여 메모리 내에서 샘플링만 수행했습니다\n"
         f"- 추론 모델: {model_id}(OpenAI Chat Completions API)\n"
     )
 
