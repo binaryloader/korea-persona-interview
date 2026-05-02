@@ -1,8 +1,8 @@
 # ADR-003: multi-provider backend (OpenAI / Anthropic / local LLM / MCP sampling)
 
 - 일자: 2026-05-02
-- 상태: 채택
-- 관련: ADR-002(2026-05-02-openai-backend-migration.md, OpenAI 단일 백엔드 → 본 ADR로 supersede)
+- 상태: 채택(MCP sampling-only 결정 부분만 ADR-004로 supersede, 2026-05-02)
+- 관련: ADR-002(2026-05-02-openai-backend-migration.md, OpenAI 단일 백엔드 → 본 ADR로 supersede), ADR-004(2026-05-02-mcp-mode-toggle.md, MCP 동작 모드 토글 도입으로 §2의 sampling-only 결정 supersede)
 
 ## 1. 배경
 
@@ -22,6 +22,8 @@ CLI와 MCP의 진입점을 분리하고 각각의 추론 경로를 단일 정책
   - `provider=anthropic`: `AnthropicBackend`. Anthropic Messages API에 직접 httpx로 호출한다. anthropic SDK 의존을 추가하지 않는다(dependency.md §1)
 - MCP 서버 진입점은 sampling 전용이다. `McpSamplingBackend`만 사용하며 host agent의 LLM에 추론을 위임한다. host가 sampling capability를 노출하지 않으면 친절한 한국어 안내와 함께 CLI fallback을 권유하는 ConfigError로 차단한다
 - 기존 `LlmConfig.backend` 토글을 제거한다. yaml에 남아 있어도 graceful하게 무시한다
+
+본 §2의 마지막에서 두 번째 항목(MCP sampling 전용 결정)은 ADR-004(2026-05-02-mcp-mode-toggle.md)로 supersede되었다. v1.1.1부터 `mcp.mode` 토글로 server default 또는 sampling opt-in 두 모드를 명시 선택한다. multi-provider backend 결정 자체(provider=openai|anthropic 토글, AnthropicBackend, `build_cli_backend` factory)는 ADR-004와 무관하게 그대로 유효하다.
 
 ## 3. 결과
 
