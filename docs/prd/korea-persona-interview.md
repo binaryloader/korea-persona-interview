@@ -299,6 +299,7 @@ CLI는 4개 서브커맨드를 제공한다. 매크로 명령(예: `run-all`)은
 - 로그는 구조화된 형태(JSON Lines)로 `outputs/logs/run_{timestamp}.jsonl`에도 동시 기록한다
 - 민감 정보(사용자가 `--product`에 적은 사업 아이템 본문)는 로그 본문에 그대로 기록하지 않고 첫 30자 + 길이 형태로 마스킹한다
 - API 키는 로그에 절대 기록하지 않는다. `Authorization` 헤더 출력이 필요한 경우 `Bearer sk-***` 형식으로 마스킹한다(security.md §1, logging.md §2)
+- 토큰 사용량과 비용 추정을 인터뷰 종료 시 콘솔에 한 줄 노출하고 결과 JSON `meta_extra.usage`/`meta_extra.estimated_cost_usd`, 리포트 마크다운 헤더 표에도 함께 박는다. 단가는 `src/_pricing.py`의 모델별 표를 사용하며 알려지지 않은 모델은 fallback 단가로 보수적으로 표시한다(추정 표기 명시. 실제 OpenAI 청구와 다를 수 있음)
 
 ### 6.7. 접근성과 출력
 

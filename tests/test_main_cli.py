@@ -730,6 +730,74 @@ def test_json_mode_report_정상_stdout_JSON(httpx_mock, tmp_path: Path) -> None
     assert Path(payload["output_path"]).exists()
 
 
+def test_interview_콘솔_토큰_비용_한_줄_표시(
+    httpx_mock, fake_load_dataset, tmp_path: Path
+) -> None:
+    """interview 명령 종료 시 콘솔에 토큰 사용량 + 비용 추정 한 줄이 노출된다.
+
+    배치 응답에 ``usage``가 포함되면 envelope.usage가 누적되고 ``$0.XXXX`` 형태의
+    비용 추정이 콘솔에 출력된다(파일 JSON에는 meta_extra.usage로 보존).
+    """
+
+    httpx_mock.add_response(
+        method="GET",
+        url="https://api.openai.com/v1/models",
+        json={"data": [{"id": "test-model"}]},
+        status_code=200,
+    )
+    # usage가 동봉된 응답을 사용한다. n=1 + 구조화 요약 1.
+    for _ in range(2):
+        httpx_mock.add_response(
+            method="POST",
+            url="https://api.openai.com/v1/chat/completions",
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "긍정적입니다. 한번 시도해 보고 싶어요. 가격도 적당해 보입니다.",
+                        }
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 1500,
+                    "completion_tokens": 80,
+                    "total_tokens": 1580,
+                    "prompt_tokens_details": {"cached_tokens": 1200},
+                },
+            },
+            status_code=200,
+        )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "--no-color",
+            "interview",
+            "--product",
+            "반찬",
+            "--questions",
+            "Q1",
+            "--n",
+            "1",
+            "--no-report",
+            "--output",
+            str(tmp_path),
+        ],
+        env={
+            "KPI_OUTPUT_DIR": str(tmp_path),
+            "OPENAI_API_KEY": "test-key",
+        },
+    )
+    assert result.exit_code == 0, result.output
+    # 토큰 한 줄과 비용 한 줄이 같이 노출된다(prefix가 같은 [INFO] 안에 있음).
+    assert "토큰 사용량" in result.output
+    assert "prompt 1,500" in result.output
+    assert "cached 1,200" in result.output
+    assert "비용 추정: $" in result.output
+
+
 def test_interview_dry_run은_자동_리포트도_안만든다(
     httpx_mock,
     fake_load_dataset,

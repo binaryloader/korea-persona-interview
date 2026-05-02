@@ -645,6 +645,24 @@ OpenAI는 chat completions 입력 prefix가 1024 토큰 이상이고 동일 pref
 
 응답의 `usage.prompt_tokens_details.cached_tokens`는 `MlxLLMClient._extract_usage`가 `TokenUsage.cached_tokens`로 매핑한다. 배치 종료 시 `_aggregate_usage`가 모든 호출의 `cached_tokens`를 합산해 `BatchResultEnvelope.usage.cached_tokens`로 노출한다. 본 값이 prompt_tokens의 큰 비율을 차지할수록 prompt caching이 정상 동작 중이라는 신호다.
 
+#### 9.1.1. 토큰 사용량과 비용 추정
+
+OpenAI 응답의 `usage` 필드는 `MlxLLMClient._extract_usage`가 `TokenUsage(prompt_tokens, completion_tokens, total_tokens, cached_tokens)`로 매핑한다. `cached_tokens`는 `usage.prompt_tokens_details.cached_tokens`에서 추출한다.
+
+`run_batch`는 모든 record의 `raw_responses[*].usage`를 `_aggregate_usage`로 합산해 `BatchResultEnvelope.usage`로 노출한다. 구조화 요약과 정성 인사이트 단계의 호출은 별도 흐름이라 본 합산에 포함되지 않는다. v1.x 한도이며 v1.1에서 record 단위로 추가 누적을 검토한다.
+
+비용 추정은 `src/_pricing.py`의 `PRICING_TABLE`에 박힌 모델별 단가로 계산한다. 단가 단위는 1M 토큰당 USD이며 2026-05 기준 OpenAI 공식 가격을 출처로 한다. 변경 시점에 따라 실제 청구와 미세 차이가 날 수 있어 호출자에서 "추정" 표기를 명시한다. 알려지지 않은 모델 ID는 `_FALLBACK_PRICING`으로 보수적으로 표시한다. fallback 단가는 gpt-4o-mini와 동일하게 둔다. 단가 테이블 갱신은 모델 추가/변경 시 본 파일 한 곳만 손보면 된다.
+
+비용 산식은 아래와 같다.
+
+```
+cost_usd = (prompt_tokens - cached_tokens) * input_price / 1M
+         + cached_tokens * cached_input_price / 1M
+         + completion_tokens * output_price / 1M
+```
+
+`cached_input_price`는 OpenAI prompt caching 정책에 따라 `input_price`의 50%다. CLI는 인터뷰 종료 시 콘솔에 `토큰 사용량: prompt N / completion N / cached N / 비용 추정: $X.XXXX(추정)` 한 줄을 출력하고, 결과 JSON의 `meta_extra.usage`/`meta_extra.estimated_cost_usd`에 같은 값을 박는다. 리포트 마크다운 헤더 표에도 토큰/비용 두 행이 노출된다.
+
 #### 9.2. 페르소나 풀 in-memory 캐시
 
 `load_and_sample`는 `(filter_str, n, seed, field_map, gender_aliases, province_aliases, dataset_name, split)` 튜플을 키로 in-memory 캐시(`_PERSONA_POOL_CACHE`)에 결과 `PersonaMeta` 리스트를 저장한다. 같은 spec으로 두 번째 호출하면 데이터셋 로드/필터/샘플링을 건너뛰고 캐시 hit으로 즉시 반환한다.
