@@ -155,6 +155,7 @@ class InterviewConfig:
     auto_follow_up_max: int = 1
     system_prompt_path: str = "prompts/system_prompt.txt"
     occupation_english_whitelist: bool = True
+    llm_drift_review: bool = False
 
     def __post_init__(self) -> None:
         if self.short_answer_threshold < 0:
@@ -308,6 +309,7 @@ def _default_dict() -> dict:
             "auto_follow_up_max": 1,
             "system_prompt_path": "prompts/system_prompt.txt",
             "occupation_english_whitelist": True,
+            "llm_drift_review": False,
         },
         "report": {
             "cohort_min_cell": 3,
@@ -577,6 +579,9 @@ def load_config(
             ),
             occupation_english_whitelist=bool(
                 merged["interview"].get("occupation_english_whitelist", True)
+            ),
+            llm_drift_review=bool(
+                merged["interview"].get("llm_drift_review", False)
             ),
         )
         report_raw = merged.get("report") or {}

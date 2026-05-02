@@ -667,6 +667,98 @@ def test_detect_persona_drift_직업명_영문_화이트리스트_False() -> Non
     assert detect_persona_drift(text, persona) is False
 
 
+@pytest.mark.asyncio
+async def test_review_drift_with_llm_judge_drift_True() -> None:
+    """judge가 'drift'로 판정하면 True를 반환한다."""
+
+    from src.interview import review_drift_with_llm
+    from src.models import ChatResponse, TokenUsage
+
+    class _Stub:
+        async def chat(self, messages, max_tokens=None, temperature=None):
+            return ChatResponse(
+                content="drift",
+                latency_ms=10,
+                retry_count=0,
+                reasoning_trace=None,
+                usage=TokenUsage(),
+            )
+
+    persona = _persona(age=25)
+    out = await review_drift_with_llm(
+        "응답 본문",
+        persona,
+        _Stub(),  # type: ignore[arg-type]
+        config=_persona_with_occupation("x").raw and None or _make_dummy_llm_config(),
+    )
+    assert out is True
+
+
+@pytest.mark.asyncio
+async def test_review_drift_with_llm_judge_ok_False() -> None:
+    """judge가 'ok'로 판정하면 False를 반환해 drift를 되돌린다."""
+
+    from src.interview import review_drift_with_llm
+    from src.models import ChatResponse, TokenUsage
+
+    class _Stub:
+        async def chat(self, messages, max_tokens=None, temperature=None):
+            return ChatResponse(
+                content="ok",
+                latency_ms=10,
+                retry_count=0,
+                reasoning_trace=None,
+                usage=TokenUsage(),
+            )
+
+    persona = _persona(age=25)
+    out = await review_drift_with_llm(
+        "응답",
+        persona,
+        _Stub(),  # type: ignore[arg-type]
+        config=_make_dummy_llm_config(),
+    )
+    assert out is False
+
+
+@pytest.mark.asyncio
+async def test_review_drift_with_llm_호출실패_보수적_True() -> None:
+    """judge LLM 호출 자체가 실패하면 보수적으로 drift 라벨을 유지한다."""
+
+    from src.interview import review_drift_with_llm
+
+    class _BoomStub:
+        async def chat(self, *args, **kwargs):
+            raise RuntimeError("network down")
+
+    persona = _persona(age=25)
+    out = await review_drift_with_llm(
+        "응답",
+        persona,
+        _BoomStub(),  # type: ignore[arg-type]
+        config=_make_dummy_llm_config(),
+    )
+    assert out is True
+
+
+def _make_dummy_llm_config():
+    """judge 테스트용 최소 LlmConfig."""
+
+    from src.config import LlmConfig
+
+    return LlmConfig(
+        base_url="https://api.openai.com/v1",
+        model="test-model",
+        max_tokens=128,
+        temperature=0.5,
+        timeout=5.0,
+        context_budget=32000,
+        retry_max_attempts=1,
+        retry_backoff_seconds=(0.0,),
+        api_key="test",
+    )
+
+
 def test_detect_persona_drift_직업명_영문_화이트리스트_OFF_다시_True() -> None:
     """occupation_english_whitelist=False면 직업명 토큰도 영어 비율 분자/분모에 포함된다."""
 

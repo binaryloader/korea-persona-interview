@@ -319,6 +319,7 @@ def make_app_config():
         auto_follow_up_max: int = 1,
         system_prompt_path: str = "prompts/system_prompt.txt",
         occupation_english_whitelist: bool = True,
+        llm_drift_review: bool = False,
         partial_failure_threshold: float = 0.5,
         cohort_min_cell: int = 3,
         top_n_default: int = 10,
@@ -388,6 +389,7 @@ def make_app_config():
             auto_follow_up_max=auto_follow_up_max,
             system_prompt_path=system_prompt_path,
             occupation_english_whitelist=occupation_english_whitelist,
+            llm_drift_review=llm_drift_review,
         )
         report = ReportConfig(
             cohort_min_cell=cohort_min_cell,

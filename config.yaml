@@ -119,6 +119,10 @@ interview:
   # IT 컨설턴트/UX 디자이너 같은 페르소나가 본인 직업명을 자연스럽게 언급해도
   # false positive로 drift 처리되지 않게 한다.
   occupation_english_whitelist: true
+  # 휴리스틱이 drift 의심으로 판정한 record에 한해 LLM-as-judge 1회 호출로
+  # 재판정한다. true positive 정확도가 올라가지만 record당 1번 추가 LLM 호출이
+  # 들어가 비용/지연이 늘어난다. 기본 OFF.
+  llm_drift_review: false
 
 report:
   cohort_min_cell: 3

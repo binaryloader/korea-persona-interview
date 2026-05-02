@@ -941,6 +941,79 @@ def detect_persona_drift(
     return False
 
 
+async def review_drift_with_llm(
+    response: str,
+    persona: PersonaMeta,
+    client: "LLMBackend",
+    config: LlmConfig,
+) -> bool:
+    """LLM-as-judge로 페르소나 일관성을 1회 재판정한다.
+
+    휴리스틱이 drift 의심으로 판정한 record에 한해 호출된다(yaml
+    ``interview.llm_drift_review: true`` 옵트인). 호출자는 judge가 ``True``를
+    돌려주면 drift 라벨을 유지하고, ``False``를 돌려주면 drift 플래그를 해제해
+    false positive를 줄인다.
+
+    LLM 응답이 ``judge: drift``/``judge: ok`` 둘 중 하나로만 떨어지도록
+    프롬프트를 좁혔다. 그 외 응답은 보수적으로 ``True``(drift 유지)로 본다.
+
+    Raises:
+        반환값에 모든 LLM 호출 실패를 흡수한다(``True``로 fallback). 호출 실패가
+        다른 task를 죽이지 않게 한다.
+    """
+
+    if not response:
+        return False
+
+    persona_summary = json.dumps(
+        {
+            "gender": persona.gender,
+            "age": persona.age,
+            "region": persona.region,
+            "occupation": persona.occupation,
+            "family_type": persona.family_type,
+            "housing_type": persona.housing_type,
+        },
+        ensure_ascii=False,
+    )
+
+    judge_messages = [
+        {
+            "role": "system",
+            "content": (
+                "당신은 인터뷰 검수자입니다. 주어진 페르소나와 인터뷰 답변을 보고 "
+                "응답자가 페르소나의 정체성에 충실했는지 한 단어로만 판정하세요. "
+                "답변 본문이 페르소나의 연령/성별/지역/직업/가족 형태와 정면으로 "
+                "모순되거나, 응답이 모델 디폴트 톤(인공지능 자체 언급, 일반론, "
+                "교과서적 답변)을 보이면 'drift'로 판정합니다. 그렇지 않으면 'ok'. "
+                "다른 단어, 마크다운, 설명, JSON을 모두 금지합니다."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"[페르소나]\n{persona_summary}\n\n"
+                f"[답변]\n{response[:1000]}\n\n"
+                "판정: drift 또는 ok 중 하나만 출력하세요."
+            ),
+        },
+    ]
+
+    try:
+        chat_response = await client.chat(
+            judge_messages, max_tokens=10, temperature=0.0
+        )
+    except Exception:  # noqa: BLE001 - judge 호출 실패는 보수적으로 drift 유지
+        logger.warning(
+            "LLM-as-judge drift 호출 실패. 보수적으로 drift 라벨 유지",
+            extra={"persona_id": persona.persona_id},
+        )
+        return True
+
+    verdict = chat_response.content.strip().lower()
+    return "drift" in verdict and "ok" not in verdict
+
+
 def detect_refusal(response: str, refusal_keywords: tuple) -> bool:
     """거부 키워드 부분 매칭으로 모델 거부를 판정한다(TDD §8.3).
 
@@ -1256,15 +1329,32 @@ class InterviewSession:
                     self._interview_cfg.english_ratio_threshold,
                     self._interview_cfg.occupation_english_whitelist,
                 ):
-                    flags = dataclasses.replace(flags, persona_drift=True)
-                    status = "drift"
-                    logger.warning(
-                        "페르소나 깨짐 감지",
-                        extra={
-                            "persona_id": self._persona.persona_id,
-                            "question_index": q_index,
-                        },
-                    )
+                    drift_confirmed = True
+                    if self._interview_cfg.llm_drift_review:
+                        drift_confirmed = await review_drift_with_llm(
+                            response_text,
+                            self._persona,
+                            self._client,
+                            self._llm_cfg,
+                        )
+                    if drift_confirmed:
+                        flags = dataclasses.replace(flags, persona_drift=True)
+                        status = "drift"
+                        logger.warning(
+                            "페르소나 깨짐 감지",
+                            extra={
+                                "persona_id": self._persona.persona_id,
+                                "question_index": q_index,
+                            },
+                        )
+                    else:
+                        logger.info(
+                            "페르소나 깨짐 휴리스틱 trigger되었지만 LLM judge가 ok로 판정",
+                            extra={
+                                "persona_id": self._persona.persona_id,
+                                "question_index": q_index,
+                            },
+                        )
 
                 # 자동 follow-up은 메인 질문 구간(q_index < len(self._questions))
                 # 에서만, ``auto_follow_up_max`` 만큼 적용한다(기본 1회).
@@ -1328,8 +1418,17 @@ class InterviewSession:
                         self._interview_cfg.english_ratio_threshold,
                         self._interview_cfg.occupation_english_whitelist,
                     ):
-                        flags = dataclasses.replace(flags, persona_drift=True)
-                        status = "drift"
+                        drift_confirmed = True
+                        if self._interview_cfg.llm_drift_review:
+                            drift_confirmed = await review_drift_with_llm(
+                                fu_text,
+                                self._persona,
+                                self._client,
+                                self._llm_cfg,
+                            )
+                        if drift_confirmed:
+                            flags = dataclasses.replace(flags, persona_drift=True)
+                            status = "drift"
 
         except RetryExhaustedError as exc:
             status = "failed"
@@ -1545,12 +1644,21 @@ class InterviewSession:
                     self._interview_cfg.english_ratio_threshold,
                     self._interview_cfg.occupation_english_whitelist,
                 ):
-                    flags = dataclasses.replace(flags, persona_drift=True)
-                    status = "drift"
-                    logger.warning(
-                        "페르소나 깨짐 감지(단일턴)",
-                        extra={"persona_id": self._persona.persona_id},
-                    )
+                    drift_confirmed = True
+                    if self._interview_cfg.llm_drift_review:
+                        drift_confirmed = await review_drift_with_llm(
+                            response_text,
+                            self._persona,
+                            self._client,
+                            self._llm_cfg,
+                        )
+                    if drift_confirmed:
+                        flags = dataclasses.replace(flags, persona_drift=True)
+                        status = "drift"
+                        logger.warning(
+                            "페르소나 깨짐 감지(단일턴)",
+                            extra={"persona_id": self._persona.persona_id},
+                        )
 
                 parsed, parse_failed = _parse_single_turn_response(
                     response_text, len(all_questions)
