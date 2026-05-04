@@ -25,7 +25,7 @@ OpenAI, Anthropic Claude, OpenAI 호환 로컬 LLM(mlx_lm.server, vLLM, llama.cp
 - 모든 실행 마지막에 토큰 사용량(prompt / completion / cached)을 출력하고 JSON과 리포트 헤더에 포함한다
 - `--seed`를 통한 재현 가능한 샘플링. 동일 seed, 동일 필터, 동일 데이터셋 버전이면 동일한 페르소나를 반환한다
 - 운영 강화 항목으로 로그에서 페르소나 id를 sha256 마스킹, `outputs/`를 모드 0700으로 생성(결과 파일은 0600), `--product`와 질문 텍스트는 2000자 제한과 프롬프트 인젝션 가드를 적용한다
-- 외부 텔레메트리 없음. 외부 통신은 설정한 LLM 엔드포인트와 (최초 실행 시) 데이터셋용 Hugging Face Hub로만 나간다
+- 외부 텔레메트리를 보내지 않는다. 외부 통신은 설정한 LLM 엔드포인트, 그리고 최초 실행 시 데이터셋용 Hugging Face Hub로만 나간다
 
 ## Requirements
 
@@ -173,7 +173,7 @@ python main.py interview --product "..." --filter "..." --n 30 --seed 42 --quest
 | `interview` | 배치 인터뷰를 실행하고 JSON을 저장한 뒤 리포트를 자동 생성한다 | 0 ok, 1 server error, 2 sample shortfall, 3 partial failure |
 | `report` | 인터뷰 JSON에서 마크다운 리포트를 생성한다 | 0 ok, 1 input error, 2 no valid records |
 
-종료 코드 130은 `SIGINT`(Ctrl-C)를 위해 예약되어 있다. 첫 번째 인터럽트는 부분 JSON을 저장하고, 두 번째 인터럽트는 즉시 종료한다.
+종료 코드 130은 `SIGINT`(Ctrl-C)를 위해 예약되어 있다. 첫 번째 인터럽트는 부분 JSON을 저장하고 두 번째 인터럽트는 즉시 종료한다.
 
 ### Root options
 
@@ -222,7 +222,7 @@ python main.py interview --product "..." --filter "..." --n 30 --seed 42 --quest
 
 ### Filter DSL
 
-필터는 쉼표로 구분된 `key:value` 쌍을 사용한다. 다른 키끼리는 AND로 결합되고, 같은 키가 반복되면 OR로 결합된다.
+필터는 쉼표로 구분된 `key:value` 쌍을 사용한다. 다른 키끼리는 AND로 결합되고 같은 키가 반복되면 OR로 결합된다.
 
 - `age:25-39`(범위), `age:30`(정확)
 - `gender:F`, `gender:M`, `gender:여자`, `gender:남자`, `gender:여성`, `gender:남성`(모두 `여자`/`남자`로 매핑된다)
@@ -296,7 +296,7 @@ report 서브커맨드는 기본적으로 입력 JSON 옆에 `outputs/report_{sl
 전체 주석이 달린 yaml은 [config.yaml](../../../config.yaml)에 있다. 주요 키는 아래와 같다.
 
 - `llm.provider` / `llm.base_url` / `llm.model` - 제공자와 엔드포인트. 기본값은 `--provider anthropic`로 전환된다(`https://api.anthropic.com/v1`의 `claude-haiku-4-5`)
-- `llm.context_budget` - 멀티 턴 히스토리에 대한 32000 토큰 예산(가장 오래된 user/assistant 쌍부터 제거되며, 시스템 프롬프트는 보존된다)
+- `llm.context_budget` - 멀티 턴 히스토리에 대한 32000 토큰 예산(가장 오래된 user/assistant 쌍부터 제거되며 시스템 프롬프트는 보존된다)
 - `llm.streaming` / `llm.anthropic_cache_control` / `llm.extra_chat_kwargs` - 제공자별 튜닝
 - `batch.concurrency`(1-10, 기본 4)와 `batch.partial_failure_threshold`(기본 0.5)
 - `common.dataset.field_map`, `common.dataset.gender_aliases`, `common.dataset.province_aliases` - 데이터셋 스키마 변경에 대비한 컬럼/값 별칭
@@ -314,15 +314,15 @@ report 서브커맨드는 기본적으로 입력 JSON 옆에 `outputs/report_{sl
 - `gpt-4o`(OpenAI) - 더 높은 품질
 - `claude-haiku-4-5`(Anthropic) - `--provider anthropic`의 기본값
 - `claude-sonnet-4-5` / `claude-opus-4-5`(Anthropic) - 더 높은 품질
-- `mlx_lm.server`, `vLLM`, `llama.cpp`로 제공되는 로컬 LLM은 OpenAI Chat Completions API 표면을 노출하기만 하면 동작한다. 한국어 유창성은 기본 가중치에 의존하므로, 작은 샘플에서 페르소나 드리프트를 먼저 검증한다
+- `mlx_lm.server`, `vLLM`, `llama.cpp`로 제공되는 로컬 LLM은 OpenAI Chat Completions API 표면을 노출하기만 하면 동작한다. 한국어 유창성은 기본 가중치에 의존하므로 작은 샘플에서 페르소나 드리프트를 먼저 검증한다
 
 페르소나 드리프트 동작은 `gpt-4o-mini`로 종단 간 검증되었다. 다른 모델은 임계값 튜닝이 필요할 수 있다(`heuristics.english_ratio_threshold`, `heuristics.short_answer_threshold`).
 
 ### Customization
 
 - 시스템 프롬프트는 `prompts/system_prompt.txt`에서 편집한다(반드시 `{persona_json}`과 `{product}` 자리표시자를 포함해야 한다). 자체 템플릿을 사용하려면 `common.persona.system_prompt_path`를 다른 파일로 지정한다
-- 휴리스틱 임계값은 `config.yaml`의 `heuristics.*`에서 튜닝한다(후속 질문을 더 엄격하게 하려면 `short_answer_threshold`를 낮추고, 기술 도메인에서는 `english_ratio_threshold`를 높이며, `refusal_keywords`/`ambiguous_keywords`에 도메인별 표현을 추가한다)
-- 리포트 출력은 더 엄격한 마스킹을 위해 `common.report.cohort_min_cell`을 5나 7로 올리고, 좁은 터미널을 위해 `bar_width`를 줄이고, 다른 가격 해상도를 위해 `histogram_bins`를 조정한다
+- 휴리스틱 임계값은 `config.yaml`의 `heuristics.*`에서 튜닝한다(후속 질문을 더 엄격하게 하려면 `short_answer_threshold`를 낮추고 기술 도메인에서는 `english_ratio_threshold`를 높이며 `refusal_keywords`/`ambiguous_keywords`에 도메인별 표현을 추가한다)
+- 리포트 출력은 더 엄격한 마스킹을 위해 `common.report.cohort_min_cell`을 5나 7로 올리고 좁은 터미널을 위해 `bar_width`를 줄이고 다른 가격 해상도를 위해 `histogram_bins`를 조정한다
 
 ## Integration with External Agents
 
@@ -338,7 +338,7 @@ report 서브커맨드는 기본적으로 입력 JSON 옆에 `outputs/report_{sl
 
 모드 사이의 자동 폴백은 없다. 선택된 경로는 모든 응답에 `"backend": "mcp_server"` 또는 `"backend": "mcp_orchestrator"`로 반영된다. ADR-005가 근거를 담고 있다(주류 MCP 클라이언트가 해당 capability를 광고하지 않아 v1.2.0에서 sampling 모드가 제거되었다).
 
-`python -m src.mcp_server`를 `mcp.mode: "orchestrator"` 상태에서 MCP 호스트 외부에서 실행하면 헬퍼 도구는 여전히 동작하지만, `interview`는 차단되며 `build_batch_prompts` + 서브에이전트 + `aggregate_results`를 사용하라는 힌트를 출력한다.
+`python -m src.mcp_server`를 `mcp.mode: "orchestrator"` 상태에서 MCP 호스트 외부에서 실행하면 헬퍼 도구는 여전히 동작하지만 `interview`는 차단되며 `build_batch_prompts` + 서브에이전트 + `aggregate_results`를 사용하라는 힌트를 출력한다.
 
 ### Tool exposure by mode
 
@@ -347,7 +347,7 @@ report 서브커맨드는 기본적으로 입력 JSON 옆에 `outputs/report_{sl
 | `healthcheck` | yes | yes | 서버 모드는 제공자에 ping을 보내고, 오케스트레이터 모드는 ok와 cwd를 반환한다 |
 | `list_personas` | yes | yes | 필터에 매칭되는 페르소나를 미리 본다 |
 | `interview` | yes | no(blocked) | 서버측 배치 인터뷰 |
-| `report` | yes | yes | 서버 모드는 정성 인사이트 LLM 호출을 실행하고, 오케스트레이터 모드는 이를 건너뛴다 |
+| `report` | yes | yes | 서버 모드는 정성 인사이트 LLM 호출을 실행하고 오케스트레이터 모드는 이를 건너뛴다 |
 | `build_persona_prompt` | no | yes | 페르소나 한 명의 시스템 프롬프트와 페르소나 dict |
 | `build_batch_prompts` | no | yes | N명의 페르소나에 대한 시스템 프롬프트(호스트 서브에이전트 fan-out) |
 | `aggregate_results` | no | yes | 호스트로부터 record를 받아 마크다운 리포트를 생성한다 |
@@ -377,7 +377,7 @@ python -m src.mcp_server
 
 Cursor의 경우 프로젝트 루트의 `.cursor/mcp.json`에 스니펫을 추가한다. 드롭인 사본은 [examples/mcp/](../../../examples/mcp/) 아래에 있다.
 
-MCP 서버 모드에서는 첫 실행 전 프로젝트 `.env`에 `OPENAI_API_KEY`(또는 `ANTHROPIC_API_KEY`)를 넣는다. 표준 라이브러리 `.env` 로더는 `setdefault` 시맨틱을 사용하므로 셸에서 이미 export된 키가 우선한다. 에이전트 mcp.json의 `env` 블록에 키를 넣어도 동작하지만, 시크릿이 에이전트 설정에 평문으로 남아 git, dotfile 동기화, 스크린샷을 통해 유출될 위험이 더 크다.
+MCP 서버 모드에서는 첫 실행 전 프로젝트 `.env`에 `OPENAI_API_KEY`(또는 `ANTHROPIC_API_KEY`)를 넣는다. 표준 라이브러리 `.env` 로더는 `setdefault` 시맨틱을 사용하므로 셸에서 이미 export된 키가 우선한다. 에이전트 mcp.json의 `env` 블록에 키를 넣어도 동작하지만 시크릿이 에이전트 설정에 평문으로 남아 git, dotfile 동기화, 스크린샷을 통해 유출될 위험이 더 크다.
 
 ### MCP orchestrator mode usage (default)
 
@@ -394,7 +394,7 @@ MCP 서버 모드에서는 첫 실행 전 프로젝트 `.env`에 `OPENAI_API_KEY
 
 ### --json mode for shell scripts
 
-CLI를 직접 구동하는 에이전트의 경우 루트 그룹에 `--json`을 전달한다. tqdm, 컬러, 한국어 라벨이 비활성화되며, stdout에 단일 JSON 문서가 출력된다. 로그는 stderr와 `outputs/logs/run_*.jsonl`로 계속 흐른다.
+CLI를 직접 구동하는 에이전트의 경우 루트 그룹에 `--json`을 전달한다. tqdm, 컬러, 한국어 라벨이 비활성화되며 stdout에 단일 JSON 문서가 출력된다. 로그는 stderr와 `outputs/logs/run_*.jsonl`로 계속 흐른다.
 
 ```bash
 python main.py --json healthcheck
@@ -415,7 +415,7 @@ uv pip sync requirements.lock requirements-dev.lock
 pytest tests/ -v
 ```
 
-테스트 스위트는 `pytest-httpx`로 OpenAI/Anthropic API를 모킹하고, monkeypatch fixture로 데이터셋을 모킹하므로 실제 API 키나 네트워크 접근이 필요하지 않다. 커버리지는 config, filter DSL, persona loader, LLM client/backend, 인터뷰 세션, 페르소나 드리프트, 배치 러너, 리포트 정량, 두 모드의 MCP dispatch, MCP 오케스트레이터 헬퍼 도구, 에러 메시지, 로깅, CLI 통합을 아우른다.
+테스트 스위트는 `pytest-httpx`로 OpenAI/Anthropic API를 모킹하고 monkeypatch fixture로 데이터셋을 모킹하므로 실제 API 키나 네트워크 접근이 필요하지 않다. 커버리지는 config, filter DSL, persona loader, LLM client/backend, 인터뷰 세션, 페르소나 드리프트, 배치 러너, 리포트 정량, 두 모드의 MCP dispatch, MCP 오케스트레이터 헬퍼 도구, 에러 메시지, 로깅, CLI 통합을 아우른다.
 
 실제 LLM API 호출을 사용하는 수동 smoke 테스트는 `tests/manual/`에 있으며 기본 실행에서 제외된다.
 
@@ -423,13 +423,13 @@ Conventional Commits를 사용한다(`feat:`, `fix:`, `chore:`, `docs:`, `refact
 
 ## Limitations and Disclaimer
 
-합성 페르소나는 실제 사용자 인터뷰의 대체재가 아니다. 데이터셋은 실제 응답자에게서 표본을 추출한 것이 아니라 생성된 것이므로, 인구 분포가 실제 한국 인구와 차이가 날 수 있다. 출력은 실제 참가자를 모집하기 전의 빠른 직관 점검과 모집 예산을 쓰기 전 인터뷰 질문, 제품 카피를 압박 테스트하는 수단으로 다룬다.
+합성 페르소나는 실제 사용자 인터뷰의 대체재가 아니다. 데이터셋은 실제 응답자에게서 표본을 추출한 것이 아니라 생성된 것이므로 인구 분포가 실제 한국 인구와 차이가 날 수 있다. 출력은 실제 참가자를 모집하기 전의 빠른 직관 점검과 모집 예산을 쓰기 전 인터뷰 질문, 제품 카피를 압박 테스트하는 수단으로 다룬다.
 
 이 도구가 생성하는 모든 리포트와 JSON 파일에는 푸터에 합성 데이터 디스클레이머가 함께 들어간다.
 
 각 인터뷰에 사용되는 `--product` 텍스트와 페르소나 메타데이터는 사용자가 설정한 LLM 엔드포인트(OpenAI, Anthropic, 로컬 서버, MCP 호스트 에이전트의 LLM)로 전송된다. 미공개 IP, 영업비밀, 개인 식별 정보를 `--product`에 넣지 않는다. 도구 실행 전에 민감한 부분을 추상화하거나 다르게 표현한다. 도구 자체는 LLM 호출과 Hugging Face로부터의 최초 데이터셋 다운로드를 넘어서는 외부 텔레메트리를 보내지 않는다.
 
-API 청구는 사용자의 책임이다. 토큰 사용량(prompt / completion / cached)은 각 실행 마지막에 출력되고, 결과 JSON `meta_extra.usage`에 기록되며, 리포트 헤더에 노출되어 제공자 인보이스와 대조할 수 있다. 도구는 USD 비용을 추정하지 않는다. 페르소나 드리프트 품질은 `gpt-4o-mini`에 대해 검증되어 있다. 다른 모델은 임계값 튜닝이 필요할 수 있다.
+API 청구는 사용자의 책임이다. 토큰 사용량(prompt / completion / cached)은 각 실행 마지막에 출력되고 결과 JSON `meta_extra.usage`에 기록되며 리포트 헤더에 노출되어 제공자 인보이스와 대조할 수 있다. 도구는 USD 비용을 추정하지 않는다. 페르소나 드리프트 품질은 `gpt-4o-mini`에 대해 검증되어 있다. 다른 모델은 임계값 튜닝이 필요할 수 있다.
 
 출력에 대한 법적/윤리적 검토는 사용자의 책임이다. 도구는 입력 시크릿 정책을 넘어서는 컴플라이언스나 PII 필터를 실행하지 않는다.
 
